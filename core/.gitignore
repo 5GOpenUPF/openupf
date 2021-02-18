@@ -1,0 +1,3 @@
+service/pfcp/upc_high_availability.*
+service/loadbalancer/lb_ha_mgmt.*
+service/stub

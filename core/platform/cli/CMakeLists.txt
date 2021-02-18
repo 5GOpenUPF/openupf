@@ -1,0 +1,15 @@
+
+project(cli)
+
+# Append source files
+LIST(APPEND UPF_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/cli.c)
+LIST(APPEND UPF_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/libcli.c)
+SET(UPF_SOURCE_FILES ${UPF_SOURCE_FILES} PARENT_SCOPE)
+
+# Append header files
+FILE(GLOB_RECURSE header_files *.h)
+LIST(APPEND UPF_HEADER_FILES ${header_files})
+SET(UPF_HEADER_FILES ${UPF_HEADER_FILES} PARENT_SCOPE)
+
+add_executable(${PROJECT_NAME} cli_main.c cli.h)
+
