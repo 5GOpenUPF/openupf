@@ -10,13 +10,9 @@ OpenUPF uses [DPDK](https://github.com/DPDK/dpdk.git) to forward packets quickly
 
 ## Network connection diagram
 
-![network connection diagram](/images/UPF_network_diagram.png)
+![Signaling data flow chart](/images/signal_flow_chart.png)
 
-### Data forwarding diagram
-
-![Signaling data flow chart](/images/Signaling_data_flow_chart.png)
-
-![Signaling data flow chart](/images/Business_data_flow_chart.png)
+![Signaling data flow chart](/images/data_flow_chart.png)
 
 ## Summary
 
@@ -69,7 +65,7 @@ details
   - Reach out with any feedback
 
 ## Supported By
-   Panath
+   Copyright (c) 2021 ShenZhen Panath Technology Co., Ltd.
 
 ## Contact us
    * Webpage: [http://www.panath.com.cn](http://www.panath.com.cn)
