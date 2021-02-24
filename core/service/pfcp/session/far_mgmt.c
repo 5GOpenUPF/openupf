@@ -623,7 +623,7 @@ int far_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_
         }
 	}
 
-    if (index_cnt) {
+    if (NULL == ret_index_arr && index_cnt) {
 	    if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_FAR_DEL, MB_SEND2BE_BROADCAST_FD)) {
 	        LOG(SESSION, ERR, "fp remove failed.");
 	    }

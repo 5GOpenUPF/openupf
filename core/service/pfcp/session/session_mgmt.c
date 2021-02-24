@@ -700,7 +700,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     /* Bar remove */
     if (session_content->member_flag.d.remove_bar_present) {
         if (0 > bar_remove(sess_tbl, session_content->remove_bar, &session_content->remove_bar_index)) {
-            LOG(SESSION, ERR, "bar_remove failed.");
+            LOG(SESSION, ERR, "bar remove failed.");
 
             resp->failed_rule_id.rule_id = session_content->update_bar.bar_id;
             resp->failed_rule_id.rule_type = SESS_FAILED_BAR;

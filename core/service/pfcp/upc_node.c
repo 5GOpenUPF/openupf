@@ -29,7 +29,7 @@ static inline upc_node_cb *upc_node_cb_get(uint8_t index)
 
 upc_node_cb *upc_node_cb_get_public(uint8_t index)
 {
-	return &upc_node_mng.node[index];
+    return &upc_node_mng.node[index];
 }
 
 uint8_t *upc_upf_guid_get(void)
@@ -472,7 +472,7 @@ void upc_node_create_node(uint8_t ipver, uint32_t ipv4, uint8_t *ipv6,
             (uint8_t *)&net_ipv4, (struct sockaddr *)&sa_v4);
     }
 
-	node->assoc_config.up_features.value = upc_get_up_features();
+    node->assoc_config.up_features.value = upc_get_up_features();
     pfcp_build_association_setup_request(node);
 }
 
@@ -638,279 +638,241 @@ int upc_node_hb_timer_stop(void)
     return 0;
 }
 
-int upc_node_show_up_cp(struct cli_def * cli,int index, int flag)
+int upc_node_show_cp_features(struct cli_def * cli, int index)
 {
-	uint8_t  cp_value = 0;
-	uint32_t i = 0, bit = 0, offset = 0;
-	uint32_t *up_low = NULL;
-	uint32_t *up_height = NULL;
-	uint64_t up_value = 0;
-	char bit_name[640] = {0};
-	upc_node_cb *node = NULL;
-	char *cp_name[] = {"LOAD","OVRL","EPFAR","SSET","BUNDL","MPAS","ARDR","SPARE"};
-	char *up_name[] = {"SPARE","SPARE","SPARE","SPARE","SPARE","SPARE","SPARE","SPARE",
-  				       "ATSSS-LL","QFQM","GPQM","MT-EDT","CIOT","ETHAR","SPARE","SPARE",
-  				       "MPAS","RTTL","VTIME","NORP","IPTV","IP6PL","TSCU","MPTCP",
-  				       "DPDRA","ADPDP","UEIP","SSET","MNOP","MTE","BUNDL","GCOM",
-  				       "EMPU","PDIU","UDBC","QUOAC","TRACE","FRRT","PFDE","EPFAR",
-  				       "BUCP","DDND","DLBD","TRST","FTUP","PFDM","HEEU","TREU",
-  				       "SPARE","SPARE","SPARE","SPARE","SPARE","SPARE","SPARE","SPARE",
-  				       "SPARE","SPARE","SPARE","SPARE","SPARE","SPARE","SPARE","SPARE"};
+    uint8_t cp_value = 0;
+    char output_str[512];
+    uint32_t output_len = 0;
+    uint32_t cp_name_cnt;
+    upc_node_cb *node = NULL;
+    char *cp_name[] = {"LOAD", "OVRL", "EPFAR", "SSET", "BUNDL", "MPAS", "ARDR"};
+    uint32_t cp_name_num = sizeof(cp_name)/sizeof(cp_name[0]);
 
+	node = upc_node_cb_get_public(index);
 
-	up_value = upc_get_up_features();
-	up_low = (unsigned int *)&up_value;
-	up_height = up_low+1;
-	//LOG(UPC,RUNNING,"UP:%ld",up_value);
-	//LOG(UPC,RUNNING,"up_height:%d up_low:%d",*up_height,*up_low);
+    cp_value = node->assoc_config.cp_features.value;
 
-	if(flag)
-	{
-		node = upc_node_cb_get_public(index);
-		if(node == NULL)
-		{
-			LOG(UPC,ERR,"%s[%d]can't get node",__FUNCTION__,__LINE__);
-			return -1;
-		}
+    for (cp_name_cnt = 0; cp_name_cnt < cp_name_num; ++cp_name_cnt) {
+        if ((cp_value >> cp_name_cnt) & 1) {
+            output_len += sprintf(&output_str[output_len], "%s ", cp_name[cp_name_cnt]);
+        }
+    }
+    cli_print(cli, "CP Features: %s", output_str);
 
-		cp_value = node->assoc_config.cp_features.value;
-		for(i = 0; i < sizeof(cp_name)/sizeof(cp_name[0]); i++)
-		{
-			if(!strcmp(cp_name[i],"SPARE"))
-				continue;
-			if(i < sizeof(cp_name)/sizeof(cp_name[0]))
-				bit = (cp_value >> i) & 1;
+    return 0;
+}
 
-			if(bit)
-				offset += sprintf(bit_name + offset,"%s ",cp_name[i]);
-		}
-		cli_print(cli,"CP%9s %s",":",bit_name);
-		offset = 0;
-		memset(bit_name,0,sizeof(bit_name));
-		for(i = 0; i < sizeof(up_name)/sizeof(up_name[0]); i++)
-		{
-			if(!strcmp(up_name[i],"SPARE"))
-				continue;
-#if BYTE_ORDER == BIG_ENDIAN
-			if(i < (sizeof(up_name)/sizeof(up_name[0])) / 2)
-				bit = (*up_height >> i) & 1;
-			else
-				bit = (*up_low >> (i-32)) & 1;
-#else
-			if(i < (sizeof(up_name)/sizeof(up_name[0])) / 2)
-				bit = (*up_low >> i) & 1;
-			else
-				bit = (*up_height >> (i-32)) & 1;
-#endif
-			if(bit)
-				offset += sprintf(bit_name + offset,"%s ",up_name[i]);
-		}
-	}
-	else
-	{
+int upc_node_show_up_features(struct cli_def * cli)
+{
+    uint64_t up_value = 0;
+    char output_str[512];
+    uint32_t output_len = 0;
+    uint32_t up_name_cnt;
+    char *up_name[] = {"BUCP", "DDND", "DLBD", "TRST", "FTUP", "PFDM", "HEEU", "TREU",
+                       "EMPU", "PDIU", "UDBC", "QUOAC", "TRACE", "FRRT", "PFDE", "EPFAR",
+                       "DPDRA", "ADPDP", "UEIP", "SSET", "MNOP", "MTE", "BUNDL", "GCOM",
+                       "MPAS", "RTTL", "VTIME", "NORP", "IPTV", "IP6PL", "TSCU", "MPTCP",
+                       "ATSSS-LL", "QFQM", "GPQM", "MT_EDT", "CIOT", "ETHAR", "DDDS", "RDS",
+                       "RTTWP"};
+    uint32_t up_name_num = sizeof(up_name)/sizeof(up_name[0]);
 
-		for(i = 0; i < sizeof(up_name)/sizeof(up_name[0]); i++)
-		{
-			if(!strcmp(up_name[i],"SPARE"))
-				continue;
-#if BYTE_ORDER == BIG_ENDIAN
-			if(i < (sizeof(up_name)/sizeof(up_name[0])) / 2)
-				bit = (*up_height >> i) & 1;
-			else
-				bit = (*up_low >> (i-32)) & 1;
-#else
-			if(i < (sizeof(up_name)/sizeof(up_name[0])) / 2)
-				bit = (*up_low >> i) & 1;
-			else
-				bit = (*up_height >> (i-32)) & 1;
-#endif
-			if(bit)
-				offset += sprintf(bit_name + offset,"%s ",up_name[i]);
-		}
-	}
-	cli_print(cli,"UP%9s %s",":",bit_name);
-	return 0;
+    up_value = htonll(upc_get_up_features());
+
+    for (up_name_cnt = 0; up_name_cnt < up_name_num; ++up_name_cnt) {
+        if ((up_value >> up_name_cnt) & 1) {
+            output_len += sprintf(&output_str[output_len], "%s ", up_name[up_name_cnt]);
+        }
+    }
+    cli_print(cli, "UP Features: %s", output_str);
+
+    return 0;
 }
 
 int upc_node_show(struct cli_def *cli)
 {
-	int node_count = 0,session_count = 0;
-	int index = 0;
-	upc_node_cb *node = NULL;
-	const char *str = NULL;
-	char node_id[PFCP_MAX_NODE_ID_LEN] = {0};
+    int node_count = 0,session_count = 0;
+    int index = 0;
+    upc_node_cb *node = NULL;
+    const char *str = NULL;
+    char node_id[PFCP_MAX_NODE_ID_LEN] = {0};
 
-	if(cli == NULL)
-		return -1;
-	for(index = 0; index < upc_node_mng.node_max; index++)
-	{
-		node = upc_node_cb_get_public(index);
-		if(node == NULL)
-			continue;
+    if(cli == NULL)
+        return -1;
+    for (index = 0; index < upc_node_mng.node_max; index++) {
+        node = upc_node_cb_get_public(index);
+        if(node == NULL)
+            continue;
 
-		if(node->status == UPC_NODE_STATUS_INIT || node->status == UPC_NODE_STATUS_BUTT)
-			continue;
+        if(node->status == UPC_NODE_STATUS_INIT || node->status == UPC_NODE_STATUS_BUTT)
+            continue;
 
-		switch(node->status)
-		{
-			case UPC_NODE_STATUS_SETUP: str = "SETUP";
-										break;
-		    case UPC_NODE_STATUS_RUN:   str = "RUN";
-										break;
-		    case UPC_NODE_STATUS_REPORT:str = "REPORT";
-										break;
-		    case UPC_NODE_STATUS_SHUT:	str = "SHUT";
-										break;
-		}
+        switch(node->status) {
+            case UPC_NODE_STATUS_SETUP:
+            	str = "SETUP";
+                break;
 
-		cli_print(cli, "-----------------------node[%d]-----------------------",node->index);
-		cli_print(cli, "Status%5s %s",":",str);
-		upc_node_show_up_cp(cli,index,1);
-		cli_print(cli, "SessionNum: %d", ros_atomic32_read(&node->session_num));
-		if(node->peer_id.type.value == UPF_NODE_TYPE_IPV4)
-		{
-			cli_print(cli, "Node ID: %d.%d.%d.%d", node->peer_id.node_id[0],
-				node->peer_id.node_id[1], node->peer_id.node_id[2], node->peer_id.node_id[3]);
-		}
-		else if(node->peer_id.type.value == UPF_NODE_TYPE_IPV6)
-		{
+            case UPC_NODE_STATUS_RUN:
+            	str = "RUN";
+                break;
+
+            case UPC_NODE_STATUS_REPORT:
+            	str = "REPORT";
+                break;
+
+            case UPC_NODE_STATUS_SHUT:
+            	str = "SHUT";
+                break;
+
+            default:
+            	str = "Unknown";
+            	break;
+        }
+
+        cli_print(cli, "-----------------------node[%d]-----------------------",node->index);
+        cli_print(cli, "Status: %s", str);
+        upc_node_show_up_features(cli);
+        upc_node_show_cp_features(cli, index);
+        cli_print(cli, "SessionNum: %d", ros_atomic32_read(&node->session_num));
+        if (node->peer_id.type.value == UPF_NODE_TYPE_IPV4) {
+            cli_print(cli, "Node ID: %d.%d.%d.%d", node->peer_id.node_id[0],
+                node->peer_id.node_id[1], node->peer_id.node_id[2], node->peer_id.node_id[3]);
+        } else if (node->peer_id.type.value == UPF_NODE_TYPE_IPV6) {
             if (NULL == inet_ntop(AF_INET6, node->peer_id.node_id, node_id, sizeof(node_id))) {
                 LOG(STUB, ERR, "inet_ntop failed, error: %s.", strerror(errno));
             }
-			cli_print(cli, "Node ID: %s", node_id);
-		}
-		else if(node->peer_id.type.value == UPF_NODE_TYPE_FQDN)
-		{
-			cli_print(cli,"Node ID: %s", node->peer_id.node_id);
-		}
+            cli_print(cli, "Node ID: %s", node_id);
+        } else if (node->peer_id.type.value == UPF_NODE_TYPE_FQDN) {
+            cli_print(cli,"Node ID: %s", node->peer_id.node_id);
+        }
 
-		node_count++;
-		session_count += ros_atomic32_read(&node->session_num);
-	}
-	cli_print(cli,"---------------------------------------");
-	cli_print(cli,"total node:%9d",node_count);
-	cli_print(cli,"total session_nume:%d",session_count);
-	return node_count;
+        node_count++;
+        session_count += ros_atomic32_read(&node->session_num);
+    }
+    cli_print(cli,"---------------------------------------");
+    cli_print(cli,"total node:%9d",node_count);
+    cli_print(cli,"total session_nume:%d",session_count);
+
+    return node_count;
 }
 
 int upc_node_update()
 {
-	int i = 0;
-	int run_node = 0;
-	upc_node_cb *node = NULL;
+    int i = 0;
+    int run_node = 0;
+    upc_node_cb *node = NULL;
 
-	for(i = 0; i < upc_node_mng.node_max; i++)
-	{
-		node = upc_node_cb_get_public(i);
-		if(node == NULL)
-			continue;
+    for(i = 0; i < upc_node_mng.node_max; i++)
+    {
+        node = upc_node_cb_get_public(i);
+        if(node == NULL)
+            continue;
 
-		if(node->status == UPC_NODE_STATUS_RUN)
-		{
-			run_node++;
-			pfcp_build_association_update_request(node, 0, 0, 0);
-		}
-	}
+        if(node->status == UPC_NODE_STATUS_RUN)
+        {
+            run_node++;
+            pfcp_build_association_update_request(node, 0, 0, 0);
+        }
+    }
 
-	return run_node;
+    return run_node;
 }
 
 int upc_node_update_release(struct cli_def *cli,uint32_t ipv4)
 {
-	int i = 0;
-	upc_node_cb *node = NULL;
-	uint32_t ip = 0;
+    int i = 0;
+    upc_node_cb *node = NULL;
+    uint32_t ip = 0;
 
-	if(ipv4 == 0)
-	{
-		for(i = 0; i < upc_node_mng.node_max; i++)
-		{
-			node = upc_node_cb_get_public(i);
-			if(node == NULL)
-			{
-				cli_print(cli,"can't get node node_index:%d",i);
-				return -1;
-			}
+    if(ipv4 == 0)
+    {
+        for(i = 0; i < upc_node_mng.node_max; i++)
+        {
+            node = upc_node_cb_get_public(i);
+            if(node == NULL)
+            {
+                cli_print(cli,"can't get node node_index:%d",i);
+                return -1;
+            }
 
-			if(node->status == UPC_NODE_STATUS_RUN)
-			{
-				pfcp_build_association_update_request(node, 1, 1, 0);
-			}
-		}
-		return 0;
-	}
+            if(node->status == UPC_NODE_STATUS_RUN)
+            {
+                pfcp_build_association_update_request(node, 1, 1, 0);
+            }
+        }
+        return 0;
+    }
 
 
-	for(i = 0; i < upc_node_mng.node_max; i++)
-	{
-		node = upc_node_cb_get_public(i);
-		if(node == NULL)
-		{
-			cli_print(cli,"can't get node node_index:%d",i);
-			return -1;
-		}
+    for(i = 0; i < upc_node_mng.node_max; i++)
+    {
+        node = upc_node_cb_get_public(i);
+        if(node == NULL)
+        {
+            cli_print(cli,"can't get node node_index:%d",i);
+            return -1;
+        }
 
-		if(node->status == UPC_NODE_STATUS_RUN)
-		{
-			memcpy(&ip,node->peer_id.node_id,sizeof(uint32_t));
-			if(ip == ipv4)
-				pfcp_build_association_update_request(node, 1, 1, 0);
-		}
+        if(node->status == UPC_NODE_STATUS_RUN)
+        {
+            memcpy(&ip,node->peer_id.node_id,sizeof(uint32_t));
+            if(ip == ipv4)
+                pfcp_build_association_update_request(node, 1, 1, 0);
+        }
 
-	}
-	return 0;
+    }
+    return 0;
 }
 
 int upc_node_set_up(const uint64_t up_value)
 {
-	int i = 0;
-	upc_node_cb *node = NULL;
-	for(i = 0; i < upc_node_mng.node_max; i++)
-	{
-		node = upc_node_cb_get_public(i);
-		if(node == NULL)
-			continue;
+    int i = 0;
+    upc_node_cb *node = NULL;
+    for(i = 0; i < upc_node_mng.node_max; i++)
+    {
+        node = upc_node_cb_get_public(i);
+        if(node == NULL)
+            continue;
 
-		node->assoc_config.up_features.value = up_value;
-	}
-	return 0;
+        node->assoc_config.up_features.value = up_value;
+    }
+    return 0;
 }
 
 int upc_set_hb_time(uint32_t sec)
 {
-	int i = 0;
-	upc_node_cb *node;
+    int i = 0;
+    upc_node_cb *node;
 
-	for (i = 0; i < upc_node_mng.node_max; i++) {
-		node = upc_node_cb_get_public(i);
-		if (node == NULL)
-			continue;
+    for (i = 0; i < upc_node_mng.node_max; i++) {
+        node = upc_node_cb_get_public(i);
+        if (node == NULL)
+            continue;
 
         ros_timer_reset_time(node->hb_timer, sec * ROS_TIMER_TICKS_PER_SEC);
-	}
+    }
 
-	return 0;
+    return 0;
 }
 
 int upc_node_del_cli(struct cli_def *cli)
 {
-	int i = 0,ret = 0;
-	upc_node_cb *node = NULL;
-	for(i = 0; i < upc_node_mng.node_max; i++)
-	{
-		node = upc_node_cb_get_public(i);
-		if(node == NULL)
-			continue;
+    int i = 0,ret = 0;
+    upc_node_cb *node = NULL;
+    for(i = 0; i < upc_node_mng.node_max; i++)
+    {
+        node = upc_node_cb_get_public(i);
+        if(node == NULL)
+            continue;
 
-		if(node->status != UPC_NODE_STATUS_INIT)
-		{
-			ret = upc_node_del(node);
-			if(ret != 0)
-				cli_print(cli,"can't del %d node",i);
-			upc_node_clear_param(node);
-		}
-	}
-	return 0;
+        if(node->status != UPC_NODE_STATUS_INIT)
+        {
+            ret = upc_node_del(node);
+            if(ret != 0)
+                cli_print(cli,"can't del %d node",i);
+            upc_node_clear_param(node);
+        }
+    }
+    return 0;
 }
 
 int upc_node_release_cli(struct cli_def *cli, int argc, char *argv[])

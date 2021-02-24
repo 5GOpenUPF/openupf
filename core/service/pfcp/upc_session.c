@@ -10030,7 +10030,7 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
         LOG(SESSION, ERR, "session establish failed, local_seid: 0x%016lx cp_seid: 0x%016lx.",
             sess_content.local_seid, sess_content.cp_f_seid.seid);
 
-        res_cause = SESS_PUBLISH_TO_SPU_FAILURE;
+        res_cause = sess_rep.cause;
 
         LOG(UPC, ERR, "publish content to sp failed, sequence number: %u.", pkt_seq);
         if (0 > upc_free_teid_from_create(&sess_content, trace_flag)) {
@@ -10804,7 +10804,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
         LOG(SESSION, ERR, "session modify failed, local_seid: 0x%016lx cp_seid: 0x%016lx.",
             sess_content.local_seid, sess_content.cp_seid);
 
-        res_cause = SESS_PUBLISH_TO_SPU_FAILURE;
+        res_cause = sess_rep.cause;
 
         LOG(UPC, ERR, "publish content to sp failed, sequence number: %u.", pkt_seq);
 
@@ -11107,7 +11107,7 @@ void upc_parse_session_deletion_request(uint8_t* buffer,
         LOG(SESSION, ERR, "session delete failed, local_seid: 0x%016lx cp_seid: 0x%016lx.",
             sess_content.local_seid, sess_content.cp_seid);
 
-        res_cause = SESS_PUBLISH_TO_SPU_FAILURE;
+        res_cause = sess_rep.cause;
 
         sync_event = HA_SYNC_EVENT_FAIL;
         if (upc_hk_change_sync_blk_status) {

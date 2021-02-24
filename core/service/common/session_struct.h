@@ -103,10 +103,6 @@ typedef enum {
     SESS_REDIRECTION_REQUESTED                      = 78,
 
     /* Userdef */
-    SESS_CREATE_TIMER_FAILURE                       = 200,
-    SESS_START_TIMER_FAILURE                        = 201,
-    SESS_SPU_RESPONSE_TIMEOUT                       = 202,
-    SESS_PUBLISH_TO_SPU_FAILURE                     = 203,
     SESS_CREATE_SYNC_DATA_BLOCK_FAILURE             = 204,
     SESS_SYSTEM_BUSY                                = 205,
 }PFCP_CAUSE_TYPE;

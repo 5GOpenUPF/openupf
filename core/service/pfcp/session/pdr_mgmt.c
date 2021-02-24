@@ -3312,7 +3312,7 @@ int pdr_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num,
         *rm_pdr_num = rm_pdr_cnt;
     }
 
-    if (success_cnt) {
+    if (NULL == rm_pdr_num && success_cnt) {
         if (-1 == rules_fp_del(index_arr, success_cnt, EN_COMM_MSG_UPU_INST_DEL, MB_SEND2BE_BROADCAST_FD)) {
             LOG(SESSION, ERR, "fp del failed.");
         }
@@ -3422,12 +3422,10 @@ int pdr_clear(struct session_t *sess,
     }
     ros_rwlock_write_unlock(&sess->lock);// unlock
 
-    if (fp_sync) {
-        if (index_cnt) {
-            if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_INST_DEL, MB_SEND2BE_BROADCAST_FD)) {
-                LOG(SESSION, ERR, "fp del failed.");
-                return -1;
-            }
+    if (fp_sync && index_cnt) {
+        if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_INST_DEL, MB_SEND2BE_BROADCAST_FD)) {
+            LOG(SESSION, ERR, "fp del failed.");
+            return -1;
         }
     }
 

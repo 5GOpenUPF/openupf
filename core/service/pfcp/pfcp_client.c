@@ -205,11 +205,12 @@ void pfcp_client_encode_header(uint8_t *buffer, uint16_t *buf_pos,
     msg_header = (pfcp_msg_header *)(buffer + cur_pos);
 
     /* Set content */
-    msg_header->version  = PFCP_MAJOR_VERSION;
-    msg_header->spare    = 0;
-    msg_header->mp       = 0;
-    msg_header->s        = (seid_flag != 0);
-    msg_header->msg_type = msg_type;
+    msg_header->version 	= PFCP_MAJOR_VERSION;
+    msg_header->spare   	= 0;
+    msg_header->fo			= 0;
+    msg_header->mp      	= 0;
+    msg_header->s       	= (seid_flag != 0);
+    msg_header->msg_type 	= msg_type;
     cur_pos += TLV_TYPE_LEN;
 
     tlv_encode_length(buffer, &cur_pos, msg_len);

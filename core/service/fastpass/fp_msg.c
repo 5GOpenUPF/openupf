@@ -668,7 +668,7 @@ static uint32_t fp_msg_inst_del_proc(uint32_t index)
     inst_entry  = fp_inst_entry_get(index);
 
     /* Check item */
-    if (NULL == inst_entry) {
+    if (NULL == inst_entry || G_FALSE == inst_entry->valid) {
         ret = EN_COMM_ERRNO_NO_SUCH_ITEM;
         return ret;
     }

@@ -17,48 +17,52 @@ extern "C" {
 #define UPC_NODE_INVALID_INDEX          0xFF
 
 /* UP features */
-#define UF_BUCP     0x10000000000
-#define UF_DDND     0x20000000000
-#define UF_DLBD     0x40000000000
-#define UF_TRST     0x80000000000
-#define UF_FTUP     0x100000000000
-#define UF_PFDM     0x200000000000
-#define UF_HEEU     0x400000000000
-#define UF_TREU     0x800000000000
+#define UF_BUCP     0x100000000000000
+#define UF_DDND     0x200000000000000
+#define UF_DLBD     0x400000000000000
+#define UF_TRST     0x800000000000000
+#define UF_FTUP     0x1000000000000000
+#define UF_PFDM     0x2000000000000000
+#define UF_HEEU     0x4000000000000000
+#define UF_TREU     0x8000000000000000
 
-#define UF_EMPU     0x100000000
-#define UF_PDIU     0x200000000
-#define UF_UDBC     0x400000000
-#define UF_QUOAC    0x800000000
-#define UF_TRACE    0x1000000000
-#define UF_FRRT     0x2000000000
-#define UF_PFDE     0x4000000000
-#define UF_EPFAR    0x8000000000
+#define UF_EMPU     0x1000000000000
+#define UF_PDIU     0x2000000000000
+#define UF_UDBC     0x4000000000000
+#define UF_QUOAC    0x8000000000000
+#define UF_TRACE    0x10000000000000
+#define UF_FRRT     0x20000000000000
+#define UF_PFDE     0x40000000000000
+#define UF_EPFAR    0x80000000000000
 
-#define UF_DPDRA    0x1000000
-#define UF_ADPDP    0x2000000
-#define UF_UEIP     0x4000000
-#define UF_SSET     0x8000000
-#define UF_MNOP     0x10000000
-#define UF_MTE      0x20000000
-#define UF_BUNDL    0x40000000
-#define UF_GCOM     0x80000000
+#define UF_DPDRA    0x10000000000
+#define UF_ADPDP    0x20000000000
+#define UF_UEIP     0x40000000000
+#define UF_SSET     0x80000000000
+#define UF_MNOP     0x100000000000
+#define UF_MTE      0x200000000000
+#define UF_BUNDL    0x400000000000
+#define UF_GCOM     0x800000000000
 
-#define UF_MPAS     0x10000
-#define UF_RTTL     0x20000
-#define UF_VTIME    0x40000
-#define UF_NORP     0x80000
-#define UF_IPTV     0x100000
-#define UF_IP6PL    0x200000
-#define UF_TSCU     0x400000
-#define UF_MPTCP    0x800000
+#define UF_MPAS     0x100000000
+#define UF_RTTL     0x200000000
+#define UF_VTIME    0x400000000
+#define UF_NORP     0x800000000
+#define UF_IPTV     0x1000000000
+#define UF_IP6PL    0x2000000000
+#define UF_TSCU     0x4000000000
+#define UF_MPTCP    0x8000000000
 
-#define UF_ATSSS_LL 0x100
-#define UF_QFQM     0x200
-#define UF_GPQM     0x400
-#define UF_MT_EDT   0x800
-#define UF_CIOT     0x1000
-#define UF_ETHAR    0x2000
+#define UF_ATSSS_LL 0x1000000
+#define UF_QFQM     0x2000000
+#define UF_GPQM     0x4000000
+#define UF_MT_EDT   0x8000000
+#define UF_CIOT     0x10000000
+#define UF_ETHAR    0x20000000
+#define UF_DDDS    	0x40000000
+#define UF_RDS    	0x80000000
+
+#define UF_RTTWP 	0x10000
 
 
 typedef enum
@@ -129,7 +133,7 @@ int upc_node_features_validity_query(uint64_t feature);
 int upc_node_update(void);
 int upc_node_update_release(struct cli_def *cli,uint32_t ipv4);
 upc_node_cb *upc_node_cb_get_public(uint8_t index);
-int upc_node_show_up_cp(struct cli_def * cli,int index, int flag);
+int upc_node_show_up_features(struct cli_def * cli);
 int upc_node_set_up(const uint64_t up_value);
 int upc_set_hb_time(uint32_t sec);
 int upc_node_del_cli(struct cli_def *cli);

@@ -392,7 +392,7 @@ int qer_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_
         }
 	}
 
-	if (index_cnt) {
+	if (NULL == ret_index_arr && index_cnt) {
 	    if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_QER_DEL, MB_SEND2BE_BROADCAST_FD)) {
 	        LOG(SESSION, ERR, "fp del failed.");
 	    }
@@ -495,13 +495,11 @@ int qer_clear(struct session_t *sess,
     }
     ros_rwlock_write_unlock(&sess->lock);// unlock
 
-    if (0 < index_cnt) {
-		if (fp_sync) {
-	        if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_QER_DEL, MB_SEND2BE_BROADCAST_FD)) {
-	            LOG(SESSION, ERR, "fp del failed.");
-	            return -1;
-	        }
-		}
+    if (fp_sync && 0 < index_cnt) {
+        if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_QER_DEL, MB_SEND2BE_BROADCAST_FD)) {
+            LOG(SESSION, ERR, "fp del failed.");
+            return -1;
+        }
     }
     return 0;
 }

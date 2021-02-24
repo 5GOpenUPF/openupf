@@ -319,7 +319,6 @@ int bar_remove(struct session_t *sess, uint8_t bar_id, uint32_t *bar_index)
     struct bar_table *bar_tbl = NULL;
     struct bar_table_head *bar_head = bar_get_head();
     uint8_t id = bar_id;
-    uint32_t index = 0;
 
     if (NULL == sess) {
         LOG(SESSION, ERR, "bar remove failed, sess(%p).", sess);
@@ -339,10 +338,6 @@ int bar_remove(struct session_t *sess, uint8_t bar_id, uint32_t *bar_index)
 
     *bar_index = bar_tbl->index;
 
-    index = bar_tbl->index;
-    if (-1 == rules_fp_del(&index, 1, EN_COMM_MSG_UPU_BAR_DEL, MB_SEND2BE_BROADCAST_FD)) {
-        LOG(SESSION, ERR, "Tell FPU delete BAR failed.");
-    }
     return 0;
 }
 
@@ -566,13 +561,11 @@ int bar_clear(struct session_t *sess,
     }
     ros_rwlock_write_unlock(&sess->lock);// unlock
 
-    if (0 < index_cnt) {
-		if (fp_sync) {
-	        if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_BAR_DEL, MB_SEND2BE_BROADCAST_FD)) {
-	            LOG(SESSION, ERR, "fp del failed.");
-	            return -1;
-	        }
-		}
+    if (fp_sync && 0 < index_cnt) {
+        if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_BAR_DEL, MB_SEND2BE_BROADCAST_FD)) {
+            LOG(SESSION, ERR, "fp del failed.");
+            return -1;
+        }
     }
     return 0;
 }

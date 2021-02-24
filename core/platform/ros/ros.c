@@ -1083,8 +1083,8 @@ int cli_delete_node(struct cli_def *cli, int argc, char **argv)
 
 int cli_show_up_features(struct cli_def * cli, int argc, char * * argv)
 {
-	extern int upc_node_show_up_cp(struct cli_def * cli,int index, int flag);
-	upc_node_show_up_cp(cli,0,0);
+	extern int upc_node_show_up_features(struct cli_def * cli);
+	upc_node_show_up_features(cli);
 	return 0;
 }
 

@@ -2407,7 +2407,7 @@ static inline int upc_up_feature_to_num(uint64_t value)
 
 int upc_set_features(struct cli_def *cli, int argc, char **argv)
 {
-    uint64_t change_value = upc_get_up_features();
+    uint64_t change_value = htonll(upc_get_up_features());
     uint32_t cnt, up_name_cnt;
     char up_name[][16] = {"BUCP", "DDND", "DLBD", "TRST", "FTUP", "PFDM", "HEEU", "TREU",
                           "EMPU", "PDIU", "UDBC", "QUOAC", "TRACE", "FRRT", "PFDE", "EPFAR",
@@ -2419,17 +2419,21 @@ int upc_set_features(struct cli_def *cli, int argc, char **argv)
     char print_str[256];
     uint32_t print_str_len;
 
+	if (0 == strcmp("help", argv[0]))
+		goto help;
+
     if (argc < 2) {
         cli_print(cli, "Parameters too few.");
         goto help;
     }
 
     if (0 == strcmp("all", argv[1])) {
-        session_up_features tmp_up = {.value = 0xFFFFFFFFFFFFFFFF};
+        session_up_features tmp_up = {.value = (uint64_t)-1};
         tmp_up.d.spare_6 = 0;
         tmp_up.d.spare_7 = 0;
         tmp_up.d.spare_8 = 0;
         upc_set_up_config(tmp_up.value);
+        cli_print(cli, "Finish.");
 
         return 0;
     }
@@ -2446,28 +2450,34 @@ int upc_set_features(struct cli_def *cli, int argc, char **argv)
             }
         }
 
-        cli_print(cli, "No such featrue %s", argv[cnt]);
+        if (up_name_cnt >= up_name_num) {
+	        cli_print(cli, "No such featrue %s", argv[cnt]);
+        }
     }
-    change_value = ntohll(change_value);
-    upc_set_up_config(change_value);
+    upc_set_up_config(ntohll(change_value));
+    cli_print(cli, "Finish.");
 
     return 0;
 
 help:
     cli_print(cli, "up_features <enable|disable> <feature|all> [feature] ...");
     cli_print(cli, "feature:");
-    if (up_name_num > 8)
-        for (cnt = 0; cnt < up_name_num; cnt += 8) {
+    if (up_name_num > 8) {
+    	uint32_t cnt_max = up_name_num & 0xFFFFFFF8;
+
+        for (cnt = 0; cnt < cnt_max; cnt += 8) {
             cli_print(cli, "%s %s %s %s %s %s %s %s",
                 up_name[cnt + 0], up_name[cnt + 1], up_name[cnt + 2], up_name[cnt + 3],
                 up_name[cnt + 4], up_name[cnt + 5], up_name[cnt + 6], up_name[cnt + 7]);
         }
+    }
 
     print_str_len = 0;
     for (cnt = up_name_num - (up_name_num % 8); cnt < up_name_num; ++cnt) {
         print_str_len += sprintf(&print_str[print_str_len], "%s ", up_name[cnt]);
     }
     cli_print(cli, "%s", print_str);
+    cli_print(cli, "e.g.\n\tup_features enable UDBC DDND");
 
     return 0;
 }

@@ -15,7 +15,7 @@ void pfcp_parse_heartbeat_request(uint8_t* buffer,
     uint8_t  resp_buffer[COMM_MSG_CTRL_BUFF_LEN];
     uint16_t resp_pos = 0, msg_hdr_pos;
     uint16_t buf_pos = buf_pos1, last_pos = 0;
-    uint8_t  m_recover_time = 0;
+    uint8_t  m_recover_time = G_FALSE;
     uint16_t obj_type, obj_len;
     uint32_t peer_stamp;
     upc_node_cb *node_cb;
@@ -66,9 +66,8 @@ void pfcp_parse_heartbeat_request(uint8_t* buffer,
     }
 
     /* Check mandaytory option */
-    if (m_recover_time == 0) {
-        LOG(UPC, ERR,
-            "no mandatory option recover_time_stamp(%d).",
+    if (m_recover_time == G_FALSE) {
+        LOG(UPC, ERR, "no mandatory option recover_time_stamp(%d).",
             m_recover_time);
         return;
     }

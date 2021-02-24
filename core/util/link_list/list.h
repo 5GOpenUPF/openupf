@@ -40,8 +40,10 @@ static inline void dl_list_add_tail(struct dl_list *list, struct dl_list *item)
 
 static inline void dl_list_del(struct dl_list *item)
 {
-	item->next->prev = item->prev;
-	item->prev->next = item->next;
+	if (item->next) {
+		item->next->prev = item->prev;
+		item->prev->next = item->next;
+	}
 	item->next = NULL;
 	item->prev = NULL;
 }

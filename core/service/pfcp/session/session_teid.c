@@ -855,6 +855,7 @@ int64_t session_gtpu_init(uint32_t session_num)
 int session_gtpu_end_marker(comm_msg_outh_cr_t *ohc)
 {
     upc_config_info *upc_cfg = upc_get_config();
+    struct session_gtpu_table *table = session_gtpu_table_get();
     uint8_t buf[256];
     uint32_t buf_len = 0;
     struct pro_eth_hdr *eth_hdr = NULL;
@@ -863,99 +864,144 @@ int session_gtpu_end_marker(comm_msg_outh_cr_t *ohc)
     struct pro_udp_hdr *udp_hdr = NULL;
     struct pro_gtp_hdr *gtpu_hdr = NULL;
     struct session_gtpu_entry *entry = NULL;
+    session_gtpu_key key;
+    uint8_t ip_flag, cnt_max, cnt;
+    uint16_t ohc_type;
 
     if (NULL == ohc) {
         LOG(SESSION, ERR, "Abnormal parameter, ohc(%p).", ohc);
         return -1;
     }
 
-    /* set eth header */
-    eth_hdr = (struct pro_eth_hdr *)buf;
-    buf_len += ETH_HLEN;
-
-    upc_mb_copy_port_mac(entry->port, eth_hdr->dest);
-    ros_memcpy(eth_hdr->source, upc_cfg->n4_local_mac, ETH_ALEN);
-    eth_hdr->eth_type = htons(ETH_PRO_IP);
-
-    ros_rwlock_read_lock(&entry->lock);   /* lock */
-    switch (entry->ip_flag) {
-        case SESSION_IP_V4:
-            ipv4_hdr = (struct pro_ipv4_hdr *)(buf + buf_len);
-            buf_len += sizeof(struct pro_ipv4_hdr);
-
-            ipv4_hdr->version       = 4;
-            ipv4_hdr->ihl           = 5;
-            ipv4_hdr->tos           = 0;
-            ipv4_hdr->protocol      = IP_PRO_UDP;
-            ipv4_hdr->tot_len       = htons(sizeof(struct pro_gtp_hdr) +
-                sizeof(struct pro_udp_hdr) + sizeof(struct pro_ipv4_hdr));
-            ipv4_hdr->id            = (uint16_t)ros_get_tsc_hz();
-            ipv4_hdr->frag_off      = 0x0040;
-            ipv4_hdr->ttl           = 0xFF;
-            ipv4_hdr->dest          = htonl(ohc->ipv4);
-            ipv4_hdr->source        = htonl(upc_cfg->upf_ip_cfg[EN_PORT_N3].ipv4);
-            ipv4_hdr->check         = 0;
+	ohc_type = ohc->type.value;
+	switch (ohc_type) {
+        case 0x100:
+        case 0x200:
+            cnt_max = 1;
             break;
 
-        case SESSION_IP_V6:
-            ipv6_hdr = (struct pro_ipv6_hdr *)(buf + buf_len);
-            buf_len += sizeof(struct pro_ipv6_hdr);
+        case 0x300:
+            cnt_max = 2;
+            return 0;
 
-            ipv6_hdr->vtc_flow.d.version    = 6;
-    		ipv6_hdr->vtc_flow.d.priority	= 0;
-    		ipv6_hdr->vtc_flow.d.flow_lbl	= 0;
-            ipv6_hdr->vtc_flow.value        = htonl(ipv6_hdr->vtc_flow.value);
-    		ipv6_hdr->payload_len           = htons(sizeof(struct pro_gtp_hdr) +
-                sizeof(struct pro_udp_hdr));
-    		ipv6_hdr->nexthdr		        = IP_PRO_UDP;
-    		ipv6_hdr->hop_limit	            = 64;
-            ros_memcpy(ipv6_hdr->saddr, upc_cfg->upf_ip_cfg[EN_PORT_N3].ipv6, IPV6_ALEN);
-            ros_memcpy(ipv6_hdr->daddr, &ohc->ipv6, IPV6_ALEN);
-            break;
+        default:
+            LOG(SESSION, RUNNING, "OHC type unsupported, type: %d.", ohc->type.value);
+            return -1;
     }
 
-    /* set udp header */
-    udp_hdr = (struct pro_udp_hdr *)(buf + buf_len);
-    buf_len += sizeof(struct pro_udp_hdr);
+	/* IPv4 and IPv6 dual stack */
+	for (cnt = 0; cnt < cnt_max; ++cnt) {
+		if (ohc_type & 0x100) {
+			memset(&key, 0, sizeof(key));
+			key.ipv4 = ohc->ipv4;
+            ohc_type &= ~0x100;
+		} else if (ohc_type & 0x200) {
+			memset(&key, 0, sizeof(key));
+			memcpy(key.ipv6, ohc->ipv6.s6_addr, IPV6_ALEN);
+            ohc_type &= ~0x200;
+		} else {
+			LOG(SESSION, RUNNING, "OHC type unsupported, type: %d.",
+	                ohc->type.value);
+            return -1;
+		}
 
-    udp_hdr->dest       = FLOW_UDP_PORT_GTPU;
-    udp_hdr->source     = FLOW_UDP_PORT_GTPU;
-    udp_hdr->len        = htons(sizeof(struct pro_gtp_hdr) +
-            sizeof(struct pro_udp_hdr));
-    udp_hdr->check      = 0;
+	    ros_rwlock_write_lock(&table->lock); /* lock */
+	    entry = (struct session_gtpu_entry *)rbtree_search(&table->gtpu_root, &key, session_gtpu_compare);
+	    ros_rwlock_write_unlock(&table->lock); /* unlock */
+	    if (NULL == entry) {
+	    	LOG(SESSION, ERR, "Search gtpu entry failed, Cannot send end-marker.");
+	    	continue;
+	    }
 
-    gtpu_hdr = (struct pro_gtp_hdr *)(buf + buf_len);
-    buf_len += sizeof(struct pro_gtp_hdr);
+	    /* set eth header */
+	    eth_hdr = (struct pro_eth_hdr *)buf;
+	    buf_len += ETH_HLEN;
 
-    /* set gtpu header */
-    gtpu_hdr->flags.data        = 0;
-    gtpu_hdr->flags.s.version   = 1;
-    gtpu_hdr->flags.s.type      = 1;
-    gtpu_hdr->flags.s.e         = 0;
-    gtpu_hdr->flags.s.s         = 0;
-    gtpu_hdr->flags.s.reserve   = 0;
-    gtpu_hdr->teid              = htonl(ohc->teid);
-    gtpu_hdr->msg_type          = MSG_TYPE_T_END_MARKER;
-    gtpu_hdr->length            = 0;
+		ros_rwlock_read_lock(&entry->lock);   /* lock */
+	    upc_mb_copy_port_mac(entry->port, eth_hdr->dest);
+	    ros_memcpy(eth_hdr->source, upc_cfg->n4_local_mac, ETH_ALEN);
+	    eth_hdr->eth_type = htons(ETH_PRO_IP);
 
-    ros_rwlock_read_unlock(&entry->lock); /* unlock */
+	    ip_flag = entry->ip_flag;
+	    ros_rwlock_read_unlock(&entry->lock); /* unlock */
 
-    /* set checksum */
-    switch (entry->ip_flag) {
-        case SESSION_IP_V4:
-            ipv4_hdr->check = calc_crc_ip(ipv4_hdr);
-            udp_hdr->check = calc_crc_udp(udp_hdr, ipv4_hdr);
-            break;
+	    switch (ip_flag) {
+	        case SESSION_IP_V4:
+	            ipv4_hdr = (struct pro_ipv4_hdr *)(buf + buf_len);
+	            buf_len += sizeof(struct pro_ipv4_hdr);
 
-        case SESSION_IP_V6:
-            udp_hdr->check = calc_crc_udp6(udp_hdr, ipv6_hdr);
-            break;
-    }
+	            ipv4_hdr->version       = 4;
+	            ipv4_hdr->ihl           = 5;
+	            ipv4_hdr->tos           = 0;
+	            ipv4_hdr->protocol      = IP_PRO_UDP;
+	            ipv4_hdr->tot_len       = htons(sizeof(struct pro_gtp_hdr) +
+	                sizeof(struct pro_udp_hdr) + sizeof(struct pro_ipv4_hdr));
+	            ipv4_hdr->id            = (uint16_t)ros_get_tsc_hz();
+	            ipv4_hdr->frag_off      = 0x0040;
+	            ipv4_hdr->ttl           = 0xFF;
+	            ipv4_hdr->dest          = htonl(ohc->ipv4);
+	            ipv4_hdr->source        = htonl(upc_cfg->upf_ip_cfg[EN_PORT_N3].ipv4);
+	            ipv4_hdr->check         = 0;
+	            break;
 
-    /* send to LB */
-    if (0 > upc_channel_trans(buf, buf_len)) {
-        LOG(SESSION, ERR, "Send packet to LB failed.");
-        return -1;
+	        case SESSION_IP_V6:
+	            ipv6_hdr = (struct pro_ipv6_hdr *)(buf + buf_len);
+	            buf_len += sizeof(struct pro_ipv6_hdr);
+
+	            ipv6_hdr->vtc_flow.d.version    = 6;
+	    		ipv6_hdr->vtc_flow.d.priority	= 0;
+	    		ipv6_hdr->vtc_flow.d.flow_lbl	= 0;
+	            ipv6_hdr->vtc_flow.value        = htonl(ipv6_hdr->vtc_flow.value);
+	    		ipv6_hdr->payload_len           = htons(sizeof(struct pro_gtp_hdr) +
+	                sizeof(struct pro_udp_hdr));
+	    		ipv6_hdr->nexthdr		        = IP_PRO_UDP;
+	    		ipv6_hdr->hop_limit	            = 64;
+	            ros_memcpy(ipv6_hdr->saddr, upc_cfg->upf_ip_cfg[EN_PORT_N3].ipv6, IPV6_ALEN);
+	            ros_memcpy(ipv6_hdr->daddr, &ohc->ipv6, IPV6_ALEN);
+	            break;
+	    }
+
+	    /* set udp header */
+	    udp_hdr = (struct pro_udp_hdr *)(buf + buf_len);
+	    buf_len += sizeof(struct pro_udp_hdr);
+
+	    udp_hdr->dest       = FLOW_UDP_PORT_GTPU;
+	    udp_hdr->source     = FLOW_UDP_PORT_GTPU;
+	    udp_hdr->len        = htons(sizeof(struct pro_gtp_hdr) +
+	            sizeof(struct pro_udp_hdr));
+	    udp_hdr->check      = 0;
+
+	    gtpu_hdr = (struct pro_gtp_hdr *)(buf + buf_len);
+	    buf_len += sizeof(struct pro_gtp_hdr);
+
+	    /* set gtpu header */
+	    gtpu_hdr->flags.data        = 0;
+	    gtpu_hdr->flags.s.version   = 1;
+	    gtpu_hdr->flags.s.type      = 1;
+	    gtpu_hdr->flags.s.e         = 0;
+	    gtpu_hdr->flags.s.s         = 0;
+	    gtpu_hdr->flags.s.reserve   = 0;
+	    gtpu_hdr->teid              = htonl(ohc->teid);
+	    gtpu_hdr->msg_type          = MSG_TYPE_T_END_MARKER;
+	    gtpu_hdr->length            = 0;
+
+	    /* set checksum */
+	    switch (ip_flag) {
+	        case SESSION_IP_V4:
+	            ipv4_hdr->check = calc_crc_ip(ipv4_hdr);
+	            udp_hdr->check = calc_crc_udp(udp_hdr, ipv4_hdr);
+	            break;
+
+	        case SESSION_IP_V6:
+	            udp_hdr->check = calc_crc_udp6(udp_hdr, ipv6_hdr);
+	            break;
+	    }
+
+	    /* send to LB */
+	    if (0 > upc_channel_trans(buf, buf_len)) {
+	        LOG(SESSION, ERR, "Send packet to LB failed.");
+	        return -1;
+	    }
     }
 
     LOG(SESSION, RUNNING, "Send END MARKER packet success, teid %u, buf(%p), len: %d.",
