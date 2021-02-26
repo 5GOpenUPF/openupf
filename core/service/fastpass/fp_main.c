@@ -124,7 +124,12 @@ static inline uint32_t fp_packet_stat_get(uint32_t stat_mod, uint8_t core_id)
 uint8_t *fp_get_port_mac(uint8_t port)
 {
 #ifndef ENABLE_OCTEON_III
-    return dpdk_get_mac(fp_port_to_index_public(port));
+    uint8_t *ret_mac = dpdk_get_mac(fp_port_to_index_public(port));
+
+    if (unlikely(NULL == ret_mac)) {
+        exit(-1);
+    }
+    return ret_mac;
 
 #else
     static uint8_t g_error_mac[ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};

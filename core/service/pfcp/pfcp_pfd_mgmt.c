@@ -1086,12 +1086,13 @@ fast_response:
     if (sync_blk_exist) {
         if (upc_hk_change_sync_blk_status) {
             if (0 > upc_hk_change_sync_blk_status(sync_blk_index, HA_SYNC_REPLY_TO_CP, sync_event)) {
-                LOG(UPC, ERR, "Change PFD sync msg failed, pfd_entry->index: %u.", pfd_entry->index);
+                LOG(UPC, ERR, "Change PFD sync msg failed, pfd_entry->index: %u.", pfd_entry ? pfd_entry->index : 0);
             }
         }
     }
 
-    pfcp_pfd_entry_free(pfd_entry->index);
+	if (pfd_entry)
+    	pfcp_pfd_entry_free(pfd_entry->index);
 }
 
 void pfcp_build_pfd_management_response(session_pfd_management_response *pfd_rep, uint8_t *resp_buffer,

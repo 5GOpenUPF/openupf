@@ -59,6 +59,7 @@ static dpdk_proc_no_eal_pthr_cb_t gfuncDpdkExtraTaskHook = NULL;
 static struct rte_mempool *pktmbuf_pool[NB_SOCKETS];
 static struct rte_mempool *pktmbuf_indirect_pool[NB_SOCKETS];
 static struct lcore_conf dpdk_lcore_conf[RTE_MAX_LCORE];
+static unsigned dpdk_nb_ports;
 
 static EN_DPDK_INIT_STAT eDpdkLibInitStat = EN_DPDK_INIT_STAT_NULL;
 /* System core info */
@@ -415,6 +416,14 @@ void *Dpdk_LibTask(void *arg)
     openlog("UPF", LOG_CONS, LOG_USER);
 
 	nb_ports = rte_eth_dev_count_avail();
+	dpdk_nb_ports = nb_ports;
+
+	if (dpdk_cfg.dev_num != nb_ports) {
+        LOG(SERVER, ERR, "DPDK init fail, white-PCI number %d != dev_count_avail %u",
+            dpdk_cfg.dev_num, nb_ports);
+        Dpdk_SetInitStat(EN_DPDK_INIT_STAT_FAIL);
+        return G_NULL;
+	}
 
     enabled_port_mask = ((1 << nb_ports) - 1);
 
@@ -718,7 +727,7 @@ void dpdk_send_packet(struct rte_mbuf *m, uint16_t port_id, const char *func, in
         uint32_t len = 0, i;
         int32_t  len2;
 
-        /* 如果需要硬件去计算校验和但是又出现分片的情况，需要提前计算好校验和 */
+        /* Calc crc */
         if (likely(m->ol_flags & PKT_TX_IP_CKSUM)) {
             struct pro_ipv4_hdr *ip_hdr = rte_pktmbuf_mtod_offset(m, struct pro_ipv4_hdr *,
                     (uint16_t)sizeof(struct rte_ether_hdr));
@@ -968,8 +977,6 @@ int32_t dpdk_init(struct pcf_file *conf, void *ssct1, void *extra_task)
     pthread_t ptid = 0;
     dpdk_proc_eal_pthr_cb_t ssct = ssct1;
     char result[32];
-    cpu_set_t cpuset;
-    pthread_attr_t attr1;
     char *device_name, *pci_addr, *token = NULL, *dev_token = NULL;
 
     dpdk_cfg.dev_num = 0;
@@ -1011,16 +1018,7 @@ int32_t dpdk_init(struct pcf_file *conf, void *ssct1, void *extra_task)
     dpdk_cfg.rx_queue = dpdk_cfg.tx_queue = dpdk_cfg.core_num - 1;
 
     /* Bind the control process to the control core */
-    pthread_attr_init(&attr1);
-    CPU_ZERO(&cpuset);
-    CPU_SET(dpdk_cfg.cpus[0], &cpuset);
-
-    if (pthread_attr_setaffinity_np(&attr1, sizeof(cpu_set_t), &cpuset) != 0) {
-        LOG(SERVER, ERR, "pthread_attr_setaffinity_np fail on core(%d)", dpdk_cfg.cpus[0]);
-        return -1;
-    }
-
-    ret = pthread_create(&ptid, &attr1, Dpdk_LibTask, (void *)conf);
+    ret = pthread_create(&ptid, NULL, Dpdk_LibTask, (void *)conf);
     if (ret < 0) {
         LOG(SERVER, ERR, "pthread_create Dpdk_LibTask Fail!\n");
         return -1;
@@ -1264,10 +1262,10 @@ int dpdk_show_mempool(uint32_t ulCoreId, FILE *f)
 
 uint8_t *dpdk_get_mac(uint16_t portid)
 {
-    unsigned nb_ports = rte_eth_dev_count_avail();
+    unsigned nb_ports = dpdk_nb_ports;
 
     if (nb_ports <= portid) {
-        LOG(SERVER, ERR, "Abnormal Port id %u.", portid);
+        LOG(SERVER, ERR, "Abnormal Parameter, nb_ports %u, portid %u.", nb_ports, portid);
 		return NULL;
 	}
 
