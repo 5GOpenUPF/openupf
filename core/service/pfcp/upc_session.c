@@ -8642,6 +8642,8 @@ static int upc_assign_teid(uint32_t node_index,
         }
 
         if (pdi->local_fteid.f_teid_flag.d.chid) {
+            LOG(UPC, DEBUG, "Choose ID %d, choose array %d", pdi->local_fteid.choose_id,
+                choose_mgmt->choose_id[pdi->local_fteid.choose_id]);
             if (choose_mgmt->choose_id[pdi->local_fteid.choose_id]) {
                 pdi->local_fteid.teid = choose_mgmt->teid[pdi->local_fteid.choose_id];
 
@@ -9938,13 +9940,51 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
     sess_content.msg_header.node_id_index = node_cb->index;
     sess_content.msg_header.seq_num = pkt_seq;
 
-    seid_entry = upc_seid_entry_insert(node_cb, &sess_content);
+    seid_entry = upc_seid_entry_alloc();
     if (NULL == seid_entry) {
-        LOG(UPC, ERR, "insert seid failed.");
+        LOG(UPC, ERR, "Allocate seid failed.");
 
         res_cause = SESS_NO_RESOURCES_AVAILABLE;
         goto fast_response;
     }
+    sess_content.local_seid = seid_entry->index;
+
+    if (0 > upc_alloc_teid_from_create(&sess_content, trace_flag)) {
+        LOG(UPC, ERR, "Alloc teid from session create failed.");
+
+        if (0 > upc_free_teid_from_create(&sess_content, trace_flag)) {
+            LOG(UPC, ERR, "Free TEID failed.");
+        }
+        Res_Free(upc_seid_get_pool_id(), 0, seid_entry->index);
+        res_cause = SESS_NO_RESOURCES_AVAILABLE;
+
+        goto fast_response;
+    }
+
+    if (0 > upc_alloc_ueip_from_create(&sess_content, trace_flag)) {
+        LOG(UPC, ERR, "Alloc UEIP from session create failed.");
+
+        if (0 > upc_free_teid_from_create(&sess_content, trace_flag)) {
+            LOG(UPC, ERR, "Free TEID failed.");
+        }
+
+        if (0 > upc_free_ueip_from_create(&sess_content, trace_flag)) {
+            LOG(UPC, ERR, "Free UEIP failed.");
+        }
+        Res_Free(upc_seid_get_pool_id(), 0, seid_entry->index);
+        res_cause = SESS_NO_RESOURCES_AVAILABLE;
+
+        goto fast_response;
+    }
+
+    if (0 > upc_seid_entry_add_common(seid_entry, node_cb, &sess_content)) {
+        LOG(UPC, ERR, "Add seid entry common failed.");
+        Res_Free(upc_seid_get_pool_id(), 0, seid_entry->index);
+        res_cause = SESS_NO_RESOURCES_AVAILABLE;
+
+        goto fast_response;
+    }
+
     upc_node_update_peer_sa(node_cb, sa);
 
     if (sess_content.member_flag.d.user_id_present) {
@@ -9987,42 +10027,6 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
         ros_rwlock_write_unlock(&user_sig_trace.rwlock);
     }
     LOG_TRACE(UPC, RUNNING, trace_flag, "Parse session establishment request finish.");
-
-    if (0 > upc_alloc_teid_from_create(&sess_content, trace_flag)) {
-        LOG(UPC, ERR, "Alloc teid from session create failed.");
-
-        if (0 > upc_free_teid_from_create(&sess_content, trace_flag)) {
-            LOG(UPC, ERR, "Free TEID failed.");
-        }
-
-        res_cause = SESS_NO_RESOURCES_AVAILABLE;
-
-        if (0 > upc_seid_entry_remove(seid_entry->index)) {
-            LOG(UPC, ERR, "remove seid entry failed.");
-        }
-
-        goto fast_response;
-    }
-
-    if (0 > upc_alloc_ueip_from_create(&sess_content, trace_flag)) {
-        LOG(UPC, ERR, "Alloc UEIP from session create failed.");
-
-        if (0 > upc_free_teid_from_create(&sess_content, trace_flag)) {
-            LOG(UPC, ERR, "Free TEID failed.");
-        }
-
-        if (0 > upc_free_ueip_from_create(&sess_content, trace_flag)) {
-            LOG(UPC, ERR, "Free UEIP failed.");
-        }
-
-        res_cause = SESS_NO_RESOURCES_AVAILABLE;
-
-        if (0 > upc_seid_entry_remove(seid_entry->index)) {
-            LOG(UPC, ERR, "remove seid entry failed.");
-        }
-
-        goto fast_response;
-    }
 
     seid_entry->session_config.msg_header.seq_num = sess_content.msg_header.seq_num;
 

@@ -69,6 +69,7 @@ struct session_peer_fteid_entry {
     session_fteid_key           fteid_key;
     uint8_t                     ip_flag;        /* 1: ipv4, 2: ipv6 */
     uint8_t                     spare[3];
+    ros_atomic32_t              count;
 };
 
 struct session_peer_fteid_table {

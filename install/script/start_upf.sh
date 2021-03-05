@@ -44,14 +44,21 @@ sleep 3
 # Check whether the process started successfully
 i=0
 result=0
+fail_cnt=0
 while [ $i -lt ${PROG_LIST_SIZE} ]
 do
     PROG_ID=`docker exec -i ${PROG_LIST[${i}]} sh -c "pgrep ${PROG_LIST[${i}]}"`
     if [ "${PROG_ID}" == "" ]; then
+        fail_cnt=$(($fail_cnt+1))
+        if [ $fail_cnt -lt 3 ]; then
+            docker exec -di ${PROG_LIST[${i}]} sh -c "./bin/${PROG_LIST[${i}]}"
+            continue
+        fi
         echo "Program ${PROG_LIST[${i}]} failed to start."
         result=-1
     fi
 
+    fail_cnt=0
     i=$(($i+1))
 done
 

@@ -279,7 +279,7 @@ static struct upc_teid_entry *upc_teid_get_entry(uint32_t teid)
     ros_rwlock_write_lock(&table->lock); /* lock */
     if (G_FALSE == upc_teid_is_valid(table, teid_index)) {
         ros_rwlock_write_unlock(&table->lock); /* unlock */
-        LOG(UPC, ERR, "free teid failed, teid_index: %u, node_index: %u.",
+        LOG(UPC, ERR, "Teid get failed, no such entry, teid_index: %u, node_index: %u.",
             teid_index, node_index);
         return NULL;
     }

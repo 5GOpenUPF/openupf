@@ -1118,10 +1118,37 @@ int session_peer_fteid_insert(void *ip, uint8_t ip_ver, uint32_t teid, struct pf
     struct session_peer_fteid_table *table = session_peer_fteid_table_get();
     struct session_peer_fteid_entry *entry = NULL;
     uint32_t res_key = 0, res_index = 0;
+    session_fteid_key fteid_key;
 
     if (NULL == ip) {
         LOG(SESSION, ERR, "Abnormal parameter, ip(%p).", ip);
         return -1;
+    }
+
+    /* Check for existing items */
+    switch (ip_ver) {
+        case SESSION_IP_V4:
+            fteid_key.ipv4 = *(uint32_t *)ip;
+            break;
+
+        case SESSION_IP_V6:
+            memcpy(fteid_key.ipv6, ip, IPV6_ALEN);
+            break;
+
+        default:
+            LOG(SESSION, ERR, "IP version type: %d unsupport.", ip_ver);
+            return -1;
+    }
+    fteid_key.teid = teid;
+    ros_rwlock_write_lock(&table->lock); /* lock */
+    entry = (struct session_peer_fteid_entry *)rbtree_search(&table->peer_fteid_root,
+        &fteid_key, session_peer_fteid_compare);
+    ros_rwlock_write_unlock(&table->lock); /* unlock */
+    if (entry) {
+        ros_atomic32_inc(&entry->count);
+        LOG(SESSION, RUNNING,
+            "The same peer f-teid entry already exists, Increase count.");
+        return 0;
     }
 
     if (G_FAILURE == Res_Alloc(table->pool_id, &res_key, &res_index, EN_RES_ALLOC_MODE_OC)) {
@@ -1134,21 +1161,7 @@ int session_peer_fteid_insert(void *ip, uint8_t ip_ver, uint32_t teid, struct pf
     ros_rwlock_write_lock(&entry->lock); /* lock */
     ros_memset(&entry->fteid_key, 0, sizeof(session_fteid_key));
     entry->ip_flag = ip_ver;
-    entry->fteid_key.teid = teid;
-    switch (ip_ver) {
-        case SESSION_IP_V4:
-            entry->fteid_key.ipv4 = *(uint32_t *)ip;
-            break;
-
-        case SESSION_IP_V6:
-            memcpy(entry->fteid_key.ipv6, ip, IPV6_ALEN);
-            break;
-
-        default:
-            ros_rwlock_write_unlock(&entry->lock); /* unlock */
-            LOG(SESSION, ERR, "IP version type: %d unsupport.", ip_ver);
-            return -1;
-    }
+    memcpy(&entry->fteid_key, &fteid_key, sizeof(session_fteid_key));
     entry->sess_cfg = sess_cfg;
     ros_rwlock_write_unlock(&entry->lock); /* unlock */
 
@@ -1190,20 +1203,46 @@ int session_peer_fteid_delete(comm_msg_outh_cr_t *ohc)
             key.ipv4 = ohc->ipv4;
 
             ros_rwlock_write_lock(&table->lock); /* lock */
-            entry = (struct session_peer_fteid_entry *)rbtree_delete(&table->peer_fteid_root, &key,
-                session_peer_fteid_compare);
+            entry = (struct session_peer_fteid_entry *)rbtree_search(&table->peer_fteid_root,
+                &key, session_peer_fteid_compare);
             ros_rwlock_write_unlock(&table->lock); /* unlock */
             if (entry) {
-                Res_Free(table->pool_id, 0, entry->index);
+                LOG(SESSION, RUNNING, "The same peer f-teid entry already exists, count: %d.",
+                    ros_atomic32_read(&entry->count));
+
+                ros_atomic32_dec(&entry->count);
+                if (0 == ros_atomic32_read(&entry->count)) {
+                    ros_rwlock_write_lock(&table->lock); /* lock */
+                    entry = (struct session_peer_fteid_entry *)rbtree_delete(&table->peer_fteid_root,
+                        &key, session_peer_fteid_compare);
+                    ros_rwlock_write_unlock(&table->lock); /* unlock */
+                    if (entry) {
+                        ros_atomic32_init(&entry->count);
+                        Res_Free(table->pool_id, 0, entry->index);
+                    }
+                }
             }
 
             memcpy(key.ipv6, ohc->ipv6.s6_addr, IPV6_ALEN);
             ros_rwlock_write_lock(&table->lock); /* lock */
-            entry = (struct session_peer_fteid_entry *)rbtree_delete(&table->peer_fteid_root, &key,
-                session_peer_fteid_compare);
+            entry = (struct session_peer_fteid_entry *)rbtree_search(&table->peer_fteid_root,
+                &key, session_peer_fteid_compare);
             ros_rwlock_write_unlock(&table->lock); /* unlock */
             if (entry) {
-                Res_Free(table->pool_id, 0, entry->index);
+                LOG(SESSION, RUNNING, "The same peer f-teid entry already exists, count: %d.",
+                    ros_atomic32_read(&entry->count));
+
+                ros_atomic32_dec(&entry->count);
+                if (0 == ros_atomic32_read(&entry->count)) {
+                    ros_rwlock_write_lock(&table->lock); /* lock */
+                    entry = (struct session_peer_fteid_entry *)rbtree_delete(&table->peer_fteid_root,
+                        &key, session_peer_fteid_compare);
+                    ros_rwlock_write_unlock(&table->lock); /* unlock */
+                    if (entry) {
+                        ros_atomic32_init(&entry->count);
+                        Res_Free(table->pool_id, 0, entry->index);
+                    }
+                }
             }
             return 0;
 
@@ -1214,14 +1253,25 @@ int session_peer_fteid_delete(comm_msg_outh_cr_t *ohc)
     }
 
     ros_rwlock_write_lock(&table->lock); /* lock */
-    entry = (struct session_peer_fteid_entry *)rbtree_delete(&table->peer_fteid_root, &key,
-        session_peer_fteid_compare);
+    entry = (struct session_peer_fteid_entry *)rbtree_search(&table->peer_fteid_root,
+        &key, session_peer_fteid_compare);
     ros_rwlock_write_unlock(&table->lock); /* unlock */
-    if (NULL == entry) {
-        LOG(SESSION, ERR, "gtpu entry delete failed, no such entry.");
-        return -1;
+    if (entry) {
+        LOG(SESSION, RUNNING, "The same peer f-teid entry already exists, count: %d.",
+            ros_atomic32_read(&entry->count));
+
+        ros_atomic32_dec(&entry->count);
+        if (0 == ros_atomic32_read(&entry->count)) {
+            ros_rwlock_write_lock(&table->lock); /* lock */
+            entry = (struct session_peer_fteid_entry *)rbtree_delete(&table->peer_fteid_root,
+                &key, session_peer_fteid_compare);
+            ros_rwlock_write_unlock(&table->lock); /* unlock */
+            if (entry) {
+                ros_atomic32_init(&entry->count);
+                Res_Free(table->pool_id, 0, entry->index);
+            }
+        }
     }
-    Res_Free(table->pool_id, 0, entry->index);
 
     return 0;
 }
@@ -1250,6 +1300,7 @@ static int64_t session_peer_fteid_init(uint32_t session_num)
     for (index = 0; index < max_num; ++index) {
         entry[index].index  = index;
         ros_rwlock_init(&entry[index].lock);
+        ros_atomic32_init(&entry[index].count);
     }
 
     pool_id = Res_CreatePool();

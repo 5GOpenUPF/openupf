@@ -46,10 +46,13 @@ typedef struct tag_upc_seid_table_header {
 
 upc_seid_table_header *upc_seid_get_table_head(void);
 upc_seid_entry *upc_seid_get_entry(uint32_t index);
+uint16_t upc_seid_get_pool_id(void);
 
 int64_t upc_seid_table_init(uint32_t sess_num);
+int upc_seid_entry_add_common(upc_seid_entry *seid_entry,
+    upc_node_cb *node_cb, session_content_create *sess_content);
 upc_seid_entry *upc_seid_entry_add_target(upc_node_cb *node_cb, session_content_create *sess);
-upc_seid_entry *upc_seid_entry_insert(upc_node_cb *node_cb, session_content_create *sess_content);
+upc_seid_entry *upc_seid_entry_alloc(void);
 int upc_seid_entry_remove(uint64_t up_seid);
 upc_seid_entry *upc_seid_entry_search(uint64_t up_seid);
 int upc_seid_release_from_node(upc_node_cb *node_cb);

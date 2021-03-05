@@ -596,20 +596,20 @@ static int pdr_fr_v6_compare(struct rb_node *node, void *key)
 int pdr_arp_match_ueip(struct pdr_key *rb_key, uint8_t is_v4)
 {
     struct pdr_table_head *pdr_head = pdr_get_head();
-	struct rb_node *queue_node = NULL;
+    struct rb_node *queue_node = NULL;
 
     LOG(SESSION, PERIOD, "ARP match key: 0x%08x %08x %08x %08x",
         *(uint32_t *)&rb_key->ip_addr.ipv6.value[0],
         *(uint32_t *)&rb_key->ip_addr.ipv6.value[4],
         *(uint32_t *)&rb_key->ip_addr.ipv6.value[8],
         *(uint32_t *)&rb_key->ip_addr.ipv6.value[12]);
-	ros_rwlock_read_lock(&pdr_head->ueip_v4_lock);/* lock */
+    ros_rwlock_read_lock(&pdr_head->ueip_v4_lock);/* lock */
     if (is_v4) {
         queue_node = rbtree_search(&pdr_head->ueip_dv4_root,
-        	rb_key, pdr_ueip_v4_compare);
+            rb_key, pdr_ueip_v4_compare);
     } else {
         queue_node = rbtree_search(&pdr_head->ueip_dv6_root,
-        	rb_key, pdr_ueip_v6_compare);
+            rb_key, pdr_ueip_v6_compare);
     }
     ros_rwlock_read_unlock(&pdr_head->ueip_v4_lock);/* unlock */
 
@@ -1144,7 +1144,7 @@ static int sdf_filter_process(struct filter_key *key, uint8_t *field_offset,
                     (ipdaddr[0] & damask[0]), (ipdaddr[1] & damask[1]),
                     (fddaddr[0] & damask[0]), (fddaddr[1] & damask[1]));
 
-        	    return -1;
+                return -1;
             }
             else if (0 == fd->no_sp && ((src_port < fd->sp_min) || (src_port > fd->sp_max))) {
                 LOG(SESSION, RUNNING, "sdf filter ip sport mismatch");
@@ -1247,163 +1247,163 @@ static inline int pdr_match_qfi(struct filter_key *key, uint8_t *qfi_array, uint
 
 static int white_list_filter_process(struct pdr_table *pdr_tbl, struct pro_ipv4_hdr *ip_hdr)
 {
-	struct white_list_table *white_list = NULL;
-	struct pro_tcp_hdr  	 *tcp_hdr = NULL;
-	struct pkt_detection_info *pdi_content = NULL;
-	struct session_t        *session_link = NULL;
-	uint32_t				dst_ip,sni_ip;
-	extensions_key 			e_key[11] = {{0}};
-	char 					sni[256]={0};
-	char 					http_url[1024]={0};
-	char 					host[256]={0};
-	char 					buf_str[32]={0};
-	uint16_t				sni_len = 0;
-	int						result = 0;
-	uint8_t					exist_17516 = 0;
-	uint64_t				local_info_64 = 0,user_info_64 = 0;
+    struct white_list_table *white_list = NULL;
+    struct pro_tcp_hdr       *tcp_hdr = NULL;
+    struct pkt_detection_info *pdi_content = NULL;
+    struct session_t        *session_link = NULL;
+    uint32_t                dst_ip,sni_ip;
+    extensions_key          e_key[11] = {{0}};
+    char                    sni[256]={0};
+    char                    http_url[1024]={0};
+    char                    host[256]={0};
+    char                    buf_str[32]={0};
+    uint16_t                sni_len = 0;
+    int                     result = 0;
+    uint8_t                 exist_17516 = 0;
+    uint64_t                local_info_64 = 0,user_info_64 = 0;
 
-	if (pdr_tbl == NULL || NULL == ip_hdr) {
+    if (pdr_tbl == NULL || NULL == ip_hdr) {
         LOG(SESSION, ERR, "The condition is not satisfied, pdr_tbl(%p), ip_hdr(%p)", pdr_tbl, ip_hdr);
         return result;
-	}
+    }
 
-	session_link = pdr_tbl->session_link;
-	pdi_content = &(pdr_tbl->pdr.pdi_content);
-	dst_ip = ntohl(ip_hdr->dest);
-	if (unlikely(ip_hdr->protocol == IP_PRO_TCP))
-	{
-		tcp_hdr = (struct pro_tcp_hdr *)((char *)ip_hdr + (ip_hdr->ihl << 2));
-		if(unlikely(tcp_hdr->psh))
-		{
-			if((ntohs(tcp_hdr->dest) == 80) || (ntohs(tcp_hdr->dest) == 8080))//http的协议判断host
-			{
-				if(!layer7_url_extract(tcp_hdr, ntohs(ip_hdr->tot_len), http_url, host, sizeof(http_url)))
-				{
-					if((white_list=white_list_entry_search(host,0,1)))
-					{
-						pdi_content->head_enrich_flag = 0;
-						result = 0;
-						LOG(SESSION, RUNNING,
-            				"white list filter process host[%s] flag[%x]\n",host, pdi_content->head_enrich_flag);
-						return result;
-					}
-				}
-			}
-			else if (ntohs(tcp_hdr->dest) == 443)
-			{
-				if (pkt_parse_https(tcp_hdr, e_key, 1, &exist_17516) == 0)//https的协议判断SNI(Server Name Indication)
-				{
-					//先进行防欺诈处理
-					if (exist_17516)
-					{
-						if (session_link == NULL)
-						{
-							LOG(SESSION, ERR,"ERROR: PDR linked session is NULL");
-							pdi_content->head_enrich_flag = 0;
-							return 1;
-						}
-						if (e_key[1].is_vaild)
-						{
-							//比对手机号码一不一致，前7字节固定为"msisdn-"。
-							if (strncmp((char *)(e_key[1].value_ptr),"msisdn-",7))
-							{
-								ros_memcpy(buf_str,(e_key[1].value_ptr),7);
-								result = -1;
-								LOG(SESSION, ERR,"ERROR: msisdn diff: phone_num[%s] isn't \"msisdn-\"\n",buf_str);
-								pdi_content->head_enrich_flag = 0;
-								return result;
-							}
-							local_info_64 = ntohll(*((uint64_t *)(e_key[1].value_ptr+7)));
-							user_info_64 = bcd_to_int64(session_link->session.user_id.msisdn,8,1);
-							if (local_info_64 != user_info_64)
-							{
-								result = -1;
-								LOG(SESSION, ERR,"ERROR: phone_num[%ld] != local_num[%ld]\n",
-									local_info_64,user_info_64);
-								pdi_content->head_enrich_flag = 0;
-								return result;
-							}
-						}
-						if (e_key[3].is_vaild)
-						{
-							//比对imsi一不一致，前5字节固定为"imsi-"。
-							if (strncmp((char *)(e_key[3].value_ptr),"imsi-",5))
-							{
-								ros_memcpy(buf_str,(e_key[3].value_ptr),5);
-								result = -1;
-								LOG(SESSION, ERR,"ERROR: imsi[%s] isn't \"imsi-\"\n",buf_str);
-								pdi_content->head_enrich_flag = 0;
-								return result;
-							}
-							local_info_64 = ntohll(*((uint64_t *)(e_key[3].value_ptr+5)));
-							user_info_64 = bcd_to_int64(session_link->session.user_id.imsi,8,1);
-							if (local_info_64 != user_info_64)
-							{
-								result = -1;
-								LOG(SESSION, ERR,"ERROR: imsi[%ld] != local_imsi[%ld]\n",
-									local_info_64,user_info_64);
-								pdi_content->head_enrich_flag = 0;
-								return result;
-							}
-						}
-						if (e_key[4].is_vaild)
-						{
-							//比对imei一不一致，前5字节固定为"imei-"。
-							if (strncmp((char *)(e_key[4].value_ptr),"imei-",5))
-							{
-								ros_memcpy(buf_str,(e_key[4].value_ptr),5);
-								result = -1;
-								LOG(SESSION, ERR,"ERROR: imei[%s] isn't \"imei-\"\n",buf_str);
-								pdi_content->head_enrich_flag = 0;
-								return result;
-							}
-							local_info_64 = ntohll(*((uint64_t *)(e_key[4].value_ptr+5)));
-							user_info_64 = bcd_to_int64(session_link->session.user_id.imei,8,1);
-							if (local_info_64 != user_info_64)
-							{
-								result = -1;
-								LOG(SESSION, ERR,"ERROR: imei[%ld] != local_imei[%ld] flag[%x]\n",
-									local_info_64,user_info_64,pdi_content->head_enrich_flag);
-								pdi_content->head_enrich_flag = 0;
-								return result;
-							}
-						}
-					}
+    session_link = pdr_tbl->session_link;
+    pdi_content = &(pdr_tbl->pdr.pdi_content);
+    dst_ip = ntohl(ip_hdr->dest);
+    if (unlikely(ip_hdr->protocol == IP_PRO_TCP))
+    {
+        tcp_hdr = (struct pro_tcp_hdr *)((char *)ip_hdr + (ip_hdr->ihl << 2));
+        if(unlikely(tcp_hdr->psh))
+        {
+            if((ntohs(tcp_hdr->dest) == 80) || (ntohs(tcp_hdr->dest) == 8080))//http的协议判断host
+            {
+                if(!layer7_url_extract(tcp_hdr, ntohs(ip_hdr->tot_len), http_url, host, sizeof(http_url)))
+                {
+                    if((white_list=white_list_entry_search(host,0,1)))
+                    {
+                        pdi_content->head_enrich_flag = 0;
+                        result = 0;
+                        LOG(SESSION, RUNNING,
+                            "white list filter process host[%s] flag[%x]\n",host, pdi_content->head_enrich_flag);
+                        return result;
+                    }
+                }
+            }
+            else if (ntohs(tcp_hdr->dest) == 443)
+            {
+                if (pkt_parse_https(tcp_hdr, e_key, 1, &exist_17516) == 0)//https的协议判断SNI(Server Name Indication)
+                {
+                    //先进行防欺诈处理
+                    if (exist_17516)
+                    {
+                        if (session_link == NULL)
+                        {
+                            LOG(SESSION, ERR,"ERROR: PDR linked session is NULL");
+                            pdi_content->head_enrich_flag = 0;
+                            return 1;
+                        }
+                        if (e_key[1].is_vaild)
+                        {
+                            //比对手机号码一不一致，前7字节固定为"msisdn-"。
+                            if (strncmp((char *)(e_key[1].value_ptr),"msisdn-",7))
+                            {
+                                ros_memcpy(buf_str,(e_key[1].value_ptr),7);
+                                result = -1;
+                                LOG(SESSION, ERR,"ERROR: msisdn diff: phone_num[%s] isn't \"msisdn-\"\n",buf_str);
+                                pdi_content->head_enrich_flag = 0;
+                                return result;
+                            }
+                            local_info_64 = ntohll(*((uint64_t *)(e_key[1].value_ptr+7)));
+                            user_info_64 = bcd_to_int64(session_link->session.user_id.msisdn,8,1);
+                            if (local_info_64 != user_info_64)
+                            {
+                                result = -1;
+                                LOG(SESSION, ERR,"ERROR: phone_num[%ld] != local_num[%ld]\n",
+                                    local_info_64,user_info_64);
+                                pdi_content->head_enrich_flag = 0;
+                                return result;
+                            }
+                        }
+                        if (e_key[3].is_vaild)
+                        {
+                            //比对imsi一不一致，前5字节固定为"imsi-"。
+                            if (strncmp((char *)(e_key[3].value_ptr),"imsi-",5))
+                            {
+                                ros_memcpy(buf_str,(e_key[3].value_ptr),5);
+                                result = -1;
+                                LOG(SESSION, ERR,"ERROR: imsi[%s] isn't \"imsi-\"\n",buf_str);
+                                pdi_content->head_enrich_flag = 0;
+                                return result;
+                            }
+                            local_info_64 = ntohll(*((uint64_t *)(e_key[3].value_ptr+5)));
+                            user_info_64 = bcd_to_int64(session_link->session.user_id.imsi,8,1);
+                            if (local_info_64 != user_info_64)
+                            {
+                                result = -1;
+                                LOG(SESSION, ERR,"ERROR: imsi[%ld] != local_imsi[%ld]\n",
+                                    local_info_64,user_info_64);
+                                pdi_content->head_enrich_flag = 0;
+                                return result;
+                            }
+                        }
+                        if (e_key[4].is_vaild)
+                        {
+                            //比对imei一不一致，前5字节固定为"imei-"。
+                            if (strncmp((char *)(e_key[4].value_ptr),"imei-",5))
+                            {
+                                ros_memcpy(buf_str,(e_key[4].value_ptr),5);
+                                result = -1;
+                                LOG(SESSION, ERR,"ERROR: imei[%s] isn't \"imei-\"\n",buf_str);
+                                pdi_content->head_enrich_flag = 0;
+                                return result;
+                            }
+                            local_info_64 = ntohll(*((uint64_t *)(e_key[4].value_ptr+5)));
+                            user_info_64 = bcd_to_int64(session_link->session.user_id.imei,8,1);
+                            if (local_info_64 != user_info_64)
+                            {
+                                result = -1;
+                                LOG(SESSION, ERR,"ERROR: imei[%ld] != local_imei[%ld] flag[%x]\n",
+                                    local_info_64,user_info_64,pdi_content->head_enrich_flag);
+                                pdi_content->head_enrich_flag = 0;
+                                return result;
+                            }
+                        }
+                    }
 
-					if (e_key[0].is_vaild)
-					{
-						sni_len = ntohs(*((uint16_t *)(e_key[0].value_ptr+3)));
-						ros_memcpy(sni,(e_key[0].value_ptr+5),sni_len);
-						sni_ip=htonl(inet_addr(sni));
-						if ((sni_ip != 0xffffffff) && (sni_ip != dst_ip))
-						{
-							result = -1;
-							LOG(SESSION, ERR,"ERROR: sni_ip[%x] != dst_ip[%x]\n",sni_ip, dst_ip);
-							pdi_content->head_enrich_flag = 0;
-							return result;
-						}
+                    if (e_key[0].is_vaild)
+                    {
+                        sni_len = ntohs(*((uint16_t *)(e_key[0].value_ptr+3)));
+                        ros_memcpy(sni,(e_key[0].value_ptr+5),sni_len);
+                        sni_ip=htonl(inet_addr(sni));
+                        if ((sni_ip != 0xffffffff) && (sni_ip != dst_ip))
+                        {
+                            result = -1;
+                            LOG(SESSION, ERR,"ERROR: sni_ip[%x] != dst_ip[%x]\n",sni_ip, dst_ip);
+                            pdi_content->head_enrich_flag = 0;
+                            return result;
+                        }
 
-						if ((white_list=white_list_entry_search(sni,0,1)))
-						{
-							pdi_content->head_enrich_flag = white_list->head_enrich_flag;
-							result = 0;
-							return result;
-						}
-					}
-				}
-			}
-		}
-	}
+                        if ((white_list=white_list_entry_search(sni,0,1)))
+                        {
+                            pdi_content->head_enrich_flag = white_list->head_enrich_flag;
+                            result = 0;
+                            return result;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-	if(unlikely((white_list=white_list_entry_search(NULL, dst_ip, 0))))
-	{
-		pdi_content->head_enrich_flag = white_list->head_enrich_flag;
-		result = 0;
-		return result;
-	}
+    if(unlikely((white_list=white_list_entry_search(NULL, dst_ip, 0))))
+    {
+        pdi_content->head_enrich_flag = white_list->head_enrich_flag;
+        result = 0;
+        return result;
+    }
 
-	pdi_content->head_enrich_flag = 0;
-	return result;
+    pdi_content->head_enrich_flag = 0;
+    return result;
 }
 
 static int filter_process(struct filter_key *key, uint8_t *field_offset,
@@ -1415,17 +1415,17 @@ static int filter_process(struct filter_key *key, uint8_t *field_offset,
     struct eth_filter_entry *ethFilter = NULL;
     *url_depth = -1; /* 没有URL匹配的情况设置为-1 */
 
-	LOG(SESSION, RUNNING, "filter_type:%d.", pdi_content->filter_type);
+    LOG(SESSION, RUNNING, "filter_type:%d.", pdi_content->filter_type);
 
-	/* 上行流才匹配qfi */
-	if (likely(FLOW_MASK_FIELD_ISSET(field_offset, FLOW_FIELD_GTP_T_PDU))) {
-	    if (0 < pdi_content->qfi_number) {
-	        if (0 != pdr_match_qfi(key, pdi_content->qfi_array, pdi_content->qfi_number)) {
+    /* 上行流才匹配qfi */
+    if (likely(FLOW_MASK_FIELD_ISSET(field_offset, FLOW_FIELD_GTP_T_PDU))) {
+        if (0 < pdi_content->qfi_number) {
+            if (0 != pdr_match_qfi(key, pdi_content->qfi_array, pdi_content->qfi_number)) {
                 LOG(SESSION, RUNNING, "Uplink packet match QFI failed.");
-	            return -1;
-	        }
-	    }
-	}
+                return -1;
+            }
+        }
+    }
 
     if (pdi_content->application_id_present) {
         if (EN_PFD_MATCH_FAIL == pfd_match_process(key, field_offset, pdi_content->application_id, url_depth)) {
@@ -1544,10 +1544,10 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                                 break;
                             }
                         }
-                    }
-                    if (!flag) {
-                        /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
-                        dl_list_add_tail(&ueip_queue->v4_pq_node, &new_ueip->v4_pq_node);
+                        if (!flag) {
+                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            dl_list_add_tail(&ueip_queue->v4_pq_node, &new_ueip->v4_pq_node);
+                        }
                     }
                     ros_rwlock_write_unlock(&pdr_head->ueip_v4_lock);/* unlock */
                 }
@@ -1595,10 +1595,10 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                                 break;
                             }
                         }
-                    }
-                    if (!flag) {
-                        /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
-                        dl_list_add_tail(&ueip_queue->v6_pq_node, &new_ueip->v6_pq_node);
+                        if (!flag) {
+                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            dl_list_add_tail(&ueip_queue->v6_pq_node, &new_ueip->v6_pq_node);
+                        }
                     }
                     ros_rwlock_write_unlock(&pdr_head->ueip_v6_lock);/* unlock */
                 }
@@ -1653,10 +1653,10 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                                 break;
                             }
                         }
-                    }
-                    if (!flag) {
-                        /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
-                        dl_list_add_tail(&fr_v4_queue->pq_node, &fr_v4->pq_node);
+                        if (!flag) {
+                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            dl_list_add_tail(&fr_v4_queue->pq_node, &fr_v4->pq_node);
+                        }
                     }
                 }
             }
@@ -1705,10 +1705,10 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                                 break;
                             }
                         }
-                    }
-                    if (!flag) {
-                        /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
-                        dl_list_add_tail(&fr_v6_queue->pq_node, &fr_v6->pq_node);
+                        if (!flag) {
+                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            dl_list_add_tail(&fr_v6_queue->pq_node, &fr_v6->pq_node);
+                        }
                     }
                 }
             }
@@ -1780,9 +1780,9 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                                 break;
                             }
                         }
-                    }
-                    if (!flag) {
-                        dl_list_add_tail(&fteid_queue->v4_pq_node, &new_fteid->v4_pq_node);
+                        if (!flag) {
+                            dl_list_add_tail(&fteid_queue->v4_pq_node, &new_fteid->v4_pq_node);
+                        }
                     }
                     ros_rwlock_write_unlock(&pdr_head->teid_v4_lock);/* unlock */
                 }
@@ -1824,9 +1824,9 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                                 break;
                             }
                         }
-                    }
-                    if (!flag) {
-                        dl_list_add_tail(&fteid_queue->v6_pq_node, &new_fteid->v6_pq_node);
+                        if (!flag) {
+                            dl_list_add_tail(&fteid_queue->v6_pq_node, &new_fteid->v6_pq_node);
+                        }
                     }
                     ros_rwlock_write_unlock(&pdr_head->teid_v6_lock);/* unlock */
                 }
@@ -2232,13 +2232,13 @@ static struct pdr_table *pdr_match_frv6(uint8_t *dip, struct filter_key *key)
     }
     ros_rwlock_read_unlock(&pdr_head->fr_v6_lock); /* unlock */
 
-	/* 查找ip和host白名单 */
-	if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
-		LOG(SESSION, DEBUG,
-			"Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
-			ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
-		return NULL;
-	}
+    /* 查找ip和host白名单 */
+    if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
+        LOG(SESSION, DEBUG,
+            "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
+            ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
+        return NULL;
+    }
     LOG(SESSION, DEBUG,
         "Finally, Match pdr (%p), pdr_id: %u(0 is invalid).", ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
 
@@ -2335,12 +2335,12 @@ static struct pdr_table *pdr_match_frv4(uint32_t dip, struct filter_key *key)
     ros_rwlock_read_unlock(&pdr_head->fr_v4_lock); /* unlock */
 
     /* 查找ip和host白名单 */
-	if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
-		LOG(SESSION, DEBUG,
-			"Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
-			ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
-		return NULL;
-	}
+    if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
+        LOG(SESSION, DEBUG,
+            "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
+            ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
+        return NULL;
+    }
     LOG(SESSION, DEBUG,
         "Match pdr (%p), pdr_id: %u(0 is invalid).", ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
 
@@ -2461,12 +2461,12 @@ static struct pdr_table *pdr_match_ueip(struct pdr_ue_ipaddress *ueip_queue, str
     ros_rwlock_read_unlock(&pdr_head->ueip_v6_lock); /* unlock */
 
     /* 查找ip和host白名单 */
-	if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
-		LOG(SESSION, DEBUG,
-			"Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
-			ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
-		return NULL;
-	}
+    if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
+        LOG(SESSION, DEBUG,
+            "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
+            ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
+        return NULL;
+    }
     LOG(SESSION, DEBUG,
         "Finally, Match pdr (%p), pdr_id: %u(0 is invalid).", ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
 
@@ -2590,12 +2590,12 @@ static struct pdr_table *pdr_match_fteid(struct pdr_local_fteid *fteid_queue, st
     ros_rwlock_read_unlock(&pdr_head->teid_v6_lock); /* unlock */
 
     /* 查找ip和host白名单 */
-	if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL2Ipv4Header(key))) {
-		LOG(SESSION, DEBUG,
-			"Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
-			ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
-		return NULL;
-	}
+    if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL2Ipv4Header(key))) {
+        LOG(SESSION, DEBUG,
+            "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
+            ret_pdr, ret_pdr ? ret_pdr->pdr.pdr_id : 0);
+        return NULL;
+    }
 
     /* Save UE MAC address */
     if (ret_pdr && ret_pdr->session_link && PDN_TYPE_ETHERNET == ret_pdr->session_link->session.pdn_type) {
@@ -3065,7 +3065,7 @@ static void pdr_set_active_timer_cb(void *timer, uint64_t para)
         LOG(SESSION, ERR, "instance table fill qer failed.");
     }
 
-	if (-1 == session_instance_fill_user_info(sess, pdr_tbl, &inst_cfg)) {
+    if (-1 == session_instance_fill_user_info(sess, pdr_tbl, &inst_cfg)) {
         LOG(SESSION, ERR, "instance table fill user info failed.");
     }
 
@@ -3268,14 +3268,14 @@ int pdr_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num,
         /* if sdf filter, delete filter list,
            otherwise, need delete each sdf filter in ethernet filter */
         /*目前pdr如果带了激活预定义规则，则默认去取本地filter,
-		   所以不要删除。只有不带，才去删除*/
+           所以不要删除。只有不带，才去删除*/
         if(pdr_tbl->pdr.act_pre_number == 0)
         {
-	        if (FILTER_SDF == pdr_tbl->pdr.pdi_content.filter_type) {
-	            sdf_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
-	        } else if (FILTER_ETH == pdr_tbl->pdr.pdi_content.filter_type) {
-	            eth_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
-	        }
+            if (FILTER_SDF == pdr_tbl->pdr.pdi_content.filter_type) {
+                sdf_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
+            } else if (FILTER_ETH == pdr_tbl->pdr.pdi_content.filter_type) {
+                eth_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
+            }
         }
 
         ros_rwlock_write_lock(&pdr_tbl->lock);/* lock */
@@ -3563,47 +3563,47 @@ int pdr_show_activate_table(struct cli_def *cli, int argc, char **argv)
 struct pdr_table *pdr_ueip_match(struct pdr_key *rb_key, uint8_t is_v4)
 {
     struct pdr_table_head *pdr_head = pdr_get_head();
-	struct rb_node *queue_node = NULL;
-	struct pdr_ue_ipaddress *ueip_queue = NULL;
-	struct dl_list *pos = NULL;
+    struct rb_node *queue_node = NULL;
+    struct pdr_ue_ipaddress *ueip_queue = NULL;
+    struct dl_list *pos = NULL;
     struct dl_list *next = NULL;
-	struct pdr_ue_ipaddress *cur;
+    struct pdr_ue_ipaddress *cur;
 
     LOG(SESSION, RUNNING, "match key: %08x",rb_key->ip_addr.ipv4);
 
-	ros_rwlock_read_lock(&pdr_head->ueip_v4_lock);/* lock */
+    ros_rwlock_read_lock(&pdr_head->ueip_v4_lock);/* lock */
     if (is_v4) {
         queue_node = rbtree_search(&pdr_head->ueip_dv4_root,
-        	rb_key, pdr_ueip_v4_compare);
+            rb_key, pdr_ueip_v4_compare);
     } else {
         queue_node = rbtree_search(&pdr_head->ueip_dv6_root,
-        	rb_key, pdr_ueip_v6_compare);
+            rb_key, pdr_ueip_v6_compare);
     }
     ros_rwlock_read_unlock(&pdr_head->ueip_v4_lock);/* unlock */
 
     if (queue_node == NULL) {
-		LOG(SESSION, ERR, "Can not find queue_node");
-		return NULL;
-	}
-	ueip_queue = (struct pdr_ue_ipaddress *)container_of(queue_node,
-	    struct pdr_ue_ipaddress, v4_node);
+        LOG(SESSION, ERR, "Can not find queue_node");
+        return NULL;
+    }
+    ueip_queue = (struct pdr_ue_ipaddress *)container_of(queue_node,
+        struct pdr_ue_ipaddress, v4_node);
 
-	if(ueip_queue == NULL)
-	{
-		LOG(SESSION, ERR, "Can not find ueip_queue");
-		return NULL;
-	}
+    if(ueip_queue == NULL)
+    {
+        LOG(SESSION, ERR, "Can not find ueip_queue");
+        return NULL;
+    }
 
-	session_table_show(&(ueip_queue->pdr_tbl->session_link->session));
+    session_table_show(&(ueip_queue->pdr_tbl->session_link->session));
     dl_list_for_each_safe(pos, next, &ueip_queue->v4_pq_node)
-	{
-	    cur = (struct pdr_ue_ipaddress *)container_of(
-	        pos, struct pdr_ue_ipaddress, v4_pq_node);
-		session_table_show(&(cur->pdr_tbl->session_link->session));
-	}
+    {
+        cur = (struct pdr_ue_ipaddress *)container_of(
+            pos, struct pdr_ue_ipaddress, v4_pq_node);
+        session_table_show(&(cur->pdr_tbl->session_link->session));
+    }
 
 
-	return ueip_queue->pdr_tbl;
+    return ueip_queue->pdr_tbl;
 }
 
 

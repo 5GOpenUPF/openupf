@@ -10,6 +10,9 @@
 extern "C" {
 #endif
 
+/* Hash of Ethernet or Non-IP bearer */
+#define ETH_OR_NONIP_HASH       0xFFFFFFFF
+
 /* LB work status, Don't change the order */
 enum EN_LB_WORK_STATUS {
     LB_STATUS_INIT              = 0,

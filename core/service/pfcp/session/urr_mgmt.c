@@ -620,7 +620,6 @@ void md_urr_fill_value(struct urr_table *urr_entry, session_md_usage_report *rep
 {
     urr_container        *cont;          /* resource container */
 	comm_msg_urr_mon_time_t *monitor;
-	//uint32_t			 new_gap;
 
     cont = &urr_entry->container;
 	monitor = &urr_entry->container.mon_cfg;
@@ -628,7 +627,7 @@ void md_urr_fill_value(struct urr_table *urr_entry, session_md_usage_report *rep
 	if (urr_entry->urr.method.d.volum) {
         report->vol_meas.flag.value = urr_entry->container.flag.value;
 
-		LOG(SESSION, RUNNING, "vol_ulink.cnt %ld, cont->vol_dlink.cnt %ld, cont->vol_total.cnt %ld!",
+		LOG(SESSION, RUNNING, "vol_ulink %ld, vol_dlink %ld, vol_total %ld",
 			cont->vol_ulink.cnt, cont->vol_dlink.cnt, cont->vol_total.cnt);
 
 		report->vol_meas.uplink = cont->vol_ulink.cnt;
@@ -661,8 +660,7 @@ void md_urr_fill_value(struct urr_table *urr_entry, session_md_usage_report *rep
 
 }
 
-static void session_delete_urr_content_copy(
-     struct urr_table *urr_tbl, session_emd_response *resp)
+static void session_delete_urr_content_copy(struct urr_table *urr_tbl, session_emd_response *resp)
 {
 	urr_container           *cont = NULL;
 	uint32_t 				report_num = 0;
@@ -670,7 +668,7 @@ static void session_delete_urr_content_copy(
 	cont = &urr_tbl->container;
 	report_num = resp->usage_report_num;
 
-	if(report_num >= MAX_URR_NUM) {
+	if (report_num >= MAX_URR_NUM) {
 		LOG(SESSION, ERR, "report_num(%d) is error.", report_num);
         return ;
 	}
@@ -739,8 +737,7 @@ int urr_clear(struct session_t *sess,
     while (NULL != urr_tbl) {
         id = urr_tbl->urr.urr_id;
 		//取urr_id最高位，如果是1则表示是预定义规则，不需要删除
-		if(((id & 0x80000000)>>31))
-		{
+		if (((id & 0x80000000)>>31)) {
 			urr_tbl = (struct urr_table *)rbtree_next(&urr_tbl->urr_node);
 			continue;
 		}

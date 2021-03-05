@@ -878,7 +878,7 @@ static void *urr_proc_timer_idt_pthr_cb(void *arg)
 	if (URR_STATUS_STOPED == cont->tim_status)
 	{
 		urr_change_inst_light(urr_entry, COMM_MSG_LIGHT_RED);
-		LOG(SESSION, ERR, "stop forward");
+		LOG(SESSION, RUNNING, "Stop forward");
 	}
 
     return NULL;
@@ -1691,7 +1691,7 @@ static int urr_update_light_to_fpu(comm_msg_update_inst_light_t *light_arr, uint
     comm_msg_update_inst_light_t *ie_data = NULL;
     uint32_t max_rules = (SERVICE_BUF_TOTAL_LEN - COMM_MSG_HEADER_LEN - COMM_MSG_IE_LEN_COMMON) / sizeof(comm_msg_update_inst_light_t);
 
-    if (COMM_MSG_ORPHAN_NUMBER == index_num) {
+    if (0 == index_num) {
         return 0;
     }
 
@@ -1746,9 +1746,7 @@ static int urr_update_thres_to_fpu(comm_msg_update_inst_thres_t *thres_arr, uint
     uint32_t max_rules = (SERVICE_BUF_TOTAL_LEN - COMM_MSG_HEADER_LEN - COMM_MSG_IE_LEN_COMMON) / sizeof(comm_msg_update_inst_thres_t);
 
     if (0 == index_num) {
-        LOG(SESSION, DEBUG, "parameter is invalid, index number: %u.",
-            index_num);
-        return -1;
+        return 0;
     }
 
     msg = upc_fill_msg_header(buf);

@@ -33,6 +33,11 @@ upc_seid_entry *upc_seid_get_predefined_entry(void)
     return &upc_seid_mng.entry[0];
 }
 
+uint16_t upc_seid_get_pool_id(void)
+{
+    return upc_seid_mng.pool_id;
+}
+
 int64_t upc_seid_table_init(uint32_t sess_num)
 {
     uint32_t index = 0;
@@ -80,7 +85,7 @@ int64_t upc_seid_table_init(uint32_t sess_num)
     return total_memory;
 }
 
-static inline int upc_seid_entry_add_common(upc_seid_entry *seid_entry,
+int upc_seid_entry_add_common(upc_seid_entry *seid_entry,
     upc_node_cb *node_cb, session_content_create *sess_content)
 {
     upc_seid_table_header *seid_head = upc_seid_get_table_head();
@@ -99,7 +104,7 @@ static inline int upc_seid_entry_add_common(upc_seid_entry *seid_entry,
     memcpy(&seid_entry->session_config, sess_content, sizeof(session_content_create));
     seid_entry->using = FALSE;
     seid_entry->valid = TRUE;
-    upc_teid_choose_mgmt_init(seid_entry->index);
+
     /* add node id list */
     dl_list_add_tail(&node_cb->seid_list, &seid_entry->list_node);
 
@@ -136,33 +141,19 @@ upc_seid_entry *upc_seid_entry_add_target(upc_node_cb *node_cb, session_content_
     return seid_entry;
 }
 
-upc_seid_entry *upc_seid_entry_insert(upc_node_cb *node_cb, session_content_create *sess_content)
+upc_seid_entry *upc_seid_entry_alloc(void)
 {
     uint32_t index = 0, res_key = 0;
-    upc_seid_entry *seid_entry = NULL;
-    upc_seid_table_header *seid_head = upc_seid_get_table_head();
 
-    if (NULL == node_cb || NULL == sess_content) {
-        LOG(UPC, ERR, "Abnormal parameter, node_cb(%p), sess_content(%p).",
-            node_cb, sess_content);
-        return NULL;
-    }
-
-    if (G_FAILURE == Res_Alloc(seid_head->pool_id, &res_key, &index,
+    if (G_FAILURE == Res_Alloc(upc_seid_get_pool_id(), &res_key, &index,
         EN_RES_ALLOC_MODE_OC)) {
-        LOG(UPC, ERR, "insert seid entry failed, Resource exhaustion, pool id: %d.",
-            seid_head->pool_id);
+        LOG(UPC, ERR, "Allocate seid entry failed, Resource exhaustion, pool id: %d.",
+            upc_seid_get_pool_id());
         return NULL;
     }
+    upc_teid_choose_mgmt_init(index);
 
-    seid_entry = upc_seid_get_entry(index);
-    if (0 > upc_seid_entry_add_common(seid_entry, node_cb, sess_content)) {
-        LOG(UPC, ERR, "Add seid entry common failed.");
-        Res_Free(seid_head->pool_id, res_key, index);
-        return NULL;
-    }
-
-    return seid_entry;
+    return upc_seid_get_entry(index);
 }
 
 int upc_seid_entry_remove(uint64_t up_seid)

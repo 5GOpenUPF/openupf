@@ -460,8 +460,11 @@ static inline int lb_gtpu_pkt_proc(uint32_t *hash, struct filter_key *match_key)
 
                 default:
                     /* Maybe Ethernet or Non-IP bearer */
-                    LOG(LB, PERIOD, "Unsupported packet, unable to get inner header!\r\n");
-                    return -1;
+                    LOG(LB, PERIOD, "Maybe Ethernet or Non-IP bearer packet.");
+                    *hash = ETH_OR_NONIP_HASH;
+                    break;
+                    //LOG(LB, PERIOD, "Unsupported packet, unable to get inner header!\r\n");
+                    //return -1;
 
             }
             break;
@@ -539,7 +542,6 @@ static void lb_internal_pkt_entry(char *buf, int len, struct rte_mbuf *mbuf)
 
                     dest_mac = lb_get_nexthop_mac(&ipv4->dest, SESSION_IP_V4);
                     if (unlikely(NULL == dest_mac)) {
-                        /* No backend available */
                         lb_free_pkt(mbuf);
                         LOG(LB, RUNNING, "Destination 0x%08x Host Unreachable, drop packet.",
                             ntohl(ipv4->dest));
@@ -556,7 +558,6 @@ static void lb_internal_pkt_entry(char *buf, int len, struct rte_mbuf *mbuf)
 
                     dest_mac = lb_get_nexthop_mac(ipv6->daddr, SESSION_IP_V6);
                     if (unlikely(NULL == dest_mac)) {
-                        /* No backend available */
                         lb_free_pkt(mbuf);
                         LOG(LB, RUNNING, "Destination %016lx %016lx Host Unreachable, drop packet.",
                             ntohll(*(uint64_t *)ipv6->daddr), ntohll(*(uint64_t *)(ipv6->daddr + 8)));
@@ -1221,7 +1222,7 @@ int32_t lb_deinit()
     return 0;
 }
 
-int lb_ha_active_standby_switch(struct cli_def *cli,int argc, char **argv)
+int lb_ha_active_standby_switch(struct cli_def *cli, int argc, char **argv)
 {
     if (lb_hk_ha_ass) {
         if (0 > lb_hk_ha_ass()) {
