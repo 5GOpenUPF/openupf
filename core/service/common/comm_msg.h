@@ -63,7 +63,7 @@
 
 #define COMM_MSG_ORPHAN_NUMBER          (0)
 
-#define COMM_MSG_FP_STAT_CORE_NUM       (128)
+#define COMM_MSG_MAX_DPDK_CORE_NUM      (256)
 
 typedef enum
 {
@@ -518,19 +518,6 @@ typedef struct tag_comm_msg_ip_address {
 } comm_msg_ip_address;
 #pragma pack()
 
-/* General mac structure */
-#pragma pack(1)
-typedef struct  tag_comm_msg_mac_info {
-    uint8_t             mac[ETH_ALEN];
-    uint8_t             ip_flag;            /* 1: ipv4, 2: ipv6 */
-    uint8_t             port_type;          /* EN_PORT_TYPE */
-    union {
-        uint32_t        ipv4;               /* dst ipaddr */
-        uint8_t         ipv6[IPV6_ALEN];    /* dst ipaddr */
-    } ip_addr;
-} comm_msg_mac_info;
-#pragma pack()
-
 /* fp configuration */
 #pragma pack(1)
 typedef struct tag_comm_msg_system_config_t {
@@ -761,7 +748,7 @@ typedef struct  tag_comm_msg_inst_config
     comm_msg_dest_if_t
     comm_msg_far_choose_t
     comm_msg_outh_cr_t
-    comm_msg_redirect_ipv4_t
+    comm_msg_redirect_addr_t
     comm_msg_transport_level_t
     comm_msg_header_enrichment_t
     comm_msg_transport_level_t
@@ -772,27 +759,25 @@ typedef union {
     struct tag_comm_msg_far_choose_t {
 #if BYTE_ORDER == BIG_ENDIAN
         uint16_t    section_forwarding   : 1;   /* Forwarding parameter */
-        uint16_t    flag_redirect1       : 1;   /* Redirect Information */
+        uint16_t    flag_redirect        : 3;   /* Redirect Information, 1:IPv4 2:IPv6 3:URL 4:SIP URL 5:IPv4&IPv6 */
         uint16_t    flag_transport_level1: 1;   /* Transport Level Marking*/
         uint16_t    flag_forward_policy1 : 1;   /* Forwarding Policy  */
         uint16_t    flag_header_enrich   : 1;   /* header enrichment */
         uint16_t    flag_out_header1     : 1;   /* Outer header creation */
         uint16_t    section_bar          : 1;   /* Include bar */
         uint16_t    section_dupl_num     : 5;   /* Duplicating parameters */
-        uint16_t    spare                : 2;
         uint16_t    entry_num            : 2;   /* Entry number,
                                                    0: 1, 1: 2, 2: 4, 3: 8 */
 #else
         uint16_t    entry_num            : 2;   /* Entry number,
                                                    0: 1, 1: 2, 2: 4, 3: 8 */
-        uint16_t    spare                : 2;
         uint16_t    section_dupl_num     : 5;   /* Duplicating parameters */
         uint16_t    section_bar          : 1;   /* Include bar */
         uint16_t    flag_out_header1     : 1;   /* Outer header creation */
         uint16_t    flag_header_enrich   : 1;   /* header enrichment */
         uint16_t    flag_forward_policy1 : 1;   /* Forwarding Policy  */
         uint16_t    flag_transport_level1: 1;   /* Transport Level Marking*/
-        uint16_t    flag_redirect1       : 1;   /* Redirect Information */
+        uint16_t    flag_redirect        : 3;   /* Redirect Information, 1:IPv4 2:IPv6 3:URL 4:SIP URL 5:IPv4&IPv6 */
         uint16_t    section_forwarding   : 1;   /* Forwarding parameter */
 #endif
     }d;
@@ -841,20 +826,7 @@ typedef union {
 }comm_msg_far_action_t;
 #pragma pack()
 
-/* Redirect address can be configured as ipv4/ipv5/URL/SIP URL */
-/* If configure as URL, slowpass plane should transfer it to ip address */
-#pragma pack(1)
-typedef struct tag_comm_msg_redirect_ipv4_t {
-    uint32_t            ipv4;           /* IP destination address. */
-}comm_msg_redirect_ipv4_t;
-#pragma pack()
-
-#pragma pack(1)
-typedef struct tag_comm_msg_redirect_ipv6_t {
-    struct in6_addr     ipv6;           /* IPv6 destination address. */
-}comm_msg_redirect_ipv6_t;
-#pragma pack()
-
+/* Redirect address can be configured as IPv4/IPv6/URL/SIP URL/IPv4 and IPv6 */
 #pragma pack(1)
 typedef union {
     struct tag_comm_msg_vlan_flags_t {
@@ -971,8 +943,7 @@ typedef struct  tag_comm_msg_far_config
 
     comm_msg_outh_cr_t              forw_cr_outh;
     comm_msg_transport_level_t      forw_trans;
-    comm_msg_redirect_ipv4_t        forw_redirect;
-	comm_msg_redirect_ipv6_t        forw_redirect_ipv6;
+    session_redirect_server         forw_redirect;
     comm_msg_header_enrichment_t    forw_enrich;
     uint32_t                        bar_index;  /* include bar cfg */
 #ifdef FAR_DUPL_ENABLE

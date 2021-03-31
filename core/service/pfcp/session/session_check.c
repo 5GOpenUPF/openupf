@@ -271,14 +271,20 @@ static int session_far_cmp(session_far_create *exp, struct far_table *act)
             }
         }
 
-        if (exp->forw_param.member_flag.d.redirect_present !=
-            act->far_cfg.choose.d.flag_redirect1) {
+        if ((exp->forw_param.member_flag.d.redirect_present ? 1 : 0) ^
+            (act->far_cfg.choose.d.flag_redirect ? 1: 0)) {
             ++ret;
             LOG(SESSION, ERR, "redirect_present compare failed.");
         }
+
         if (exp->forw_param.member_flag.d.redirect_present) {
-            if (memcmp(&exp->forw_param.redirect_addr,
-                &act->far_priv.redirect_addr, sizeof(session_redirect_info))) {
+            if ((exp->forw_param.redirect_addr.addr_type + 1) != act->far_cfg.choose.d.flag_redirect) {
+                ++ret;
+                LOG(SESSION, ERR, "redirect_addr type compare failed.");
+            }
+
+            if (memcmp(&exp->forw_param.redirect_addr.address,
+                &act->far_cfg.forw_redirect, sizeof(session_redirect_server))) {
                 ++ret;
                 LOG(SESSION, ERR, "redirect_addr compare failed.");
             }

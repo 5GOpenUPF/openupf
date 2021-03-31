@@ -28,14 +28,14 @@ extern CVMX_SHARED uint8_t  fp_host_n4_local_ipv6[IPV6_ALEN];
 
 static inline void
 fp_pkt_redirect_ipv6(struct pro_udp_hdr *udp_out_hdr,
-    struct pro_ipv6_hdr *ip_hdr,comm_msg_redirect_ipv6_t *redir)
+    struct pro_ipv6_hdr *ip_hdr, uint8_t *redir_ipv6)
 {
 
     struct pro_udp_hdr  *udp_hdr;
     struct pro_tcp_hdr  *tcp_hdr;
-    unsigned char redirip[IPV6_ALEN];
+    uint8_t redirip[IPV6_ALEN];
 
-	memcpy(redirip, redir->ipv6.s6_addr, IPV6_ALEN);
+	memcpy(redirip, redir_ipv6, IPV6_ALEN);
 
     /* Fix inner udp/tcp checksum */
     if (ip_hdr->nexthdr== IP_PRO_UDP) {
@@ -47,8 +47,8 @@ fp_pkt_redirect_ipv6(struct pro_udp_hdr *udp_out_hdr,
         }
 
         /* Fix checksum */
-		calc_fix_sum((uint8_t *)&udp_hdr->check, (uint8_t *)ip_hdr->daddr, 16,
-            (uint8_t *)redirip, 16);
+		calc_fix_sum((uint8_t *)&udp_hdr->check, (uint8_t *)ip_hdr->daddr, IPV6_ALEN,
+            (uint8_t *)redirip, IPV6_ALEN);
     }
     else if (ip_hdr->nexthdr== IP_PRO_TCP) {
 
@@ -59,16 +59,16 @@ fp_pkt_redirect_ipv6(struct pro_udp_hdr *udp_out_hdr,
         }
 
         /* Fix checksum */
-        calc_fix_sum((uint8_t *)&tcp_hdr->check, (uint8_t *)ip_hdr->daddr, 16,
-            (uint8_t *)redirip, 16);
+        calc_fix_sum((uint8_t *)&tcp_hdr->check, (uint8_t *)ip_hdr->daddr, IPV6_ALEN,
+            (uint8_t *)redirip, IPV6_ALEN);
     }
 
     /* Fix outer udp checksum */
-    calc_fix_sum((uint8_t *)&udp_out_hdr->check, (uint8_t *)ip_hdr->daddr, 16,
-        (uint8_t *)redirip, 16);
+    calc_fix_sum((uint8_t *)&udp_out_hdr->check, (uint8_t *)ip_hdr->daddr, IPV6_ALEN,
+        (uint8_t *)redirip, IPV6_ALEN);
 
     /* Replace inner dest ip address */
-	memcpy(ip_hdr->daddr,redirip,sizeof(struct in6_addr));
+	memcpy(ip_hdr->daddr, redirip, IPV6_ALEN);
 }
 
 inline void fp_pkt_match_n3_ipv6(fp_packet_info *pkt_info, fp_fast_table *head,
@@ -76,12 +76,11 @@ inline void fp_pkt_match_n3_ipv6(fp_packet_info *pkt_info, fp_fast_table *head,
 {
     void                    *mbuf = pkt_info->arg;
     char                    *pkt = pkt_info->buf;
-    int                     len = pkt_info->len;
     uint8_t                 *field_ofs = pkt_info->match_key.field_offset;
-    int                     count_len = len - field_ofs[FLOW_FIELD_GTP_CONTENT];
+    int                     count_len = pkt_info->len - field_ofs[FLOW_FIELD_GTP_CONTENT];
 	comm_msg_fast_cfg		*entry_cfg;
 	struct pro_eth_hdr		*eth_hdr;
-	int 					efflen = len;
+	int 					efflen = pkt_info->len;
 	char					*pktforw = pkt;
 	fp_inst_entry			*inst_entry = NULL;
 	comm_msg_inst_config	*inst_config;
@@ -99,7 +98,7 @@ inline void fp_pkt_match_n3_ipv6(fp_packet_info *pkt_info, fp_fast_table *head,
 		"handle packet, buf %p, pkt %p, len %d, queue(%d, %d), fast entry %d, "
 		"dst mac %02x:%02x:%02x:%02x:%02x:%02x, "
 		"src mac %02x:%02x:%02x:%02x:%02x:%02x, ",
-		mbuf, pkt, len, head->port_no, head->port_type, entry->index,
+		mbuf, pkt, pkt_info->len, head->port_no, head->port_type, entry->index,
 		*(uint8_t *)(pkt + 0), *(uint8_t *)(pkt + 1), *(uint8_t *)(pkt + 2),
 		*(uint8_t *)(pkt + 3), *(uint8_t *)(pkt + 4), *(uint8_t *)(pkt + 5),
 		*(uint8_t *)(pkt + 6), *(uint8_t *)(pkt + 7), *(uint8_t *)(pkt + 8),
@@ -191,10 +190,28 @@ inline void fp_pkt_match_n3_ipv6(fp_packet_info *pkt_info, fp_fast_table *head,
 		far_choose = &(far_entry->config.choose);
 
 		/* redirect */
-		if (unlikely(far_choose->d.flag_redirect1)) {
-			fp_pkt_redirect_ipv6(FlowGetL1UdpHeader(&pkt_info->match_key),
-                l2_hdr, &(far_entry->config.forw_redirect_ipv6));
-		}
+        switch (far_choose->d.flag_redirect) {
+            case 2:
+                fp_pkt_redirect_ipv6(FlowGetL1UdpHeader(&pkt_info->match_key),
+                    l2_hdr, far_entry->config.forw_redirect.ipv6_addr);
+                break;
+
+            case 3:
+                if ((cblk) && FLOW_MASK_FIELD_ISSET(pkt_info->match_key.field_offset, FLOW_FIELD_L2_TCP)) {
+                    fp_pkt_redirect_N3_http(pkt_info, FlowGetL2TcpHeader(&pkt_info->match_key),
+                        far_entry->config.forw_redirect.url, SESSION_IP_V6);
+                }
+                efflen = pkt_info->len;
+                break;
+
+            case 4:
+                break;
+
+            case 5:
+                fp_pkt_redirect_ipv6(FlowGetL1UdpHeader(&pkt_info->match_key),
+                    l2_hdr, far_entry->config.forw_redirect.v4_v6.ipv6);
+                break;
+        }
 
 #ifdef ENABLE_DNS_CACHE
         /* handle udp dns request, if match local cache, reply it directly */
@@ -541,9 +558,15 @@ inline void fp_pkt_match_n6_ipv6(fp_packet_info *pkt_info, fp_fast_table *head,
 		far_choose = &(far_entry->config.choose);
 
 		/* redirect */
-		if (unlikely(far_choose->d.flag_redirect1)) {
-			fp_pkt_redirect_ipv6(NULL, l1_hdr, &(far_entry->config.forw_redirect_ipv6));
-		}
+        switch (far_choose->d.flag_redirect) {
+            case 2:
+                fp_pkt_redirect_ipv6(NULL, l1_hdr, far_entry->config.forw_redirect.ipv6_addr);
+                break;
+
+            case 5:
+                fp_pkt_redirect_ipv6(NULL, l1_hdr, far_entry->config.forw_redirect.v4_v6.ipv6);
+                break;
+        }
 
 		/* forwarding policy */
 		if (unlikely(far_choose->d.flag_forward_policy1)) {
@@ -702,12 +725,11 @@ void fp_pkt_match_l1v4_l2v6(fp_packet_info *pkt_info, fp_fast_table *head,
 {
     void                    *mbuf = pkt_info->arg;
     char                    *pkt = pkt_info->buf;
-    int                     len = pkt_info->len;
     uint8_t                 *field_ofs = pkt_info->match_key.field_offset;
-    int                     count_len = len - field_ofs[FLOW_FIELD_GTP_CONTENT];
+    int                     count_len = pkt_info->len - field_ofs[FLOW_FIELD_GTP_CONTENT];
 	comm_msg_fast_cfg		*entry_cfg;
 	struct pro_eth_hdr		*eth_hdr;
-	int 					efflen = len;
+	int 					efflen = pkt_info->len;
 	char					*pktforw = pkt;
 	fp_inst_entry			*inst_entry = NULL;
 	comm_msg_inst_config	*inst_config;
@@ -725,7 +747,7 @@ void fp_pkt_match_l1v4_l2v6(fp_packet_info *pkt_info, fp_fast_table *head,
 		"handle packet, buf %p, pkt %p, len %d, queue(%d, %d), fast entry %d, "
 		"dst mac %02x:%02x:%02x:%02x:%02x:%02x, "
 		"src mac %02x:%02x:%02x:%02x:%02x:%02x, ",
-		mbuf, pkt, len, head->port_no, head->port_type, entry->index,
+		mbuf, pkt, pkt_info->len, head->port_no, head->port_type, entry->index,
 		*(uint8_t *)(pkt + 0), *(uint8_t *)(pkt + 1), *(uint8_t *)(pkt + 2),
 		*(uint8_t *)(pkt + 3), *(uint8_t *)(pkt + 4), *(uint8_t *)(pkt + 5),
 		*(uint8_t *)(pkt + 6), *(uint8_t *)(pkt + 7), *(uint8_t *)(pkt + 8),
@@ -802,10 +824,28 @@ void fp_pkt_match_l1v4_l2v6(fp_packet_info *pkt_info, fp_fast_table *head,
 		far_choose = &(far_entry->config.choose);
 
 		/* redirect */
-		if (unlikely(far_choose->d.flag_redirect1)) {
-			fp_pkt_redirect_ipv6(FlowGetL1UdpHeader(&pkt_info->match_key),
-                l2_hdr,&(far_entry->config.forw_redirect_ipv6));
-		}
+        switch (far_choose->d.flag_redirect) {
+            case 2:
+                fp_pkt_redirect_ipv6(FlowGetL1UdpHeader(&pkt_info->match_key),
+                    l2_hdr, far_entry->config.forw_redirect.ipv6_addr);
+                break;
+
+            case 3:
+                if ((cblk) && FLOW_MASK_FIELD_ISSET(pkt_info->match_key.field_offset, FLOW_FIELD_L2_TCP)) {
+                    fp_pkt_redirect_N3_http(pkt_info, FlowGetL2TcpHeader(&pkt_info->match_key),
+                        far_entry->config.forw_redirect.url, SESSION_IP_V4);
+                }
+                efflen = pkt_info->len;
+                break;
+
+            case 4:
+                break;
+
+            case 5:
+                fp_pkt_redirect_ipv6(FlowGetL1UdpHeader(&pkt_info->match_key),
+                    l2_hdr, far_entry->config.forw_redirect.v4_v6.ipv6);
+                break;
+        }
 
 		/* forwarding policy */
 		if (unlikely(far_choose->d.flag_forward_policy1)) {

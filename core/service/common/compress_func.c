@@ -15,7 +15,7 @@
 
 static uint32_t g_max_out_length = 0;
 
-/* 临时存储压缩和解压buffer */
+/* Temporary storage compression and decompression buffer */
 static char *g_en_out = NULL;
 static char *g_de_out = NULL;
 
@@ -24,7 +24,7 @@ static char *g_de_out = NULL;
 #define COMP_LOCK_UNLOCK(sl)  ros_rwlock_write_unlock(sl)
 #define COMP_LOCK_INIT(sl)  ros_rwlock_init(sl)
 
-/* 临时存储压缩和解压的buffer锁 */
+/* Temporarily store compressed and decompressed buffer locks */
 COMP_LOCK_T g_en_out_lock;
 COMP_LOCK_T g_de_out_lock;
 

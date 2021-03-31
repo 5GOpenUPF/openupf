@@ -483,7 +483,7 @@ int ros_pkt_stat_show(struct cli_def *cli,struct ros_pkts_stat *pkts_stat)
     cli_print_val(cli,"%-30s:%-10ld(%s)",pkts_stat->endtime,aucStr);
     ros_GetSecToTimeStr(pkts_stat->tmptime,aucStr,sizeof(aucStr));
     cli_print_val(cli,"%-30s:%-10ld(%s)",pkts_stat->tmptime,aucStr);
-    cli_print_val(cli,"%-30s:%lld",pkts_stat->pkts_len); //每次发送包的长度
+    cli_print_val(cli,"%-30s:%lld",pkts_stat->pkts_len);
     cli_print_val(cli,"%-30s:%d",pkts_stat->ulResend);
     cli_print_val(cli,"%-30s:%d",pkts_stat->pkts_error);
 
@@ -514,198 +514,6 @@ int cli_show_version(struct cli_def *cli,int argc, char *argv[])
 {
 	cli_print(cli, "Version:0.15");
 	return 0;
-}
-
-/*修改配置文件中的某一个参数，key为参数名；value为值；num为参数个数；grep_v为每一个参数筛选时要过滤的字段；
-file是路径，如果为null，则读取环境变量的路径；symbol代表分隔符使用竖杠还是斜杠，0表示斜杠，1表示竖杠。
-key,value和grep_v都是指向一组参数的二级指针*/
-int set_config_to_file(struct cli_def *cli,char **key, char **value,int num,char **grep_v,char *file,int symbol)
-{
-    char command[512]={0};
-    int i=0;
-
-    if(!key || !value)
-    {
-        if(cli)
-            cli_print(cli,"\r\nkey[%x] or value[%x] is NULL!\r\n",key,value);
-        return -1;
-    }
-
-    if(!file)
-    {
-        file = pcf_get_env(UPU_ENV_NAME);
-    }
-    if(file && (num > 0))
-    {
-        for(i=0;i<num;i++)
-        {
-            if(key[i] && value[i])
-            {
-                //grep_v存在则使用，否则使用默认的";"
-                if(grep_v && grep_v[i])
-                {
-                    //symbol为1，表示使用"|"作为分隔符
-                    if(symbol)
-                        sprintf(command,"sed -i \"s|`cat %s | grep \"%s\" | grep -v \"%s\"`|%s = %s|g\" %s",file,key[i],grep_v[i],key[i],value[i],file);
-                    else
-                        sprintf(command,"sed -i \"s/`cat %s | grep \"%s\" | grep -v \"%s\"`/%s = %s/g\" %s",file,key[i],grep_v[i],key[i],value[i],file);
-                 }
-                else
-                {
-                    if(symbol)
-                        sprintf(command,"sed -i \"s|`cat %s | grep \"%s\" | grep -v \";\"`|%s = %s|g\" %s",file,key[i],key[i],value[i],file);
-                    else
-                        sprintf(command,"sed -i \"s/`cat %s | grep \"%s\" | grep -v \";\"`/%s = %s/g\" %s",file,key[i],key[i],value[i],file);
-                 }
-
-               // cli_print(cli,"\r\n%s\r\n",command);
-                system(command);
-            }
-        }
-    }
-    else
-    {
-        if(cli)
-            cli_print(cli,"\r\nfile is null. file[%x] num[%d]\r\n",file,num);
-        return -1;
-    }
-    return 0;
-}
-static int ros_read_status(char *filename, struct proc_info *proc) {
-    FILE *file;
-    char line[MAX_LINE]={0};
-    unsigned int uid, gid;
-    char task_name[PROC_NAME_LEN]={0};
-    char Cpus_allowed_list[THREAD_NAME_LEN]={0};
-
-    unsigned int Cpus_allowed;
-
-    char strName[] = "Name";
-    char strUid[] = "Uid";
-    char strGid[] = "Gid";
-    char strCpus_allowed[] = "Cpus_allowed";
-    char strCpus_allowed_list[] = "Cpus_allowed_list";
-
-    file = fopen(filename, "r");
-    if (!file) return 1;
-    while (fgets(line, MAX_LINE, file))
-    {
-        //dbg_printf("%s:%s",__FUNCTION__,line);
-        if(!strncmp(strName,line,strlen(strName)))
-        {
-           sscanf(line, "Name: %s",task_name);
-        }
-        else if(!strncmp(strUid,line,strlen(strUid)))
-        {
-            sscanf(line, "Uid: %u", &uid);
-        }
-        else if(!strncmp(strGid,line,strlen(strGid)))
-        {
-            sscanf(line, "Gid: %u", &gid);
-        }
-        else if(!strncmp(strCpus_allowed_list,line,strlen(strCpus_allowed_list)))
-        {
-            sscanf(line, "Cpus_allowed_list: %s",Cpus_allowed_list);
-            //strcpy(Cpus_allowed_list,&line[strlen(strCpus_allowed_list)+1]);
-        }
-        else if(!strncmp(strCpus_allowed,line,strlen(strCpus_allowed)))
-        {
-           sscanf(line, "Cpus_allowed: %x", &Cpus_allowed);
-        }
-        memset(line,0,MAX_LINE);
-    }
-    fclose(file);
-    strcpy(proc->tname,task_name);
-    strcpy(proc->Cpus_allowed_list,Cpus_allowed_list);
-    proc->uid = uid;
-    proc->gid = gid;
-    proc->Cpus_allowed = Cpus_allowed;
-    return 0;
-}
-
-extern unsigned int cm_get_callstack_self(unsigned long *pc, unsigned long *bp,unsigned long max);
-extern unsigned int cm_get_callstack_bypid(pid_t pid, unsigned long *pc, unsigned long *bp,unsigned long max);
-int cli_show_task(struct cli_def *cli,int argc, char **argv)
-{
-    char filename[128]={0};
-    pid_t pid, tid;
-    DIR *task_dir;
-    struct dirent  *tid_dir;
-    struct proc_info stProc;
-    unsigned long rip_array[32],rbp_array[32],rip_len,i;
-    char **symb = NULL;
-
-    memset(&rip_array,0,sizeof(rip_array));
-    memset(&rbp_array,0,sizeof(rbp_array));
-    rip_len = 0;
-    if(0 == argc)
-    {
-    pid = getpid();
-
-    sprintf(filename, "/proc/%d/task", pid);
-    task_dir = opendir(filename);
-    if (!task_dir)
-    {
-        return 0;
-    }
-
-    cli_print(cli,"===========================================================");
-    cli_print(cli,"%-10s %-10s %-10s %-10s","PID","CPU_MASK","CPU_LIST","NAME");
-
-    while ((tid_dir = readdir(task_dir)))
-    {
-        if (!isdigit(tid_dir->d_name[0]))
-            continue;
-
-        tid = atoi(tid_dir->d_name);
-
-        memset(&stProc,0,sizeof(struct proc_info));
-
-        stProc.pid = pid; stProc.tid = tid;
-
-        sprintf(filename, "/proc/%d/task/%d/status", pid, tid);
-
-        ros_read_status(filename, &stProc);
-
-        cli_print(cli,"%-10d %-10x %-10s %-10s",
-                stProc.tid,stProc.Cpus_allowed,
-                stProc.Cpus_allowed_list,stProc.tname);
-
-    }
-    }
-    else
-    {
-        //ulFlag = (uint32_t)atol(argv[0]);
-        if (1 == sscanf(argv[0],"%d",&pid))
-        {
-            if (pid == getpid())
-            {
-                cli_print(cli,"can not show fpu task info");
-                //*(int *)0x00005a01a5 = 0;
-                return 0;
-            }
-
-            rip_len = cm_get_callstack_bypid(pid,&rip_array[0],&rbp_array[0],sizeof(rip_array)/sizeof(rip_array[0]));
-            if (!rip_len)
-            {
-                cli_print(cli,"get pid(%d) info fail(%d) ",pid,rip_len);
-                //cm_get_callstack_self(&rip_array[0],&rbp_array[0],sizeof(rip_array)/sizeof(rip_array[0]));
-            }
-            else
-            {
-                cli_print(cli,"call stack:");
-                symb = backtrace_symbols((void *const *) (&rip_array), (int)rip_len);
-                for(i=0;i<rip_len;i++)
-                {
-                    cli_print(cli,"%016lx  %08x[%s]",rbp_array[i],rip_array[i],symb? symb[i] : " ");
-                }
-
-                if (symb)
-                    free(symb);
-            }
-        }
-    }
-    return 0;
 }
 
 int git_version(struct cli_def *cli, int argc, char **argv)
@@ -746,33 +554,9 @@ int ros_show_mempool(struct cli_def *cli,int argc, char *argv[])
     return 0;
 }
 
-int ros_show_dpdk_lcore(struct cli_def *cli,int argc, char *argv[])
-{
-#if (defined(PRODUCT_IS_fpu))
-    extern void rte_show_lcore_config(int ulCoreId,FILE *f);
-    //uint32_t ulCoreId = 0xFF;
-
-    if ((argc == 1) && (*argv[0] == '?' || strcmp(argv[0],"help") == 0))
-    {
-        return 0;
-    }
-
-    if(argc)
-    {
-        //ulCoreId = (uint32_t)atol(argv[0]);
-    }
-    //rte_show_lcore_config(ulCoreId, cli->client);
-#endif
-    return 0;
-}
-
 int ros_show_mac(struct cli_def *cli,int argc, char *argv[])
 {
-#if (defined(PRODUCT_IS_fpu))
-    if ((argc == 1) && (*argv[0] == '?' || strcmp(argv[0],"help") == 0))
-    {
-        return 0;
-    }
+#if (defined(PRODUCT_IS_fpu) || defined(PRODUCT_IS_lbu))
     dpdk_show_mac(cli->client);
 #endif
     return 0;

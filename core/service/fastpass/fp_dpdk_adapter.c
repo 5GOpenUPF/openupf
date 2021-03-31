@@ -313,7 +313,7 @@ int fp_channel_init()
     uint32_t loop;
     fp_connect_mb_channel_cfg *mb_chnl_cfg = fp_get_mb_chnl_config();
 
-    for (loop = 0; loop < COMM_MSG_FP_STAT_CORE_NUM; loop++) {
+    for (loop = 0; loop < COMM_MSG_MAX_DPDK_CORE_NUM; loop++) {
         lstInit(&fp_dpdk_queue.dpdk_tx_lst[loop]);
         ros_rwlock_init(&fp_dpdk_queue.dpdk_tx_lock[loop]);
     }

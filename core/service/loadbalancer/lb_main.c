@@ -8,6 +8,7 @@
 #include <rte_meter.h>
 
 #include "dpdk.h"
+#include "lb_dpdk_cache.h"
 #include "lb_backend_mgmt.h"
 #ifdef ENABLED_HA
 #include "lb_ha_mgmt.h"
@@ -15,6 +16,9 @@
 #include "lb_neighbor.h"
 #include "lb_main.h"
 
+
+/* LoadBalancer work flag */
+static uint64_t lb_work_flag = G_FALSE;
 
 static uint32_t lb_net_local_ip[EN_PORT_BUTT];
 static uint32_t lb_host_local_ip[EN_PORT_BUTT];
@@ -51,17 +55,6 @@ LB_HA_MSG_PROC                  lb_hk_ha_msg_proc;
 LB_HA_INIT                      lb_hk_ha_init;
 LB_HA_DEINIT                    lb_hk_ha_deinit;
 LB_HA_ASS                       lb_hk_ha_ass;
-
-
-#if (defined(ENABLE_DPDK_DEBUG))
-#define lb_free_pkt(buf) \
-    do { \
-        dpdk_mbuf_del_record(((struct rte_mbuf *)buf)->buf_addr, __LINE__); \
-        dpdk_free_mbuf((struct rte_mbuf *)buf); \
-    } while(0)
-#else
-#define lb_free_pkt(buf) dpdk_free_mbuf((struct rte_mbuf *)buf)
-#endif
 
 
 static inline void lb_register_high_availability_module(LB_SYNC_BACKEND_TABLE sync_be_table,
@@ -172,10 +165,14 @@ uint8_t *lb_get_peer_port_mac(uint8_t port)
     return lb_peer_port_mac[port];
 }
 
-uint8_t *lb_get_nexthop_mac(void *dst_ip, uint8_t ip_ver)
+uint32_t lb_get_local_net_ipv4(uint8_t port)
+{
+    return lb_net_local_ip[port];
+}
+
+void lb_get_nexthop_ip(void *dst_ip, uint8_t ip_ver)
 {
     lb_system_config *sys_cfg = lb_get_system_config();
-    lb_neighbor_comp_key key = {.v4_value = 0};
 
     /* Check gateway */
     switch (ip_ver) {
@@ -184,7 +181,7 @@ uint8_t *lb_get_nexthop_mac(void *dst_ip, uint8_t ip_ver)
                 uint32_t dst_ipv4 = ntohl(*(uint32_t *)dst_ip);
                 uint8_t prefix_diff;
 
-                /* 先默认对外一个网口，必须连接到交换机 */
+                /* By default, it has a network port, which must be connected to the switch */
                 prefix_diff = 32 - sys_cfg->upf_ip[EN_PORT_N3].ipv4_prefix;
 
                 if (((uint64_t)dst_ipv4 >> prefix_diff) !=
@@ -193,9 +190,7 @@ uint8_t *lb_get_nexthop_mac(void *dst_ip, uint8_t ip_ver)
                         sys_cfg->upf_ip[EN_PORT_N3].ipv4,
                         dst_ipv4, sys_cfg->upf_ip[EN_PORT_N3].ipv4_prefix);
 
-                    key.v4_value = sys_cfg->nexthop_net_ip[EN_PORT_N3];
-                } else {
-                    key.v4_value = *(uint32_t *)dst_ip;
+                    *(uint32_t *)dst_ip = sys_cfg->nexthop_net_ip[EN_PORT_N3];
                 }
 
             }
@@ -203,25 +198,14 @@ uint8_t *lb_get_nexthop_mac(void *dst_ip, uint8_t ip_ver)
 
         case SESSION_IP_V6:
             {
-                memcpy(&key.value, dst_ip, IPV6_ALEN);
+                LOG(LB, PERIOD, "Find Destination IPv6: 0x%16lx 0x%16lx nexthop.",
+                    ntohll(*(uint64_t *)dst_ip), ntohll(*((uint64_t *)dst_ip + 1)));
             }
             break;
-    }
-
-
-    switch (ip_ver) {
-        case SESSION_IP_V4:
-            LOG(LB, PERIOD, "Find Destination IPv4: 0x%08x nexthop.", ntohl(key.v4_value));
-            return lb_neighbor_cache_get_mac(&key);
-
-        case SESSION_IP_V6:
-            LOG(LB, PERIOD, "Find Destination IPv6: 0x%16lx 0x%16lx nexthop.",
-                ntohll(key.d.key1), ntohll(key.d.key2));
-            return lb_neighbor_cache_get_mac(&key);
 
         default:
             LOG(LB, ERR, "Unknown IP version: %d.", ip_ver);
-            return NULL;
+            return;
     }
 }
 
@@ -279,12 +263,23 @@ static inline void lb_mac_updating(struct rte_mbuf *m, struct rte_ether_addr *sr
         rte_ether_addr_copy(dest_mac, &eth->d_addr);
 }
 
+void lb_mac_updating_public(void *m, uint8_t *src_mac, uint8_t *dest_mac)
+{
+    lb_mac_updating((struct rte_mbuf *)m, (struct rte_ether_addr *)src_mac,
+        (struct rte_ether_addr *)dest_mac);
+}
+
 static inline void lb_fwd_to_external_network(void *m)
 {
     LOG(LB, PERIOD, "Packet forward to external network.");
     lb_outer_add_vlan(m, EN_LB_PORT_EXT);
 
     dpdk_send_packet(m, lb_port_to_index(EN_LB_PORT_EXT), __FUNCTION__, __LINE__);
+}
+
+void lb_fwd_to_external_network_public(void *m)
+{
+    lb_fwd_to_external_network(m);
 }
 
 static inline void lb_fwd_to_internal_network(void *m)
@@ -539,14 +534,20 @@ static void lb_internal_pkt_entry(char *buf, int len, struct rte_mbuf *mbuf)
             case 4:
                 {
                     struct pro_ipv4_hdr *ipv4 = FlowGetL1Ipv4Header(&match_key);
+                    lb_neighbor_comp_key key = {.v4_value = ipv4->dest};
 
-                    dest_mac = lb_get_nexthop_mac(&ipv4->dest, SESSION_IP_V4);
-                    if (unlikely(NULL == dest_mac)) {
-                        lb_free_pkt(mbuf);
-                        LOG(LB, RUNNING, "Destination 0x%08x Host Unreachable, drop packet.",
-                            ntohl(ipv4->dest));
+                    lb_get_nexthop_ip(&key.v4_value, SESSION_IP_V4);
+
+                    dest_mac = lb_neighbor_cache_get_mac(&key);
+                    if (NULL == dest_mac) {
+                        if (-1 == lb_neighbor_wait_reply(&key, SESSION_IP_V4, (void *)mbuf)) {
+                            lb_free_pkt(mbuf);
+                            LOG(LB, RUNNING, "Destination 0x%08x Host Unreachable, drop packet.",
+                                ntohl(ipv4->dest));
+                        }
                         return;
                     }
+
                     lb_mac_updating(mbuf, (struct rte_ether_addr *)lb_local_port_mac[EN_LB_PORT_EXT],
                         (struct rte_ether_addr *)dest_mac);
                 }
@@ -555,14 +556,21 @@ static void lb_internal_pkt_entry(char *buf, int len, struct rte_mbuf *mbuf)
             case 6:
                 {
                     struct pro_ipv6_hdr *ipv6 = FlowGetL1Ipv6Header(&match_key);
+                    lb_neighbor_comp_key key;
 
-                    dest_mac = lb_get_nexthop_mac(ipv6->daddr, SESSION_IP_V6);
-                    if (unlikely(NULL == dest_mac)) {
-                        lb_free_pkt(mbuf);
-                        LOG(LB, RUNNING, "Destination %016lx %016lx Host Unreachable, drop packet.",
-                            ntohll(*(uint64_t *)ipv6->daddr), ntohll(*(uint64_t *)(ipv6->daddr + 8)));
+                    ros_memcpy(key.value, ipv6->daddr, IPV6_ALEN);
+                    lb_get_nexthop_ip(key.value, SESSION_IP_V6);
+
+                    dest_mac = lb_neighbor_cache_get_mac(&key);
+                    if (NULL == dest_mac) {
+                        if (-1 == lb_neighbor_wait_reply(&key, SESSION_IP_V6, (void *)mbuf)) {
+                            lb_free_pkt(mbuf);
+                            LOG(LB, RUNNING, "Destination %016lx %016lx Host Unreachable, drop packet.",
+                                ntohll(*(uint64_t *)ipv6->daddr), ntohll(*(uint64_t *)(ipv6->daddr + 8)));
+                        }
                         return;
                     }
+
                     lb_mac_updating(mbuf, (struct rte_ether_addr *)lb_local_port_mac[EN_LB_PORT_EXT],
                         (struct rte_ether_addr *)dest_mac);
                 }
@@ -829,35 +837,37 @@ static inline void lb_external_pkt_entry(char *buf, int len, struct rte_mbuf *mb
 
 int lb_data_pkt_entry(char *buf, int len, uint16_t port_id, void *arg)
 {
+    if (likely(lb_work_flag)) {
 #if (defined(ENABLE_DPDK_DEBUG))
-    dpdk_mbuf_record(((struct rte_mbuf *)arg)->buf_addr, __LINE__);
+        dpdk_mbuf_record(((struct rte_mbuf *)arg)->buf_addr, __LINE__);
 
-    if (unlikely(0 == len)) {
-        LOG(LB, ERR, "ERROR: buf(%p), len: %d, arg(%p), core_id: %u", buf, len, arg, rte_lcore_id());
-        dpdk_dump_packet(buf, 64);
-        lb_free_pkt((struct rte_mbuf *)arg);
-        return -1;
-    }
+        if (unlikely(0 == len)) {
+            LOG(LB, ERR, "ERROR: buf(%p), len: %d, arg(%p), core_id: %u", buf, len, arg, rte_lcore_id());
+            dpdk_dump_packet(buf, 64);
+            lb_free_pkt((struct rte_mbuf *)arg);
+            return -1;
+        }
 #endif
 
-    switch (port_id) {
-        case EN_LB_PORT_EXT:
-            /* Send from port EN_LB_PORT_INT */
-            LOG(LB, RUNNING, "Recv external packet");
-            lb_external_pkt_entry(buf, len, (struct rte_mbuf *)arg);
-            break;
+        switch (port_id) {
+            case EN_LB_PORT_EXT:
+                /* Send from port EN_LB_PORT_INT */
+                LOG(LB, RUNNING, "Recv external packet");
+                lb_external_pkt_entry(buf, len, (struct rte_mbuf *)arg);
+                break;
 
-        case EN_LB_PORT_INT:
-            LOG(LB, RUNNING, "Recv internal packet");
-            lb_internal_pkt_entry(buf, len, (struct rte_mbuf *)arg);
-            break;
+            case EN_LB_PORT_INT:
+                LOG(LB, RUNNING, "Recv internal packet");
+                lb_internal_pkt_entry(buf, len, (struct rte_mbuf *)arg);
+                break;
 
-        default:
-            lb_free_pkt((struct rte_mbuf *)arg);
-            LOG(LB, ERR, "recv buf %p, len %d, But port ID is not supported!", buf, len);
-            return -1;
+            default:
+                lb_free_pkt((struct rte_mbuf *)arg);
+                LOG(LB, ERR, "recv buf %p, len %d, But port ID is not supported!", buf, len);
+                return -1;
+        }
+        LOG(LB, RUNNING, "handle packet(buf %p, len %d) finished!\r\n", buf, len);
     }
-    LOG(LB, RUNNING, "handle packet(buf %p, len %d) finished!\r\n", buf, len);
 
     return 0;
 }
@@ -1133,7 +1143,8 @@ int32_t lb_init_prepare(struct pcf_file *conf)
     }
 
     /* Init DPDK */
-    ret = dpdk_init(conf, lb_data_pkt_entry, NULL);
+    lb_dpdk_cache_init_prepare();
+    ret = dpdk_init(conf, lb_data_pkt_entry, lb_dpdk_tx_queue_proc);
     if (ret != 0) {
         LOG(LB, ERR, "dpdk_init failed!");
         return -1;
@@ -1168,7 +1179,7 @@ int32_t lb_init(void)
     comm_msg_cmd_callback = lb_control_msg_proc;
 
     /* Init neighbor table */
-    if (0 > lb_neighbor_init(1000)) {
+    if (0 > lb_neighbor_init(LB_NEIGHBOR_CACHE_NUMBER)) {
         LOG(LB, ERR, "Neighbor init failed.\n");
         return -1;
     }
@@ -1206,6 +1217,7 @@ int32_t lb_init(void)
         lb_set_standby_alive(G_FALSE);
         lb_set_work_status(LB_STATUS_ACTIVE);
     }
+    lb_work_flag = G_TRUE;
 
     LOG(LB, MUST, "------Load-balancer init success------\n");
 
@@ -1260,6 +1272,41 @@ int lb_ha_get_lbu_status(struct cli_def *cli,int argc, char **argv)
 
     cli_print(cli,"Standby status: %s\n",
         lb_get_standby_alive() ? "On-line" : "Off-line");
+
+    return 0;
+}
+
+int lb_show_resource_stats(struct cli_def *cli, int argc, char **argv)
+{
+    lb_backend_mgmt *be_mgmt = lb_get_backend_mgmt_public();
+    lb_neighbor_cache_mgmt *ngb_cache_mgmt = lb_neighbor_cache_mgmt_get_public();
+    lb_neighbor_mgmt *ngb_mgmt = lb_neighbor_mgmt_get_public();
+    lb_dpdk_tx_queue *dpdk_tx_mgmt = lb_dpdk_cache_mgmt_get_public();
+
+    cli_print(cli,"                Maximum number        Use number        \n");
+
+    /* backend resource */
+    cli_print(cli,"backend:         %-8u             %-8u\n", COMM_MSG_BACKEND_NUMBER - COMM_MSG_BACKEND_START_INDEX,
+        Res_GetAlloced(be_mgmt->be_pool_id));
+
+    /* Neighbor cache resource */
+    cli_print(cli,"Neighbor cache:  %-8u             %-8u\n", ngb_cache_mgmt->max_num,
+        Res_GetAlloced(ngb_cache_mgmt->pool_id));
+
+    /* Neighbor resource */
+    cli_print(cli,"Neighbor:        %-8u             %-8u\n", ngb_mgmt->max_num,
+        Res_GetAlloced(ngb_mgmt->pool_id));
+
+    /* Cache Node resource */
+    cli_print(cli,"Cache Node:      %-8u             %-8u\n", dpdk_tx_mgmt->max_num,
+        Res_GetAlloced(dpdk_tx_mgmt->cache_pool_id));
+
+    /* Buffer block resource */
+    cli_print(cli,"Buffer block:    %-8u             %-8u\n", ngb_mgmt->max_num,
+        Res_GetAlloced(dpdk_tx_mgmt->blk_pool_id));
+
+    /* MB work state */
+    cli_print(cli, "MB state:       %s\n", lb_mb_work_state_get() ? "On-line" : "Off-line");
 
     return 0;
 }

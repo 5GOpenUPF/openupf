@@ -705,7 +705,10 @@ static uint32_t fp_msg_inst_del_proc(uint32_t index)
         dl_list_del(&inst_entry->far2_node);
         ros_rwlock_write_unlock(&far_entry->rwlock); /* unlock */
     }
-    Res_MarkClr(inst_head->res_stat, inst_entry->index); /* 计划在此检查并上报残留的统计数据, 但是spu比fpu先删除 */
+    /* It is planned to check and report the residual statistics here,
+    *  but the SPU is deleted before the FPU
+    */
+    Res_MarkClr(inst_head->res_stat, inst_entry->index);
 
     ros_rwlock_write_unlock(&inst_entry->rwlock);
 
@@ -968,7 +971,9 @@ uint32_t fp_msg_inst_mod(comm_msg_ie_t *ie)
         /* Handle far or bar modification */
         fp_msg_inst_mod_proc(inst_entry);
 
-        /* 考虑在此清除instance上已有的fast entry以确保spu修改了部分匹配规则, 但是考虑到和缓存报文有牵连暂时不动 */
+        /* Consider clearing the existing fast entry on instance to ensure that some matching rules are modified by SPU.
+        *  However, considering that it is involved in the cache message, it will not be processed temporarily
+        */
     }
 
     return EN_COMM_ERRNO_OK;
@@ -1573,7 +1578,7 @@ uint32_t fp_msg_far_mod(comm_msg_ie_t *ie)
 
         far_entry = fp_far_entry_get(tmp_index);
 
-        /* 先将修改前的数据保存 */
+        /* Save the data before modification */
         tmp_ohc_flag = far_entry->config.choose.d.flag_out_header1;
         tmp_act.value = far_entry->config.action.value;
         ros_memcpy(&tmp_ohc, &far_entry->config.forw_cr_outh, sizeof(tmp_ohc));
@@ -1583,7 +1588,7 @@ uint32_t fp_msg_far_mod(comm_msg_ie_t *ie)
         fp_msg_far_copy(&far_entry->config, &ie_data[cnt].cfg);
         ros_rwlock_write_unlock(&far_entry->rwlock); /* unlock */
 
-        /* 符合条件需要删除已有fast表 */
+        /* If the condition is met, the existing fast table needs to be deleted */
         if ((tmp_ohc_flag != far_entry->config.choose.d.flag_out_header1) ||
             (tmp_ohc.ipv4 != far_entry->config.forw_cr_outh.ipv4) ||
             (ros_memcmp(&tmp_ohc.ipv6, &far_entry->config.forw_cr_outh.ipv6, IPV6_ALEN)) ||
@@ -1745,7 +1750,7 @@ uint32_t fp_msg_far_show(struct cli_def *cli,uint32_t far_num)
     cli_print(cli,"  forwarding      : %d\r\n",
         far_entry->config.choose.d.section_forwarding);
     cli_print(cli,"    redirect      : %d\r\n",
-        far_entry->config.choose.d.flag_redirect1);
+        far_entry->config.choose.d.flag_redirect);
     cli_print(cli,"    out_header    : %d\r\n",
         far_entry->config.choose.d.flag_out_header1);
     cli_print(cli,"    trans level   : %d\r\n",
@@ -1760,9 +1765,60 @@ uint32_t fp_msg_far_show(struct cli_def *cli,uint32_t far_num)
     cli_print(cli,"  duplicating num : %d\r\n",
         far_entry->config.choose.d.section_dupl_num);
 #endif
-    if (far_entry->config.choose.d.flag_redirect1) {
-        cli_print(cli,"redirect ip       0x%08x\n",
-        ntohl(far_entry->config.forw_redirect.ipv4));
+    switch (far_entry->config.choose.d.flag_redirect) {
+        case 1:
+            {
+                char ip_str[256];
+                uint32_t tmp_addr = htonl(far_entry->config.forw_redirect.ipv4_addr);
+
+                if (NULL == inet_ntop(AF_INET, &tmp_addr, ip_str, sizeof(ip_str))) {
+                    cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                cli_print(cli,"redirect IPv4     %s\n", ip_str);
+            }
+            break;
+
+        case 2:
+            {
+                char ip_str[256];
+
+                if (NULL == inet_ntop(AF_INET6, far_entry->config.forw_redirect.ipv6_addr,
+                    ip_str, sizeof(ip_str))) {
+                    cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                cli_print(cli,"redirect IPv6     %s\n", ip_str);
+            }
+            break;
+
+        case 3:
+            cli_print(cli,"redirect URL      %s\n", far_entry->config.forw_redirect.url);
+            break;
+
+        case 4:
+            cli_print(cli,"redirect SIP URL  %s\n", far_entry->config.forw_redirect.sip_url);
+            break;
+
+        case 5:
+            {
+                char ip_str[256];
+                uint32_t tmp_addr = htonl(far_entry->config.forw_redirect.v4_v6.ipv4);
+
+                if (NULL == inet_ntop(AF_INET, &tmp_addr, ip_str, sizeof(ip_str))) {
+                    cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                cli_print(cli,"redirect IPv4     %s\n", ip_str);
+
+                if (NULL == inet_ntop(AF_INET6, far_entry->config.forw_redirect.v4_v6.ipv6,
+                    ip_str, sizeof(ip_str))) {
+                    cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                cli_print(cli,"redirect IPv6     %s\n", ip_str);
+            }
+            break;
     }
     if (far_entry->config.choose.d.flag_out_header1) {
         cli_print(cli,"--outheader--\n");
@@ -3824,9 +3880,16 @@ static void fp_msg_far_copy(comm_msg_far_config *dst, comm_msg_far_config *src)
     entry_far->choose.value = htons(input_far->choose.value);
 
     /* Don't change byte order */
-    entry_far->forw_redirect.ipv4 = htonl(input_far->forw_redirect.ipv4);
-    ros_memcpy(entry_far->forw_redirect_ipv6.ipv6.s6_addr,
-        input_far->forw_redirect_ipv6.ipv6.s6_addr, 16);
+    ros_memcpy(&entry_far->forw_redirect, &input_far->forw_redirect, sizeof(session_redirect_server));
+    switch (entry_far->choose.d.flag_redirect) {
+        case 1:
+            entry_far->forw_redirect.ipv4_addr = htonl(entry_far->forw_redirect.ipv4_addr);
+            break;
+
+        case 5:
+            entry_far->forw_redirect.v4_v6.ipv4 = htonl(entry_far->forw_redirect.v4_v6.ipv4);
+            break;
+    }
 
     entry_far->forw_trans.tos  = input_far->forw_trans.tos;
     entry_far->forw_trans.mask = input_far->forw_trans.mask;

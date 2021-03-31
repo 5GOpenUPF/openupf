@@ -71,10 +71,13 @@ void        lb_set_standby_alive(int16_t status);
 int16_t     lb_get_standby_alive(void);
 
 uint8_t *lb_get_local_port_mac(uint8_t port);
+uint32_t lb_get_local_net_ipv4(uint8_t port);
 uint8_t *lb_get_peer_port_mac(uint8_t port);
 comm_msg_header_t *lb_fill_msg_header(uint8_t *buf);
 
 lb_system_config *lb_get_system_config(void);
+void lb_mac_updating_public(void *m, uint8_t *src_mac, uint8_t *dest_mac);
+void lb_fwd_to_external_network_public(void *m);
 
 int32_t lb_init_prepare(struct pcf_file *conf);
 int32_t lb_init(void);

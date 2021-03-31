@@ -13,8 +13,8 @@ extern "C" {
 #pragma pack(1)
 typedef struct  tag_fp_dpdk_tx_queue
 {
-    ros_rwlock_t        dpdk_tx_lock[COMM_MSG_FP_STAT_CORE_NUM];
-    LIST                dpdk_tx_lst[COMM_MSG_FP_STAT_CORE_NUM];    /* dpdk Need to send buffer queue */
+    ros_rwlock_t        dpdk_tx_lock[COMM_MSG_MAX_DPDK_CORE_NUM];
+    LIST                dpdk_tx_lst[COMM_MSG_MAX_DPDK_CORE_NUM];    /* DPDK send packet queue */
 }fp_dpdk_tx_queue;
 #pragma pack()
 

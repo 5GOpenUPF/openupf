@@ -44,8 +44,21 @@ static inline void dl_list_del(struct dl_list *item)
 		item->next->prev = item->prev;
 		item->prev->next = item->next;
 	}
-	item->next = NULL;
-	item->prev = NULL;
+	dl_list_init(item);
+}
+
+static inline void dl_list_replace_init(struct dl_list *item_old, struct dl_list *item_new)
+{
+    item_new->next = item_old->next;
+    item_new->prev = item_old->prev;
+    if (item_old->next && item_old->next != item_old) {
+        item_old->next->prev = item_new;
+    }
+
+    if (item_old->prev && item_old->prev != item_old) {
+        item_old->prev->next = item_new;
+    }
+    dl_list_init(item_old);
 }
 
 static inline int dl_list_empty(struct dl_list *list)

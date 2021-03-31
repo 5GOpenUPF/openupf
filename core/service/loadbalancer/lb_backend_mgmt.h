@@ -55,6 +55,8 @@ typedef struct tag_lb_sync_backend_config {
 } lb_sync_backend_config;
 
 
+lb_backend_mgmt *lb_get_backend_mgmt_public(void);
+
 comm_msg_channel_server *lb_get_backend_mgmt_server(void);
 uint64_t lb_get_local_flag_key(void);
 void lb_set_peer_flag_key(uint64_t vlu);

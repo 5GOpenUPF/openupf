@@ -1263,7 +1263,7 @@ static int white_list_filter_process(struct pdr_table *pdr_tbl, struct pro_ipv4_
     uint64_t                local_info_64 = 0,user_info_64 = 0;
 
     if (pdr_tbl == NULL || NULL == ip_hdr) {
-        LOG(SESSION, ERR, "The condition is not satisfied, pdr_tbl(%p), ip_hdr(%p)", pdr_tbl, ip_hdr);
+        LOG(SESSION, RUNNING, "The condition is not satisfied, pdr_tbl(%p), ip_hdr(%p)", pdr_tbl, ip_hdr);
         return result;
     }
 
@@ -1275,7 +1275,8 @@ static int white_list_filter_process(struct pdr_table *pdr_tbl, struct pro_ipv4_
         tcp_hdr = (struct pro_tcp_hdr *)((char *)ip_hdr + (ip_hdr->ihl << 2));
         if(unlikely(tcp_hdr->psh))
         {
-            if((ntohs(tcp_hdr->dest) == 80) || (ntohs(tcp_hdr->dest) == 8080))//http的协议判断host
+            /* Check http port (default 80 or 8080) */
+            if((ntohs(tcp_hdr->dest) == 80) || (ntohs(tcp_hdr->dest) == 8080))
             {
                 if(!layer7_url_extract(tcp_hdr, ntohs(ip_hdr->tot_len), http_url, host, sizeof(http_url)))
                 {
@@ -1291,9 +1292,10 @@ static int white_list_filter_process(struct pdr_table *pdr_tbl, struct pro_ipv4_
             }
             else if (ntohs(tcp_hdr->dest) == 443)
             {
-                if (pkt_parse_https(tcp_hdr, e_key, 1, &exist_17516) == 0)//https的协议判断SNI(Server Name Indication)
+                /* Protocol judgment SNI (server name indication) of HTTPS */
+                if (pkt_parse_https(tcp_hdr, e_key, 1, &exist_17516) == 0)
                 {
-                    //先进行防欺诈处理
+                    /* Anti fraud treatment */
                     if (exist_17516)
                     {
                         if (session_link == NULL)
@@ -1304,8 +1306,8 @@ static int white_list_filter_process(struct pdr_table *pdr_tbl, struct pro_ipv4_
                         }
                         if (e_key[1].is_vaild)
                         {
-                            //比对手机号码一不一致，前7字节固定为"msisdn-"。
-                            if (strncmp((char *)(e_key[1].value_ptr),"msisdn-",7))
+                            /* Compared with the mobile phone number */
+                            if (strncmp((char *)(e_key[1].value_ptr), "msisdn-", 7))
                             {
                                 ros_memcpy(buf_str,(e_key[1].value_ptr),7);
                                 result = -1;
@@ -1326,8 +1328,8 @@ static int white_list_filter_process(struct pdr_table *pdr_tbl, struct pro_ipv4_
                         }
                         if (e_key[3].is_vaild)
                         {
-                            //比对imsi一不一致，前5字节固定为"imsi-"。
-                            if (strncmp((char *)(e_key[3].value_ptr),"imsi-",5))
+                            /* Compared with IMSI */
+                            if (strncmp((char *)(e_key[3].value_ptr), "imsi-", 5))
                             {
                                 ros_memcpy(buf_str,(e_key[3].value_ptr),5);
                                 result = -1;
@@ -1348,8 +1350,8 @@ static int white_list_filter_process(struct pdr_table *pdr_tbl, struct pro_ipv4_
                         }
                         if (e_key[4].is_vaild)
                         {
-                            //比对imei一不一致，前5字节固定为"imei-"。
-                            if (strncmp((char *)(e_key[4].value_ptr),"imei-",5))
+                            /* Compared with IMEI */
+                            if (strncmp((char *)(e_key[4].value_ptr), "imei-", 5))
                             {
                                 ros_memcpy(buf_str,(e_key[4].value_ptr),5);
                                 result = -1;
@@ -1413,11 +1415,11 @@ static int filter_process(struct filter_key *key, uint8_t *field_offset,
     struct dl_list *next = NULL;
     struct sdf_filter_entry *sdfFilter = NULL;
     struct eth_filter_entry *ethFilter = NULL;
-    *url_depth = -1; /* 没有URL匹配的情况设置为-1 */
+    *url_depth = -1; /* Default set -1 */
 
     LOG(SESSION, RUNNING, "filter_type:%d.", pdi_content->filter_type);
 
-    /* 上行流才匹配qfi */
+    /* Match QFI */
     if (likely(FLOW_MASK_FIELD_ISSET(field_offset, FLOW_FIELD_GTP_T_PDU))) {
         if (0 < pdi_content->qfi_number) {
             if (0 != pdr_match_qfi(key, pdi_content->qfi_array, pdi_content->qfi_number)) {
@@ -1515,7 +1517,7 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                 struct rb_node *queue_node = rbtree_search(ueip_root,
                     &key, pdr_ueip_v4_compare);
                 if (NULL == queue_node) {
-                    /* 没有查询到重复项 */
+                    /* No duplicate items found */
                     dl_list_init(&new_ueip->v4_pq_node);
                     ret = rbtree_insert(ueip_root, &new_ueip->v4_node,
                         &key, pdr_ueip_v4_compare);
@@ -1526,15 +1528,20 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                         return -1;
                     }
                 } else {
-                    /* 存在该节点,往该节点队列上加 */
+                    /* If the node exists, add to the queue of the node */
                     ueip_queue = (struct pdr_ue_ipaddress *)container_of(queue_node,
                         struct pdr_ue_ipaddress, v4_node);
                     if (precedence < ueip_queue->pdr_tbl->pdr.precedence) {
-                        /* 新节点的优先级为队列上最高的(数值最小)放最前面,替换二叉树上的节点 */
+                        /*
+                        *  The priority of the new node is the highest (minimum value) in the queue,
+                        *  and the node in the binary tree is replaced
+                        */
                         dl_list_add_tail(&ueip_queue->v4_pq_node, &new_ueip->v4_pq_node);
                         rbtree_replace_node(&ueip_queue->v4_node, &new_ueip->v4_node, ueip_root);
                     } else {
-                        /* 新节点的优先级比第一个根节点要小,往后找一个合适的位置插入 */
+                        /*  The priority of the new node is lower than that of the first root node.
+                        *   Find a suitable place to insert it later
+                        */
                         dl_list_for_each_safe(pos, next, &ueip_queue->v4_pq_node) {
                             struct pdr_ue_ipaddress *cur = (struct pdr_ue_ipaddress *)container_of(pos,
                                 struct pdr_ue_ipaddress, v4_pq_node);
@@ -1545,7 +1552,9 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                             }
                         }
                         if (!flag) {
-                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            /* The left and right nodes in the queue have higher priority than the new nodes,
+                            *  and they are inserted last
+                            */
                             dl_list_add_tail(&ueip_queue->v4_pq_node, &new_ueip->v4_pq_node);
                         }
                     }
@@ -1567,7 +1576,7 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                 ros_rwlock_write_lock(&pdr_head->ueip_v6_lock); /* lock */
                 struct rb_node *queue_node = rbtree_search(ueip_root, &key, pdr_ueip_v6_compare);
                 if (NULL == queue_node) {
-                    /* 没有查询到重复项 */
+                    /* No duplicate items found */
                     dl_list_init(&new_ueip->v6_pq_node);
                     ret = rbtree_insert(ueip_root, &new_ueip->v6_node,
                         &key, pdr_ueip_v6_compare);
@@ -1577,15 +1586,20 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                         return -1;
                     }
                 } else {
-                    /* 存在该节点,往该节点队列上加 */
+                    /* If the node exists, add to the queue of the node */
                     ueip_queue = (struct pdr_ue_ipaddress *)container_of(queue_node,
                         struct pdr_ue_ipaddress, v6_node);
                     if (precedence < ueip_queue->pdr_tbl->pdr.precedence) {
-                        /* 新节点的优先级为队列上最高的(数值最小)放最前面,替换二叉树上的节点 */
+                        /*
+                        *  The priority of the new node is the highest (minimum value) in the queue,
+                        *  and the node in the binary tree is replaced
+                        */
                         dl_list_add_tail(&ueip_queue->v6_pq_node, &new_ueip->v6_pq_node);
                         rbtree_replace_node(&ueip_queue->v6_node, &new_ueip->v6_node, ueip_root);
                     } else {
-                        /* 新节点的优先级比第一个根节点要小,往后找一个合适的位置插入 */
+                        /*  The priority of the new node is lower than that of the first root node.
+                        *   Find a suitable place to insert it later
+                        */
                         dl_list_for_each_safe(pos, next, &ueip_queue->v6_pq_node) {
                             struct pdr_ue_ipaddress *cur = (struct pdr_ue_ipaddress *)container_of(pos,
                                 struct pdr_ue_ipaddress, v6_pq_node);
@@ -1596,7 +1610,9 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                             }
                         }
                         if (!flag) {
-                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            /* The left and right nodes in the queue have higher priority than the new nodes,
+                            *  and they are inserted last
+                            */
                             dl_list_add_tail(&ueip_queue->v6_pq_node, &new_ueip->v6_pq_node);
                         }
                     }
@@ -1625,7 +1641,7 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                 fr_v4_queue = (struct pdr_framed_route *)rbtree_search(&pdr_head->fr_v4_root,
                     &v4_key, pdr_fr_v4_compare);
                 if (NULL == fr_v4_queue) {
-                    /* 没有查询到重复项 */
+                    /* No duplicate items found */
                     dl_list_init(&fr_v4->pq_node);
                     ret = rbtree_insert(&pdr_head->fr_v4_root, &fr_v4->route_node,
                         &v4_key, pdr_fr_v4_compare);
@@ -1636,14 +1652,19 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                         return -1;
                     }
                 } else {
-                    /* 存在该节点,往该节点队列上加 */
+                    /* If the node exists, add to the queue of the node */
                     if (fr_v4->route.metrics < fr_v4_queue->route.metrics) {
-                        /* 新节点的优先级为队列上最高的(数值最小)放最前面,替换二叉树上的节点 */
+                        /*
+                        *  The priority of the new node is the highest (minimum value) in the queue,
+                        *  and the node in the binary tree is replaced
+                        */
                         dl_list_add_tail(&fr_v4_queue->pq_node, &fr_v4->pq_node);
                         rbtree_replace_node(&fr_v4_queue->route_node, &fr_v4->route_node,
                             &pdr_head->fr_v4_root);
                     } else {
-                        /* 新节点的优先级比第一个根节点要小,往后找一个合适的位置插入 */
+                        /*  The priority of the new node is lower than that of the first root node.
+                        *   Find a suitable place to insert it later
+                        */
                         dl_list_for_each_safe(pos, next, &fr_v4_queue->pq_node) {
                             struct pdr_framed_route *cur = (struct pdr_framed_route *)container_of(pos,
                                 struct pdr_framed_route, pq_node);
@@ -1654,7 +1675,9 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                             }
                         }
                         if (!flag) {
-                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            /* The left and right nodes in the queue have higher priority than the new nodes,
+                            *  and they are inserted last
+                            */
                             dl_list_add_tail(&fr_v4_queue->pq_node, &fr_v4->pq_node);
                         }
                     }
@@ -1677,7 +1700,7 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                 fr_v6_queue = (struct pdr_framed_route_ipv6 *)rbtree_search(&pdr_head->fr_v6_root,
                     &v6_key, pdr_fr_v6_compare);
                 if (NULL == fr_v6_queue) {
-                    /* 没有查询到重复项 */
+                    /* No duplicate items found */
                     dl_list_init(&fr_v6->pq_node);
                     ret = rbtree_insert(&pdr_head->fr_v6_root, &fr_v6->route_node,
                         &v6_key, pdr_fr_v6_compare);
@@ -1688,14 +1711,19 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                         return -1;
                     }
                 } else {
-                    /* 存在该节点,往该节点队列上加 */
+                    /* If the node exists, add to the queue of the node */
                     if (fr_v6->route.metrics < fr_v6_queue->route.metrics) {
-                        /* 新节点的优先级为队列上最高的(数值最小)放最前面,替换二叉树上的节点 */
+                        /*
+                        *  The priority of the new node is the highest (minimum value) in the queue,
+                        *  and the node in the binary tree is replaced
+                        */
                         dl_list_add_tail(&fr_v6_queue->pq_node, &fr_v6->pq_node);
                         rbtree_replace_node(&fr_v6_queue->route_node, &fr_v6->route_node,
                             &pdr_head->fr_v6_root);
                     } else {
-                        /* 新节点的优先级比第一个根节点要小,往后找一个合适的位置插入 */
+                        /*  The priority of the new node is lower than that of the first root node.
+                        *   Find a suitable place to insert it later
+                        */
                         dl_list_for_each_safe(pos, next, &fr_v6_queue->pq_node) {
                             struct pdr_framed_route_ipv6 *cur = (struct pdr_framed_route_ipv6 *)container_of(pos,
                                 struct pdr_framed_route_ipv6, pq_node);
@@ -1706,7 +1734,9 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                             }
                         }
                         if (!flag) {
-                            /* 队列上左右的节点都比新节点的优先级要大,往最后插入 */
+                            /* The left and right nodes in the queue have higher priority than the new nodes,
+                            *  and they are inserted last
+                            */
                             dl_list_add_tail(&fr_v6_queue->pq_node, &fr_v6->pq_node);
                         }
                     }
@@ -1722,8 +1752,10 @@ static int pdr_map_insert(struct pdr_table *pdr_tbl)
                 dl_list_add_tail(&sess->eth_dl_head, &pdr_tbl->eth_dl_node);
             } else {
 
-                /* 存在该节点,往该节点队列上加 */
-                /* 新节点的优先级比第一个根节点要小,往后找一个合适的位置插入 */
+                /* If the node exists, add to the queue of the node */
+                /*  The priority of the new node is lower than that of the first root node.
+                *   Find a suitable place to insert it later
+                */
                 dl_list_for_each_safe(pos, next, &sess->eth_dl_head) {
                     struct pdr_table *cur = (struct pdr_table *)container_of(pos,
                         struct pdr_table, eth_dl_node);
@@ -1870,18 +1902,20 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                 ros_rwlock_write_lock(&pdr_head->ueip_v4_lock);/* lock */
                 struct rb_node *queue_node = rbtree_search(ueip_root, &key, pdr_ueip_v4_compare);
                 if (NULL == queue_node) {
-                    /* 没有匹配的节点 */
+                    /* There are no matching nodes */
                     ros_rwlock_write_unlock(&pdr_head->ueip_v4_lock); /* unlock */
                     LOG(SESSION, ERR, "search pdr failed, pdr id %u.", pdr_tbl->pdr.pdr_id);
                     continue;
                 } else {
-                    /* 找到匹配节点 */
+                    /* Find matching node */
                     ueip_queue = (struct pdr_ue_ipaddress *)container_of(queue_node,
                         struct pdr_ue_ipaddress, v4_node);
                     if (cur_ueip == ueip_queue) {
-                        /* 要删除的节点是该队列的首节点 */
+                        /* The node to be deleted is the first node of the queue */
                         if (dl_list_empty(&ueip_queue->v4_pq_node)) {
-                            /* 队列上没有其他节点,直接将二叉树上的节点删除 */
+                            /* If there are no other nodes in the queue,
+                            *  the nodes in the binary tree will be deleted directly
+                            */
                             if (NULL == rbtree_delete(ueip_root, &key, pdr_ueip_v4_compare)) {
                                 ros_rwlock_write_unlock(&pdr_head->ueip_v4_lock);/* unlock*/
                                 LOG(SESSION, ERR, "delete pdr map failed, pdr id %u.",
@@ -1889,14 +1923,16 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                                 continue;
                             }
                         } else {
-                            /* 队列上存在其他节点,需要替换后再删除 */
+                            /* There are other nodes in the queue, which need to be replaced before being deleted */
                             struct pdr_ue_ipaddress *tmp_ueip = (struct pdr_ue_ipaddress *)
                                 dl_list_entry_next(ueip_queue, v4_pq_node);
                             rbtree_replace_node(&ueip_queue->v4_node, &tmp_ueip->v4_node, ueip_root);
                             dl_list_del(&ueip_queue->v4_pq_node);
                         }
                     } else {
-                        /* 要删除的节点不是队列上的首个节点,直接从队列上删除即可 */
+                        /* The node to be deleted is not the first node on the queue,
+                        *  so it can be deleted directly from the queue
+                        */
                         dl_list_del(&cur_ueip->v4_pq_node);
                     }
                     ros_rwlock_write_unlock(&pdr_head->ueip_v4_lock);/* unlock */
@@ -1960,16 +1996,18 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                 fr_v4_queue = (struct pdr_framed_route *)rbtree_search(&pdr_head->fr_v4_root,
                     &v4_key, pdr_fr_v4_compare);
                 if (NULL == fr_v4_queue) {
-                    /* 没有匹配的节点, 不应该出现 */
+                    /* No matching nodes, should not appear */
                     LOG(SESSION, ERR, "search framed route map failed, pdr id %u.",
                         pdr_tbl->pdr.pdr_id);
                     continue;
                 } else {
-                    /* 找到匹配节点 */
+                    /* Find matching node */
                     if (fr_v4 == fr_v4_queue) {
-                        /* 要删除的节点是该队列的首节点 */
+                        /* The node to be deleted is the first node of the queue */
                         if (dl_list_empty(&fr_v4_queue->pq_node)) {
-                            /* 队列上没有其他节点,直接将二叉树上的节点删除 */
+                            /* If there are no other nodes in the queue,
+                            *  the nodes in the binary tree will be deleted directly
+                            */
                             if (NULL == rbtree_delete(&pdr_head->fr_v4_root,
                                 &v4_key, pdr_fr_v4_compare)) {
                                 LOG(SESSION, ERR, "delete framed route map failed, pdr id %u.",
@@ -1977,7 +2015,9 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                                 continue;
                             }
                         } else {
-                            /* 队列上存在其他节点,需要替换后再删除 */
+                            /* There are other nodes in the queue,
+                            *  which need to be replaced before being deleted
+                            */
                             struct pdr_framed_route *tmp_fr_v4 = (struct pdr_framed_route *)
                                 dl_list_entry_next(fr_v4_queue, pq_node);
                             rbtree_replace_node(&fr_v4_queue->route_node, &tmp_fr_v4->route_node,
@@ -1985,7 +2025,9 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                             dl_list_del(&fr_v4_queue->pq_node);
                         }
                     } else {
-                        /* 要删除的节点不是队列上的首个节点,直接从队列上删除即可 */
+                        /* The node to be deleted is not the first node on the queue,
+                        *  so it can be deleted directly from the queue
+                        */
                         dl_list_del(&fr_v4->pq_node);
                     }
                 }
@@ -2007,16 +2049,18 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                 fr_v6_queue = (struct pdr_framed_route_ipv6 *)rbtree_search(&pdr_head->fr_v6_root,
                     &v6_key, pdr_fr_v6_compare);
                 if (NULL == fr_v6_queue) {
-                    /* 没有匹配的节点, 不应该出现 */
+                    /* There are no matching nodes and should not appear */
                     LOG(SESSION, ERR, "search framed route map failed, pdr id %u.",
                         pdr_tbl->pdr.pdr_id);
                     continue;
                 } else {
-                    /* 找到匹配节点 */
+                    /* Find matching node */
                     if (fr_v6 == fr_v6_queue) {
-                        /* 要删除的节点是该队列的首节点 */
+                        /* The node to be deleted is the first node of the queue */
                         if (dl_list_empty(&fr_v6_queue->pq_node)) {
-                            /* 队列上没有其他节点,直接将二叉树上的节点删除 */
+                            /* If there are no other nodes in the queue,
+                            *  the nodes in the binary tree will be deleted directly
+                            */
                             if (NULL == rbtree_delete(&pdr_head->fr_v6_root,
                                 &v6_key, pdr_fr_v6_compare)) {
                                 LOG(SESSION, ERR, "delete framed route map failed, pdr id %u.",
@@ -2024,7 +2068,9 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                                 continue;
                             }
                         } else {
-                            /* 队列上存在其他节点,需要替换后再删除 */
+                            /* There are other nodes in the queue,
+                            *  which need to be replaced before being deleted
+                            */
                             struct pdr_framed_route_ipv6 *tmp_fr_v6 = (struct pdr_framed_route_ipv6 *)
                                 dl_list_entry_next(fr_v6_queue, pq_node);
                             rbtree_replace_node(&fr_v6_queue->route_node, &tmp_fr_v6->route_node,
@@ -2032,7 +2078,9 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                             dl_list_del(&fr_v6_queue->pq_node);
                         }
                     } else {
-                        /* 要删除的节点不是队列上的首个节点,直接从队列上删除即可 */
+                        /* The node to be deleted is not the first node on the queue,
+                        *  so it can be deleted directly from the queue
+                        */
                         dl_list_del(&fr_v6->pq_node);
                     }
                 }
@@ -2053,7 +2101,7 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
 
         for (cnt = 0; cnt < pdi->local_fteid_num; ++cnt) {
             cur_fteid = &pdi->local_fteid[cnt];
-            /* ipv4 */
+            /* Ipv4 */
             if (cur_fteid->local_fteid.f_teid_flag.d.v4) {
                 pdr_map_v4_key_fill(pdi, &key, 1, cnt);
 
@@ -2092,7 +2140,7 @@ static int pdr_map_remove(struct pdr_table *pdr_tbl)
                 }
             }
 
-            /* ipv6 */
+            /* Ipv6 */
             if (cur_fteid->local_fteid.f_teid_flag.d.v6) {
                 pdr_map_v6_key_fill(pdi, &key, 1, cnt);
 
@@ -2181,7 +2229,9 @@ static struct pdr_table *pdr_match_frv6(uint8_t *dip, struct filter_key *key)
         &cur_url_depth)) {
         ret_pdr = fr_v6->pdr_tbl;
 
-        /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+        /* After querying the matching PDR,
+        *  check the URL matching with the same priority but different depth
+        */
         dl_list_for_each_safe(pos, next, &fr_v6->pq_node) {
             cur = (struct pdr_framed_route_ipv6 *)container_of(
                 pos, struct pdr_framed_route_ipv6, pq_node);
@@ -2207,7 +2257,9 @@ static struct pdr_table *pdr_match_frv6(uint8_t *dip, struct filter_key *key)
                 pos, struct pdr_framed_route_ipv6, pq_node);
             if (0 == filter_process(key, key->field_offset,
                 &cur->pdr_tbl->pdr.pdi_content, &get_url_depth)) {
-                /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+                /* After querying the matching PDR,
+                *  check the URL matching with the same priority but different depth
+                */
 
                 LOG(SESSION, DEBUG, "pdr map lookup success, pdr_id %u.",
                     cur->pdr_tbl->pdr.pdr_id);
@@ -2232,7 +2284,7 @@ static struct pdr_table *pdr_match_frv6(uint8_t *dip, struct filter_key *key)
     }
     ros_rwlock_read_unlock(&pdr_head->fr_v6_lock); /* unlock */
 
-    /* 查找ip和host白名单 */
+    /* Match white list */
     if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
         LOG(SESSION, DEBUG,
             "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
@@ -2283,7 +2335,9 @@ static struct pdr_table *pdr_match_frv4(uint32_t dip, struct filter_key *key)
             &cur_url_depth)) {
         ret_pdr = fr->pdr_tbl;
 
-        /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+        /* After querying the matching PDR,
+        *  check the URL matching with the same priority but different depth
+        */
         dl_list_for_each_safe(pos, next, &fr->pq_node) {
             cur = (struct pdr_framed_route *)container_of(
                 pos, struct pdr_framed_route, pq_node);
@@ -2309,7 +2363,9 @@ static struct pdr_table *pdr_match_frv4(uint32_t dip, struct filter_key *key)
                 pos, struct pdr_framed_route, pq_node);
             if (0 == filter_process(key, key->field_offset,
                 &cur->pdr_tbl->pdr.pdi_content, &get_url_depth)) {
-                /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+                /* After querying the matching PDR,
+                *  check the URL matching with the same priority but different depth
+                */
 
                 LOG(SESSION, DEBUG, "pdr map lookup success, pdr_id %u.",
                     cur->pdr_tbl->pdr.pdr_id);
@@ -2334,7 +2390,7 @@ static struct pdr_table *pdr_match_frv4(uint32_t dip, struct filter_key *key)
     }
     ros_rwlock_read_unlock(&pdr_head->fr_v4_lock); /* unlock */
 
-    /* 查找ip和host白名单 */
+    /* Match white list */
     if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
         LOG(SESSION, DEBUG,
             "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
@@ -2361,7 +2417,9 @@ static struct pdr_table *pdr_match_ueip(struct pdr_ue_ipaddress *ueip_queue, str
             &cur_url_depth)) {
         ret_pdr = ueip_queue->pdr_tbl;
 
-        /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+        /* After querying the matching PDR,
+        *  check the URL matching with the same priority but different depth
+        */
         if (FLOW_MASK_FIELD_ISSET(key->field_offset, FLOW_FIELD_L1_IPV4)) {
             dl_list_for_each_safe(pos, next, &ueip_queue->v4_pq_node) {
                 cur = (struct pdr_ue_ipaddress *)container_of(
@@ -2406,7 +2464,9 @@ static struct pdr_table *pdr_match_ueip(struct pdr_ue_ipaddress *ueip_queue, str
                     pos, struct pdr_ue_ipaddress, v4_pq_node);
                 if (0 == filter_process(key, key->field_offset,
                     &cur->pdr_tbl->pdr.pdi_content, &get_url_depth)) {
-                    /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+                    /* After querying the matching PDR,
+                    *  check the URL matching with the same priority but different depth
+                    */
 
                     LOG(SESSION, DEBUG, "pdr map lookup success, pdr_id %u.",
                         cur->pdr_tbl->pdr.pdr_id);
@@ -2434,7 +2494,9 @@ static struct pdr_table *pdr_match_ueip(struct pdr_ue_ipaddress *ueip_queue, str
                     pos, struct pdr_ue_ipaddress, v6_pq_node);
                 if (0 == filter_process(key, key->field_offset,
                     &cur->pdr_tbl->pdr.pdi_content, &get_url_depth)) {
-                    /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+                    /* After querying the matching PDR,
+                    *  check the URL matching with the same priority but different depth
+                    */
 
                     LOG(SESSION, DEBUG, "pdr map lookup success, pdr_id %u.",
                         cur->pdr_tbl->pdr.pdr_id);
@@ -2460,7 +2522,7 @@ static struct pdr_table *pdr_match_ueip(struct pdr_ue_ipaddress *ueip_queue, str
     }
     ros_rwlock_read_unlock(&pdr_head->ueip_v6_lock); /* unlock */
 
-    /* 查找ip和host白名单 */
+    /* Match white list */
     if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL1Ipv4Header(key))) {
         LOG(SESSION, DEBUG,
             "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
@@ -2490,7 +2552,9 @@ static struct pdr_table *pdr_match_fteid(struct pdr_local_fteid *fteid_queue, st
         LOG(SESSION, DEBUG, "pdr map lookup success, pdr_id %u.",
             fteid_queue->pdr_tbl->pdr.pdr_id);
 
-        /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+        /* After querying the matching PDR,
+        *  check the URL matching with the same priority but different depth
+        */
         if (FLOW_MASK_FIELD_ISSET(key->field_offset, FLOW_FIELD_L1_IPV4)) {
             dl_list_for_each_safe(pos, next, &fteid_queue->v4_pq_node) {
                 cur = (struct pdr_local_fteid *)container_of(
@@ -2535,7 +2599,9 @@ static struct pdr_table *pdr_match_fteid(struct pdr_local_fteid *fteid_queue, st
                     pos, struct pdr_local_fteid, v4_pq_node);
                 if (0 == filter_process(key, &(key->field_offset[FLOW_FIELD_L2_ETH]),
                         &cur->pdr_tbl->pdr.pdi_content, &get_url_depth)) {
-                    /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+                    /* After querying the matching PDR,
+                    *  check the URL matching with the same priority but different depth
+                    */
 
                     LOG(SESSION, DEBUG, "pdr map lookup success, pdr_id %u.",
                         cur->pdr_tbl->pdr.pdr_id);
@@ -2563,7 +2629,9 @@ static struct pdr_table *pdr_match_fteid(struct pdr_local_fteid *fteid_queue, st
                     pos, struct pdr_local_fteid, v6_pq_node);
                 if (0 == filter_process(key, &(key->field_offset[FLOW_FIELD_L2_ETH]),
                         &cur->pdr_tbl->pdr.pdi_content, &get_url_depth)) {
-                    /* 查询到可匹配PDR后再检查同一优先级但深度不同的URL匹配 */
+                    /* After querying the matching PDR,
+                    *  check the URL matching with the same priority but different depth
+                    */
 
                     LOG(SESSION, DEBUG, "pdr map lookup success, pdr_id %u.",
                         cur->pdr_tbl->pdr.pdr_id);
@@ -2589,7 +2657,7 @@ static struct pdr_table *pdr_match_fteid(struct pdr_local_fteid *fteid_queue, st
     }
     ros_rwlock_read_unlock(&pdr_head->teid_v6_lock); /* unlock */
 
-    /* 查找ip和host白名单 */
+    /* Match white list */
     if (ret_pdr && -1 == white_list_filter_process(ret_pdr, FlowGetL2Ipv4Header(key))) {
         LOG(SESSION, DEBUG,
             "Match pdr (%p), pdr_id: %u, pdr_match_frv6 failed!",
@@ -2666,7 +2734,7 @@ struct pdr_table *pdr_map_lookup(struct filter_key *key)
     LOG(SESSION, DEBUG, "PDR matching");
 
     if (!FLOW_MASK_FIELD_ISSET(key->field_offset, FLOW_FIELD_GTP_T_PDU)) {
-        /* 下行报文 */
+        /* Downlink */
         struct pdr_key rb_key = {.teid = 0};
         struct pdr_ue_ipaddress *ueip_queue = NULL;
 
@@ -2679,7 +2747,7 @@ struct pdr_table *pdr_map_lookup(struct filter_key *key)
             LOG(SESSION, RUNNING, "Matching UEIP v4.");
 
             ros_rwlock_read_lock(&pdr_head->ueip_v4_lock);/* lock */
-            /* 先用目的ip去查询ueip */
+            /* Query UEIP with destination IP first */
             rb_key.ip_addr.ipv4 = htonl(ip_hdr->dest);
             queue_node = rbtree_search(&pdr_head->ueip_dv4_root,
                 &rb_key, pdr_ueip_v4_compare);
@@ -2829,7 +2897,7 @@ int pdr_fraud_identify(struct filter_key *key, struct pdr_table *pdr_tbl)
     //uint8_t ip_ver;
 
     if (pdr_tbl->pdr.pdi_content.si == EN_COMM_SRC_IF_ACCESS) {
-        /* 只检查上行报文 */
+        /* Only check uplink */
         if (FLOW_MASK_FIELD_ISSET(key->field_offset, FLOW_FIELD_L2_IPV4)) {
             struct pro_ipv4_hdr *ip_hdr = FlowGetL2Ipv4Header(key);
             if (unlikely(NULL == ip_hdr)) {
@@ -2854,7 +2922,7 @@ int pdr_fraud_identify(struct filter_key *key, struct pdr_table *pdr_tbl)
         }
         tcp_hdr = FlowGetL2TcpHeader(key);
         if (NULL == tcp_hdr) {
-            /* 不是TCP报文不做检查 */
+            /* Check only TCP packets */
             return 0;
         }
 
@@ -2868,7 +2936,7 @@ int pdr_fraud_identify(struct filter_key *key, struct pdr_table *pdr_tbl)
                 return 0;
             }
 
-            /* 检查http的host是否和DNS的映射IP匹配 */
+            /* Check whether the host of HTTP matches the mapping IP of DNS */
             /*for (cnt = 0; cnt < req_info.num_headers; ++cnt) {
                 if (0 == strncmp(req_info.headers[cnt].name, "host", 4)) {
                     char dn[COMM_MSG_DNS_NAME_LENG];
@@ -2888,12 +2956,12 @@ int pdr_fraud_identify(struct filter_key *key, struct pdr_table *pdr_tbl)
                 }
             }*/
 
-            /* 检查头增强防欺诈 */
+            /* Check head enhances fraud prevention */
             far_tbl = far_get_table(pdr_tbl->pdr_pri.far_index);
             if (far_tbl->far_cfg.choose.d.flag_header_enrich) {
                 comm_msg_header_enrichment_t *far_he = &far_tbl->far_cfg.forw_enrich;
 
-                /* 携带头部增强才去识别欺诈的HTTP头部 */
+                /* Carry the header enhancement to identify the fraudulent HTTP header */
                 for (cnt = 0; cnt < req_info.num_headers; ++cnt) {
                     if (0 == strncmp(far_he->name, req_info.headers[cnt].name,
                         far_he->name_length > req_info.headers[cnt].name_len ? far_he->name_length : req_info.headers[cnt].name_len)) {
@@ -3267,8 +3335,10 @@ int pdr_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num,
 
         /* if sdf filter, delete filter list,
            otherwise, need delete each sdf filter in ethernet filter */
-        /*目前pdr如果带了激活预定义规则，则默认去取本地filter,
-           所以不要删除。只有不带，才去删除*/
+        /* At present, if the PDR has a predefined activation rule,
+        *  it will get the local filter by default, so do not delete it.
+        *  Delete only if you don't bring it
+        */
         if(pdr_tbl->pdr.act_pre_number == 0)
         {
             if (FILTER_SDF == pdr_tbl->pdr.pdi_content.filter_type) {
@@ -3518,7 +3588,7 @@ int64_t pdr_table_init(uint32_t session_num)
     ros_rwlock_init(&pdr_tbl_head.ueip_v6_lock);
     ros_rwlock_init(&pdr_tbl_head.fr_v4_lock);
     ros_rwlock_init(&pdr_tbl_head.fr_v6_lock);
-    ros_atomic32_set(&pdr_tbl_head.use_num, 1);/* 这里设置为1是因为需要空出index 0给orphan用 */
+    ros_atomic32_set(&pdr_tbl_head.use_num, 1);/* Starting from 1, 0 is for orphan */
     total_memory += size;
 
     /* init filter */

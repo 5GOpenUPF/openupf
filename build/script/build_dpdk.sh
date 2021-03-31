@@ -32,7 +32,20 @@ DPDK_DOWNLOAD()
 {
     if [ ! -d $DPDK_LIB_DIR ]
     then
-        git clone -b $DPDK_GIT_TAG $DPDK_GIT_REPOSITORY $DPDK_LIB_DIR
+        RET=-1
+        COUNT=0
+        
+        while [ $RET -ne 0 ]
+        do
+            git clone -b $DPDK_GIT_TAG $DPDK_GIT_REPOSITORY $DPDK_LIB_DIR
+            RET=$?
+            COUNT=$(($COUNT+1))
+            
+            if [ $COUNT -ge 3 ]
+            then
+                exit -1
+            fi
+        done
     fi
 }
 

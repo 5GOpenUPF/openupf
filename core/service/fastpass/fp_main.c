@@ -75,7 +75,7 @@ CVMX_SHARED uint8_t  fp_head_enrich_enable = 1;
 /* Need to configure */
 CVMX_SHARED comm_msg_system_config_t fp_config_info;
 
-CVMX_SHARED uint32_t fp2sp_first_pkt_stat[COMM_MSG_FP_STAT_BUTT][COMM_MSG_FP_STAT_CORE_NUM];
+CVMX_SHARED uint32_t fp2sp_first_pkt_stat[COMM_MSG_FP_STAT_BUTT][COMM_MSG_MAX_DPDK_CORE_NUM];
 
 CVMX_SHARED ros_rwlock_t fp_sock_lock[FP_SOCK_BUTT];
 
@@ -770,7 +770,7 @@ void fp_collect_status(comm_msg_fpu_stat *stat)
 
     for (stat_mod_cnt = 0; stat_mod_cnt < COMM_MSG_FP_STAT_BUTT; ++stat_mod_cnt) {
         pkt_cnt = 0;
-        for (iloop = 0; iloop < COMM_MSG_FP_STAT_CORE_NUM; iloop++) {
+        for (iloop = 0; iloop < COMM_MSG_MAX_DPDK_CORE_NUM; iloop++) {
             pkt_cnt += fp_packet_stat_get(stat_mod_cnt, iloop);
         }
         stat->external_stat[stat_mod_cnt] = htonl(pkt_cnt);
@@ -1077,7 +1077,7 @@ int fp_show_packet_stat(struct cli_def *cli,int argc, char **argv)
         char mod_name[128];
 
         pkt_cnt = 0;
-        for (iloop = 0; iloop < COMM_MSG_FP_STAT_CORE_NUM; iloop++) {
+        for (iloop = 0; iloop < COMM_MSG_MAX_DPDK_CORE_NUM; iloop++) {
             pkt_cnt += fp_packet_stat_get(stat_mod_cnt, iloop);
         }
 

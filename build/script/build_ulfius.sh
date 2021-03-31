@@ -41,12 +41,38 @@ LIBS_DOWNLOAD()
 {
     if [ ! -d $ORCANIA_LIB_DIR ]
     then
-        git clone -b $ORCANIA_GIT_TAG $ORCANIA_GIT_REPOSITORY $ORCANIA_LIB_DIR
+        RET=-1
+        COUNT=0
+        
+        while [ $RET -ne 0 ]
+        do
+            git clone -b $ORCANIA_GIT_TAG $ORCANIA_GIT_REPOSITORY $ORCANIA_LIB_DIR
+            RET=$?
+            COUNT=$(($COUNT+1))
+            
+            if [ $COUNT -ge 3 ]
+            then
+                exit -1
+            fi
+        done
     fi
     
     if [ ! -d $ULFIUS_LIB_DIR ]
     then
-        git clone -b $ULFIUS_GIT_TAG $ULFIUS_GIT_REPOSITORY $ULFIUS_LIB_DIR
+        RET=-1
+        COUNT=0
+        
+        while [ $RET -ne 0 ]
+        do
+            git clone -b $ULFIUS_GIT_TAG $ULFIUS_GIT_REPOSITORY $ULFIUS_LIB_DIR
+            RET=$?
+            COUNT=$(($COUNT+1))
+            
+            if [ $COUNT -ge 3 ]
+            then
+                exit -1
+            fi
+        done
     fi
 }
 

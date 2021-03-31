@@ -10,7 +10,6 @@
 struct far_sp_private {
     /* forward params */
     char                        network_instance[NETWORK_INSTANCE_LEN];
-    session_redirect_info       redirect_addr;
     char                        forwarding_policy[FORWARDING_POLICY_LEN];
     uint8_t                     traffic_endpoint_id_present;
     uint8_t                     traffic_endpoint_id;

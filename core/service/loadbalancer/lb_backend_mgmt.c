@@ -22,6 +22,11 @@ static inline lb_backend_mgmt *lb_get_backend_mgmt(void)
     return &g_backend_mgmt;
 }
 
+lb_backend_mgmt *lb_get_backend_mgmt_public(void)
+{
+    return lb_get_backend_mgmt();
+}
+
 static inline lb_backend_config *lb_get_backend_config(uint8_t be_index)
 {
     return &g_backend_mgmt.backend_table[be_index];
@@ -572,22 +577,6 @@ int32_t lb_backend_init(lb_system_config *system_cfg)
     }
 
     LOG(LB, RUNNING, "Backend management init success\n");
-
-    return 0;
-}
-
-int lb_show_resource_stats(struct cli_def *cli, int argc, char **argv)
-{
-    lb_backend_mgmt *be_mgmt = lb_get_backend_mgmt();
-
-    cli_print(cli,"                Maximum number        Use number        \n");
-
-    /* backend resource */
-    cli_print(cli,"backend:         %-8u             %-8u\n", COMM_MSG_BACKEND_NUMBER - COMM_MSG_BACKEND_START_INDEX,
-        Res_GetAlloced(be_mgmt->be_pool_id));
-
-    /* MB work state */
-    cli_print(cli, "MB state:       %s\n", lb_mb_work_state_get_public() ? "On-line" : "Off-line");
 
     return 0;
 }

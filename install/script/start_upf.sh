@@ -52,6 +52,7 @@ do
         fail_cnt=$(($fail_cnt+1))
         if [ $fail_cnt -lt 3 ]; then
             docker exec -di ${PROG_LIST[${i}]} sh -c "./bin/${PROG_LIST[${i}]}"
+            sleep 4
             continue
         fi
         echo "Program ${PROG_LIST[${i}]} failed to start."

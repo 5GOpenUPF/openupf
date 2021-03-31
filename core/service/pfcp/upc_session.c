@@ -2473,41 +2473,24 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_address(
                 break;
             case 4:
                 {
-                    char delim[] = " ";
-                    char *token = NULL;
-                    char *s = ip_addr;
-                    uint8_t spil_times = 0;
-
-                    tlv_decode_binary(buffer, buf_pos, obj_len,
-                        (uint8_t *)s);
-                    s[obj_len] = '\0';
-                    for (token = strsep(&s, delim); token != NULL;
-                        token = strsep(&s, delim), ++spil_times) {
-                        if (*token == 0) {
-                            continue;
+                    tlv_decode_binary(buffer, buf_pos, obj_len, (uint8_t *)ip_addr);
+                    ip_addr[obj_len] = '\0';
+                    if (strchr(ip_addr, ':')) {
+                        if (1 != inet_pton(AF_INET6, ip_addr, redir_addr->v4_v6.ipv6)) {
+                            LOG(UPC, ERR, "parse ipv6 address failed.");
+                            res_cause = SESS_INVALID_LENGTH;
+                            return res_cause;
                         }
-                        if (0 == spil_times) {
-                            if (1 != inet_pton(AF_INET, token,
-                                &redir_addr->v4_v6.ipv4)) {
-                                LOG(UPC, ERR,
-                                    "parse ipv4 address failed.");
-                                res_cause = SESS_INVALID_LENGTH;
-                                return res_cause;
-                            }
-                            redir_addr->v4_v6.ipv4 =
-                                ntohl(redir_addr->v4_v6.ipv4);
-                        } else if (0 == spil_times) {
-                            if (1 != inet_pton(AF_INET6, token,
-                                redir_addr->v4_v6.ipv6)) {
-                                LOG(UPC, ERR,
-                                    "parse ipv6 address failed.");
-                                res_cause = SESS_INVALID_LENGTH;
-                                return res_cause;
-                            }
-                        } else {
-                            LOG(UPC, ERR, "Should not be here.\n");
-                            break;
+                    } else if (strchr(ip_addr, '.')) {
+                        if (1 != inet_pton(AF_INET, ip_addr, &redir_addr->v4_v6.ipv4)) {
+                            LOG(UPC, ERR, "parse ipv4 address failed.");
+                            res_cause = SESS_INVALID_LENGTH;
+                            return res_cause;
                         }
+                        redir_addr->v4_v6.ipv4 = ntohl(redir_addr->v4_v6.ipv4);
+                    } else {
+                        LOG(UPC, ERR, "Should not be here.\n");
+                        break;
                     }
                 }
                 break;
@@ -2530,7 +2513,7 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_info(session_redirect_info *redir,
     uint8_t* buffer, uint16_t *buf_pos, int buf_max, uint16_t obj_len)
 {
     PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint16_t len_cnt = 0;
+    uint16_t len_cnt = 0, addr_len, other_addr_len;
 
     if (obj_len && ((*buf_pos + obj_len) <= buf_max)) {
         /* redirect Address type */
@@ -2546,7 +2529,7 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_info(session_redirect_info *redir,
         /* redirect Server Address Length */
         len_cnt += sizeof(uint16_t);
         if (len_cnt <= obj_len) {
-            redir->addr_len = tlv_decode_uint16_t(buffer, buf_pos);
+            addr_len = tlv_decode_uint16_t(buffer, buf_pos);
         } else {
             LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
                 obj_len, len_cnt);
@@ -2554,7 +2537,7 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_info(session_redirect_info *redir,
             return res_cause;
         }
 
-        len_cnt += redir->addr_len;
+        len_cnt += addr_len;
         if (len_cnt > obj_len) {
             LOG(UPC, ERR, "obj_len: %d abnormal, more than the %d.",
                 obj_len, len_cnt);
@@ -2564,7 +2547,7 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_info(session_redirect_info *redir,
 
         /* Redirect Server Address */
         res_cause = upc_parse_redirect_address(&redir->address,
-            redir->addr_type, buffer, buf_pos, buf_max, redir->addr_len);
+            redir->addr_type, buffer, buf_pos, buf_max, addr_len);
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, ERR, "prase redirect failed.");
             return res_cause;
@@ -2573,7 +2556,7 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_info(session_redirect_info *redir,
         /* other redirect Server Address Length */
         len_cnt += sizeof(uint16_t);
         if (len_cnt <= obj_len) {
-            redir->other_addr_len = tlv_decode_uint16_t(buffer, buf_pos);
+            other_addr_len = tlv_decode_uint16_t(buffer, buf_pos);
         } else {
             LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
                 obj_len, len_cnt);
@@ -2581,7 +2564,7 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_info(session_redirect_info *redir,
             return res_cause;
         }
 
-        len_cnt += redir->other_addr_len;
+        len_cnt += other_addr_len;
         if (len_cnt > obj_len) {
             LOG(UPC, ERR, "obj_len: %d abnormal, more than the %d.",
                 obj_len, len_cnt);
@@ -2590,11 +2573,13 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_info(session_redirect_info *redir,
         }
 
         /* other redirect Server Address */
-        res_cause = upc_parse_redirect_address(&redir->other_address,
-            redir->addr_type, buffer, buf_pos, buf_max, redir->other_addr_len);
-        if (res_cause != SESS_REQUEST_ACCEPTED) {
-            LOG(UPC, ERR, "prase other redirect failed.");
-            return res_cause;
+        if (other_addr_len > 0) {
+            res_cause = upc_parse_redirect_address(&redir->address,
+                redir->addr_type, buffer, buf_pos, buf_max, other_addr_len);
+            if (res_cause != SESS_REQUEST_ACCEPTED) {
+                LOG(UPC, ERR, "prase other redirect failed.");
+                return res_cause;
+            }
         }
 
     } else {

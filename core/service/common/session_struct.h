@@ -709,25 +709,22 @@ typedef union {
 
 #pragma pack(1)
 typedef union tag_session_redirect_server_address {
-        uint32_t    ipv4_addr;
-        uint8_t     ipv6_addr[IPV6_ALEN];
-        char        url[REDIRECT_SERVER_ADDR_LEN];
-        char        sip_url[REDIRECT_SERVER_ADDR_LEN];
-        struct {
-            uint32_t    ipv4;
-            uint8_t     ipv6[IPV6_ALEN];
-        } v4_v6;
+    uint32_t    ipv4_addr;
+    uint8_t     ipv6_addr[IPV6_ALEN];
+    char        url[REDIRECT_SERVER_ADDR_LEN];
+    char        sip_url[REDIRECT_SERVER_ADDR_LEN];
+    struct {
+        uint32_t    ipv4;
+        uint8_t     ipv6[IPV6_ALEN];
+    } v4_v6;
 } session_redirect_server;
 #pragma pack()
 
 typedef struct tag_session_redirect_info {
     /* 0:ipv4 1:ipv6 2:URL 3:SIP URL 4:v4 and v6 */
     uint8_t                     addr_type;
-    uint8_t                     spare[3];
-    uint16_t                    addr_len;
-    uint16_t                    other_addr_len;
+    uint8_t                     spare[7];
     session_redirect_server     address;
-    session_redirect_server     other_address;
 } session_redirect_info;
 
 #pragma pack(1)

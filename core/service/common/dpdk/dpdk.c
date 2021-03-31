@@ -63,8 +63,8 @@ static unsigned dpdk_nb_ports;
 
 static EN_DPDK_INIT_STAT eDpdkLibInitStat = EN_DPDK_INIT_STAT_NULL;
 /* System core info */
-uint64_t dpdk_stat_send[COMM_MSG_FP_STAT_CORE_NUM];
-uint64_t dpdk_stat_recv[COMM_MSG_FP_STAT_CORE_NUM];
+uint64_t dpdk_stat_send[COMM_MSG_MAX_DPDK_CORE_NUM];
+uint64_t dpdk_stat_recv[COMM_MSG_MAX_DPDK_CORE_NUM];
 uint32_t dpdk_mtu_size = 1500, dpdk_fragment_size = 1514; /* need to add sizeof(struct rte_ether_hdr) */
 
 struct dpdk_config dpdk_cfg;
@@ -1056,7 +1056,7 @@ int dpdk_packet_stat(char *str)
     uint32_t pos = 0;
 
     current_time = time((time_t *)NULL);
-    for (iloop = 0; iloop < COMM_MSG_FP_STAT_CORE_NUM; iloop++) {
+    for (iloop = 0; iloop < COMM_MSG_MAX_DPDK_CORE_NUM; iloop++) {
         if (rte_lcore_is_enabled(iloop) == 0)
 		    continue;
         new_count += dpdk_stat_send[iloop];
@@ -1072,7 +1072,7 @@ int dpdk_packet_stat(char *str)
     s_last_count = new_count;
     s_last_time  = current_time;
 
-    for (iloop = 0; iloop < COMM_MSG_FP_STAT_CORE_NUM; iloop++) {
+    for (iloop = 0; iloop < COMM_MSG_MAX_DPDK_CORE_NUM; iloop++) {
         if (rte_lcore_is_enabled(iloop) == 0)
             continue;
         if ((dpdk_stat_send[iloop] != 0)&&(dpdk_stat_recv[iloop] != 0)) {
@@ -1089,7 +1089,7 @@ int dpdk_packet_stat_promu(comm_msg_fpu_stat *stat)
 {
     uint32_t iloop;
 
-    for (iloop = 0; iloop < COMM_MSG_FP_STAT_CORE_NUM; iloop++) {
+    for (iloop = 0; iloop < COMM_MSG_MAX_DPDK_CORE_NUM; iloop++) {
         if (rte_lcore_is_enabled(iloop) == 0)
             continue;
         stat->internal_send_stat += htonl(dpdk_stat_send[iloop]);
@@ -1277,21 +1277,22 @@ uint8_t *dpdk_get_mac(uint16_t portid)
     return ports_eth_addr[portid].addr_bytes;
 }
 
-int dpdk_show_mac( FILE *f)
+int dpdk_show_mac(FILE *f)
 {
     int portid;
     struct rte_ether_addr *pstAddr;
-    for(portid = 0; portid < RTE_MAX_ETHPORTS; portid++)
-    {
+
+    for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
         if ((enabled_port_mask & (1 << portid)) == 0) {
 			continue;
 		}
         pstAddr = &ports_eth_addr[portid];
-        fprintf(f,"[%d] = [%02x:%02x:%02x:%02x:%02x:%02x]\n",portid,
+        fprintf(f, "Port [%d] = [%02x:%02x:%02x:%02x:%02x:%02x]\n", portid,
         pstAddr->addr_bytes[0],pstAddr->addr_bytes[1],
         pstAddr->addr_bytes[2],pstAddr->addr_bytes[3],
         pstAddr->addr_bytes[4],pstAddr->addr_bytes[5]);
     }
+
     return 0;
 }
 

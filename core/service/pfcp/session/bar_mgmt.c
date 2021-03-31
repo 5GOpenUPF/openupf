@@ -439,26 +439,9 @@ int bar_report_response_modify(struct session_t *sess,
     }
 
     if (parse_bar->member_flag.d.dl_buff_duration_present) {
-        if (G_TRUE ==
-            upc_node_features_validity_query(UF_DLBD)) {
-            bar_tbl->bar_priv.buff_pkts_time =
-                parse_bar->dl_buff_duration.value;
-            /*
-            计时器值
-            位5到1表示二进制编码的计时器值。
-            定时器单元
-            位6到8定义定时器的定时器值单位如下：
-            位
-            8 7 6个
-            0 0 0值以2秒的倍数递增
-            0 0 1值以1分钟的倍数递增
-            0 1 0值以10分钟的倍数递增
-            0 1 1值以1小时的倍数递增
-            10 0值以10小时的倍数递增
-            11 1值表示计时器是无限的
-            在本协议版本中，其他值应解释为1分钟的倍数。
-            定时器单位和定时器值均设置为所有“零”，应解释为定时器停止的指示。
-            */
+        if (G_TRUE == upc_node_features_validity_query(UF_DLBD)) {
+            bar_tbl->bar_priv.buff_pkts_time = parse_bar->dl_buff_duration.value;
+
             switch(parse_bar->dl_buff_duration.d.unit) {
                 case 0:
                     bar_tbl->bar.time_max =

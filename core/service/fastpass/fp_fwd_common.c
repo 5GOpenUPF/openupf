@@ -1720,4 +1720,76 @@ void fp_pkt_inner_eth_nonip_proc(fp_packet_info *pkt_info)
 }
 #endif
 
+void fp_pkt_redirect_N3_http(fp_packet_info *pkt_info, struct pro_tcp_hdr *tcp_hdr,
+    char *url, uint8_t ip_ver)
+{
+    char http_url[512];
+    uint16_t tmp_port;
+    int diff_len, payload_len;
+    char *payload;
+
+    if (NULL == tcp_hdr || NULL == url) {
+        LOG(FASTPASS, ERR, "Parameters abnormal, tcp_hdr(%p), url(%p)", tcp_hdr, url);
+        return;
+    }
+
+    if (-1 == layer7_url_extract(tcp_hdr, pkt_info->len, http_url, NULL, sizeof(http_url))) {
+        LOG(FASTPASS, DEBUG, "Maybe not HTTP request packet");
+        return;
+    }
+
+    if (0 == strncmp(url, http_url, strlen(url))) {
+        LOG(FASTPASS, DEBUG, "The URL of the HTTP request and the redirection URL match");
+        return;
+    }
+
+    /* Send HTTP response, status code 302 */
+    tmp_port = tcp_hdr->dest;
+    tcp_hdr->dest = tcp_hdr->source;
+    tcp_hdr->source = tmp_port;
+    tcp_hdr->check = 0;
+
+    payload = (char *)tcp_hdr + (tcp_hdr->doff << 2);
+
+    payload_len = sprintf(payload, "HTTP/1.1 302 Found\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n", url);
+
+    diff_len = pkt_info->len - (payload - pkt_info->buf) - payload_len;
+    pkt_buf_set_len(pkt_info->arg, pkt_buf_data_len(pkt_info->arg) - diff_len);
+    pkt_info->len = pkt_buf_data_len(pkt_info->arg);
+
+    switch (ip_ver) {
+        case SESSION_IP_V4:
+            {
+                struct pro_ipv4_hdr *l2_hdr = FlowGetL2Ipv4Header(&pkt_info->match_key);
+                uint32_t tmp_addr;
+
+                tmp_addr        = l2_hdr->dest;
+                l2_hdr->dest    = l2_hdr->source;
+                l2_hdr->source  = tmp_addr;
+                l2_hdr->tot_len = htons(ntohs(l2_hdr->tot_len) - diff_len);
+                l2_hdr->check   = 0;
+
+                /* Calc checksum */
+                l2_hdr->check   = calc_crc_ip(l2_hdr);
+                tcp_hdr->check  = calc_crc_tcp(tcp_hdr, l2_hdr);
+            }
+            break;
+
+        case SESSION_IP_V6:
+            {
+                struct pro_ipv6_hdr *l2_hdr = FlowGetL2Ipv6Header(&pkt_info->match_key);
+                uint8_t tmp_addr6[IPV6_ALEN];
+
+                ros_memcpy(tmp_addr6, l2_hdr->daddr, IPV6_ALEN);
+                ros_memcpy(l2_hdr->daddr, l2_hdr->saddr, IPV6_ALEN);
+                ros_memcpy(l2_hdr->saddr, tmp_addr6, IPV6_ALEN);
+                l2_hdr->payload_len = htons(ntohs(l2_hdr->payload_len) - diff_len);
+
+                /* Calc checksum */
+                tcp_hdr->check  = calc_crc_tcp6(tcp_hdr, l2_hdr);
+            }
+            break;
+    }
+}
+
 

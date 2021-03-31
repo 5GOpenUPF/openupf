@@ -32,11 +32,11 @@ extern uint8_t	fp_head_enrich_enable;
 
 static inline void
 fp_pkt_redirect_ipv4(struct pro_udp_hdr *udp_out_hdr,
-    struct pro_ipv4_hdr *ip_hdr, comm_msg_redirect_ipv4_t *redir)
+    struct pro_ipv4_hdr *ip_hdr, uint32_t redir_ipv4)
 {
     struct pro_udp_hdr  *udp_hdr;
     struct pro_tcp_hdr  *tcp_hdr;
-    uint32_t redirip = htonl(redir->ipv4);
+    uint32_t redirip = htonl(redir_ipv4);
 
     /* Fix inner udp/tcp checksum */
     if (ip_hdr->protocol == IP_PRO_UDP) {
@@ -318,12 +318,11 @@ inline void fp_pkt_match_n3_ipv4(fp_packet_info *pkt_info, fp_fast_table *head,
 {
     void                    *mbuf = pkt_info->arg;
     char                    *pkt = pkt_info->buf;
-    int                     len = pkt_info->len;
     uint8_t                 *field_ofs = pkt_info->match_key.field_offset;
-    int                     count_len = len - field_ofs[FLOW_FIELD_GTP_CONTENT];
+    int                     count_len = pkt_info->len - field_ofs[FLOW_FIELD_GTP_CONTENT];
     comm_msg_fast_cfg       *entry_cfg;
     struct pro_eth_hdr      *eth_hdr;
-    int                     efflen = len;
+    int                     efflen = pkt_info->len;
     char                    *pktforw = pkt;
     fp_inst_entry           *inst_entry = NULL;
     comm_msg_inst_config    *inst_config;
@@ -344,7 +343,7 @@ inline void fp_pkt_match_n3_ipv4(fp_packet_info *pkt_info, fp_fast_table *head,
         "handle packet, buf %p, pkt %p, len %d, queue(%d, %d), fast entry %d, "
         "dst mac %02x:%02x:%02x:%02x:%02x:%02x, "
         "src mac %02x:%02x:%02x:%02x:%02x:%02x, ",
-        mbuf, pkt, len, head->port_no, head->port_type, entry->index,
+        mbuf, pkt, pkt_info->len, head->port_no, head->port_type, entry->index,
         *(uint8_t *)(pkt + 0), *(uint8_t *)(pkt + 1), *(uint8_t *)(pkt + 2),
         *(uint8_t *)(pkt + 3), *(uint8_t *)(pkt + 4), *(uint8_t *)(pkt + 5),
         *(uint8_t *)(pkt + 6), *(uint8_t *)(pkt + 7), *(uint8_t *)(pkt + 8),
@@ -390,7 +389,7 @@ inline void fp_pkt_match_n3_ipv4(fp_packet_info *pkt_info, fp_fast_table *head,
 							if(entry->tcp_seg_mgmt)
 								fp_tcp_segment_free(&entry->tcp_seg_mgmt);
 							entry_cfg->tcp_push = G_FALSE;
-							//分片重组的包不进行头增强
+							/* No head enhancement was performed in the fragment recombined package */
 							entry_cfg->head_enrich_flag = TLS_NOT_HEAD_ENRICH;
 						}
 						ros_free(resam_buf);
@@ -487,9 +486,27 @@ inline void fp_pkt_match_n3_ipv4(fp_packet_info *pkt_info, fp_fast_table *head,
         far_choose = &(far_entry->config.choose);
 
         /* redirect */
-        if (unlikely(far_choose->d.flag_redirect1)) {
-            fp_pkt_redirect_ipv4(FlowGetL1UdpHeader(&pkt_info->match_key),
-                l2_hdr, &(far_entry->config.forw_redirect));
+        switch (far_choose->d.flag_redirect) {
+            case 1:
+                fp_pkt_redirect_ipv4(FlowGetL1UdpHeader(&pkt_info->match_key),
+                    l2_hdr, far_entry->config.forw_redirect.ipv4_addr);
+                break;
+
+            case 3:
+                if ((cblk) && FLOW_MASK_FIELD_ISSET(pkt_info->match_key.field_offset, FLOW_FIELD_L2_TCP)) {
+                    fp_pkt_redirect_N3_http(pkt_info, FlowGetL2TcpHeader(&pkt_info->match_key),
+                        far_entry->config.forw_redirect.url, SESSION_IP_V4);
+                }
+                efflen = pkt_info->len;
+                break;
+
+            case 4:
+                break;
+
+            case 5:
+                fp_pkt_redirect_ipv4(FlowGetL1UdpHeader(&pkt_info->match_key),
+                    l2_hdr, far_entry->config.forw_redirect.v4_v6.ipv4);
+                break;
         }
 
 #ifdef ENABLE_DNS_CACHE
@@ -555,7 +572,7 @@ inline void fp_pkt_match_n3_ipv4(fp_packet_info *pkt_info, fp_fast_table *head,
 
             /* get inner header */
             if (tcp_hdr->psh){
-                pkt[len] = 0; /* 防止使用strstr的时候越界 */
+                pkt[pkt_info->len] = 0; /* 防止使用strstr的时候越界 */
                 fp_pkt_enrich_ipv4((char *)l2_hdr, &enrich_len,
                     &(far_entry->config.forw_enrich));
 
@@ -850,8 +867,14 @@ inline void fp_pkt_match_n6_ipv4(fp_packet_info *pkt_info, fp_fast_table *head,
         far_choose = &(far_entry->config.choose);
 
         /* redirect */
-        if (unlikely(far_choose->d.flag_redirect1)) {
-            fp_pkt_redirect_ipv4(NULL, l1_hdr, &(far_entry->config.forw_redirect));
+        switch (far_choose->d.flag_redirect) {
+            case 1:
+                fp_pkt_redirect_ipv4(NULL, l1_hdr, far_entry->config.forw_redirect.ipv4_addr);
+                break;
+
+            case 5:
+                fp_pkt_redirect_ipv4(NULL, l1_hdr, far_entry->config.forw_redirect.v4_v6.ipv4);
+                break;
         }
 
         /* forwarding policy */

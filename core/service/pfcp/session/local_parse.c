@@ -69,20 +69,15 @@ static int far_create_content_copy(struct far_table *local_far,
             ros_memcpy(local_far_priv->network_instance,
                 parse_far->forw_param.network_instance, NETWORK_INSTANCE_LEN);
         }
-        if ((parse_far->forw_param.member_flag.d.redirect_present) && (node_index != 0xffffffff)) {
+        if (parse_far->forw_param.member_flag.d.redirect_present) {
             if (G_FALSE == upc_node_features_validity_query(UF_TREU)) {
                 LOG(SESSION, ERR, "TREU feature not support,"
                     " Redirection Information invalid.");
                 return -1;
             } else {
-                ros_memcpy(&local_far_priv->redirect_addr,
-                    &parse_far->forw_param.redirect_addr,
-                    sizeof(session_redirect_info));
-                if (0 == local_far_priv->redirect_addr.addr_type) {
-                    local_far_cfg->choose.d.flag_redirect1 = 1;
-                    local_far_cfg->forw_redirect.ipv4 =
-                        local_far_priv->redirect_addr.address.ipv4_addr;
-                }
+                ros_memcpy(&local_far_cfg->forw_redirect, &parse_far->forw_param.redirect_addr.address,
+                    sizeof(session_redirect_server));
+                local_far_cfg->choose.d.flag_redirect = parse_far->forw_param.redirect_addr.addr_type + 1;
             }
         }
         if (parse_far->forw_param.member_flag.d.ohc_present) {
@@ -119,9 +114,8 @@ static int far_create_content_copy(struct far_table *local_far,
                 parse_far->forw_param.forwarding_policy,
                 FORWARDING_POLICY_LEN);
         }
-        if ((parse_far->forw_param.member_flag.d.header_enrichment_present) && (node_index != 0xffffffff)) {
-            if (G_FALSE ==
-                upc_node_features_validity_query(UF_HEEU)) {
+        if (parse_far->forw_param.member_flag.d.header_enrichment_present) {
+            if (G_FALSE == upc_node_features_validity_query(UF_HEEU)) {
                 LOG(SESSION, ERR, "HEEU feature not support,"
                     " header enrichment invalid.");
                 return -1;
@@ -193,14 +187,9 @@ static int far_update_content_copy(struct far_table *local_far,
                     " Redirection Information invalid.");
                 return -1;
             } else {
-                ros_memcpy(&local_far_priv->redirect_addr,
-                    &parse_far->forw_param.redirect_addr,
-                    sizeof(session_redirect_info));
-                if (0 == local_far_priv->redirect_addr.addr_type) {
-                    local_far_cfg->choose.d.flag_redirect1 = 1;
-                    local_far_cfg->forw_redirect.ipv4 =
-                        local_far_priv->redirect_addr.address.ipv4_addr;
-                }
+                ros_memcpy(&local_far_cfg->forw_redirect, &parse_far->forw_param.redirect_addr.address,
+                    sizeof(session_redirect_server));
+                local_far_cfg->choose.d.flag_redirect = parse_far->forw_param.redirect_addr.addr_type + 1;
             }
         }
         if (parse_far->forw_param.member_flag.d.ohc_present) {
@@ -328,7 +317,6 @@ struct far_table *far_add_predefined(session_far_create *parse_far_arr,uint32_t 
 {
     struct far_table *far_tbl = NULL;
     session_far_create *parse_far = parse_far_arr;
-	struct far_sp_private   *local_far_priv = NULL;
 	comm_msg_far_config     *local_far_cfg = NULL;
 
     /* create far table */
@@ -354,15 +342,10 @@ struct far_table *far_add_predefined(session_far_create *parse_far_arr,uint32_t 
 
 	if (parse_far->forw_param.member_flag.d.redirect_present) {
 		local_far_cfg = &far_tbl->far_cfg;
-		local_far_priv = &far_tbl->far_priv;
-        ros_memcpy(&local_far_priv->redirect_addr,
-            &parse_far->forw_param.redirect_addr,
-            sizeof(session_redirect_info));
-        if (0 == local_far_priv->redirect_addr.addr_type) {
-            local_far_cfg->choose.d.flag_redirect1 = 1;
-            local_far_cfg->forw_redirect.ipv4 =
-                local_far_priv->redirect_addr.address.ipv4_addr;
-        }
+
+        ros_memcpy(&local_far_cfg->forw_redirect, &parse_far->forw_param.redirect_addr.address,
+            sizeof(session_redirect_server));
+        local_far_cfg->choose.d.flag_redirect = parse_far->forw_param.redirect_addr.addr_type + 1;
     }
 
     if (far_tbl->far_cfg.choose.d.flag_header_enrich &&

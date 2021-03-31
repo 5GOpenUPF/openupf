@@ -29,35 +29,7 @@ void far_table_show(struct far_table *far_tbl)
 
     LOG(SESSION, RUNNING, "--------------far--------------");
     LOG(SESSION, RUNNING, "index: %u", far_tbl->index);
-    if (0 == far_tbl->far_priv.redirect_addr.addr_type) {
-        LOG(SESSION, RUNNING, "ipadress: 0x%08x",
-            far_tbl->far_priv.redirect_addr.address.ipv4_addr);
-    } else if (1 == far_tbl->far_priv.redirect_addr.addr_type) {
-        LOG(SESSION, RUNNING, "ipaddress: 0x%02x%02x%02x%02x "
-            "%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[0],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[1],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[2],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[3],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[4],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[5],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[6],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[7],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[8],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[9],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[10],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[11],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[12],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[13],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[14],
-            far_tbl->far_priv.redirect_addr.address.ipv6_addr[15]);
-    } else if (2 == far_tbl->far_priv.redirect_addr.addr_type) {
-        LOG(SESSION, RUNNING, "url: %s",
-            far_tbl->far_priv.redirect_addr.address.url);
-    } else if (3 == far_tbl->far_priv.redirect_addr.addr_type) {
-        LOG(SESSION, RUNNING, "sip url: %s",
-            far_tbl->far_priv.redirect_addr.address.sip_url);
-    }
+
     LOG(SESSION, RUNNING, "forwarding policy: %s",
         far_tbl->far_priv.forwarding_policy);
     LOG(SESSION, RUNNING, "traffic endpoint id: %d",
@@ -97,8 +69,61 @@ void far_table_show(struct far_table *far_tbl)
         far_tbl->far_cfg.forw_cr_outh.stag.vlan_flag.value,
         far_tbl->far_cfg.forw_cr_outh.stag.vlan_value.data);
 
-    LOG(SESSION, RUNNING, "forward redirect ipaddr: 0x%08x",
-        far_tbl->far_cfg.forw_redirect.ipv4);
+    switch (far_tbl->far_cfg.choose.d.flag_redirect) {
+        case 1:
+            {
+                char ip_str[256];
+                uint32_t tmp_addr = htonl(far_tbl->far_cfg.forw_redirect.ipv4_addr);
+
+                if (NULL == inet_ntop(AF_INET, &tmp_addr, ip_str, sizeof(ip_str))) {
+                    LOG(SESSION, RUNNING, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                LOG(SESSION, RUNNING, "redirect IPv4:     %s\n", ip_str);
+            }
+            break;
+
+        case 2:
+            {
+                char ip_str[256];
+
+                if (NULL == inet_ntop(AF_INET6, far_tbl->far_cfg.forw_redirect.ipv6_addr,
+                    ip_str, sizeof(ip_str))) {
+                    LOG(SESSION, RUNNING, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                LOG(SESSION, RUNNING, "redirect IPv6:     %s\n", ip_str);
+            }
+            break;
+
+        case 3:
+            LOG(SESSION, RUNNING, "redirect URL:      %s\n", far_tbl->far_cfg.forw_redirect.url);
+            break;
+
+        case 4:
+            LOG(SESSION, RUNNING, "redirect SIP URL:  %s\n", far_tbl->far_cfg.forw_redirect.sip_url);
+            break;
+
+        case 5:
+            {
+                char ip_str[256];
+                uint32_t tmp_addr = htonl(far_tbl->far_cfg.forw_redirect.v4_v6.ipv4);
+
+                if (NULL == inet_ntop(AF_INET, &tmp_addr, ip_str, sizeof(ip_str))) {
+                    LOG(SESSION, RUNNING, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                LOG(SESSION, RUNNING, "redirect IPv4:     %s\n", ip_str);
+
+                if (NULL == inet_ntop(AF_INET6, far_tbl->far_cfg.forw_redirect.v4_v6.ipv6,
+                    ip_str, sizeof(ip_str))) {
+                    LOG(SESSION, RUNNING, "inet_ntop failed, error: %s.", strerror(errno));
+                    break;
+                }
+                LOG(SESSION, RUNNING, "redirect IPv6:     %s\n", ip_str);
+            }
+            break;
+    }
     LOG(SESSION, RUNNING, "forward trans tos: %d",
         far_tbl->far_cfg.forw_trans.tos);
     LOG(SESSION, RUNNING, "forward trans mask: %d",
@@ -170,8 +195,8 @@ void far_table_show(struct far_table *far_tbl)
         far_tbl->far_cfg.choose.d.flag_forward_policy1);
     LOG(SESSION, RUNNING, "flag_transport_level1: %d",
         far_tbl->far_cfg.choose.d.flag_transport_level1);
-    LOG(SESSION, RUNNING, "flag_redirect1: %d",
-        far_tbl->far_cfg.choose.d.flag_redirect1);
+    LOG(SESSION, RUNNING, "flag_redirect: %d",
+        far_tbl->far_cfg.choose.d.flag_redirect);
     LOG(SESSION, RUNNING, "section_forwarding: %d",
         far_tbl->far_cfg.choose.d.section_forwarding);
 
@@ -360,7 +385,15 @@ inline void far_config_hton(comm_msg_far_config *far_cfg)
         htons(far_cfg->forw_cr_outh.ctag.vlan_value.data);
     far_cfg->forw_cr_outh.stag.vlan_value.data =
         htons(far_cfg->forw_cr_outh.stag.vlan_value.data);
-    far_cfg->forw_redirect.ipv4 = htonl(far_cfg->forw_redirect.ipv4);
+    switch (far_cfg->choose.d.flag_redirect) {
+        case 1:
+            far_cfg->forw_redirect.ipv4_addr = htonl(far_cfg->forw_redirect.ipv4_addr);
+            break;
+
+        case 5:
+            far_cfg->forw_redirect.v4_v6.ipv4 = htonl(far_cfg->forw_redirect.v4_v6.ipv4);
+            break;
+    }
     far_cfg->forw_enrich.name_length = htons(far_cfg->forw_enrich.name_length);
     far_cfg->forw_enrich.value_length = htons(far_cfg->forw_enrich.value_length);
 
@@ -399,7 +432,15 @@ inline void far_config_ntoh(comm_msg_far_config *far_cfg)
         ntohs(far_cfg->forw_cr_outh.ctag.vlan_value.data);
     far_cfg->forw_cr_outh.stag.vlan_value.data =
         ntohs(far_cfg->forw_cr_outh.stag.vlan_value.data);
-    far_cfg->forw_redirect.ipv4 = ntohl(far_cfg->forw_redirect.ipv4);
+    switch (far_cfg->choose.d.flag_redirect) {
+        case 1:
+            far_cfg->forw_redirect.ipv4_addr = ntohl(far_cfg->forw_redirect.ipv4_addr);
+            break;
+
+        case 5:
+            far_cfg->forw_redirect.v4_v6.ipv4 = ntohl(far_cfg->forw_redirect.v4_v6.ipv4);
+            break;
+    }
 
 #ifdef FAR_DUPL_ENABLE
     for (cnt = 0; cnt < far_cfg->choose.d.section_dupl_num; ++cnt) {

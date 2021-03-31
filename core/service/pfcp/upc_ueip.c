@@ -246,7 +246,9 @@ int ueip_addr_alloc(uint32_t pool_index, session_ue_ip *ueip)
     }
 
     if (ueip->ueip_flag.d.chv4 && SESSION_IP_V4 == ueip_pool->ip_info.ip_ver) {
-		//upf分配ip之后，v4标志也要置为1，否则pdr_map_insert插不进去
+		/* After the UPF allocates IP, the V4 flag should also be set to 1,
+		*  otherwise the PDR map cannot be created
+		*/
 		ueip->ueip_flag.d.v4 = 1;
         ueip->ipv4_addr = key + index;
         LOG(UPC, RUNNING, "Assign ipv4 address: 0x%08x.", ueip->ipv4_addr);

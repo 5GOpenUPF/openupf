@@ -169,7 +169,7 @@ typedef float                   (*FLTFUNCPTR) (void);
         (type *)( (char *)__mptr - offsetof(type,member) );})
 #endif
 
-/* 不考虑大小端，直接字节变换 */
+/* Regardless of the big end or small end, direct byte transformation */
 #define SWAP_8_BYTE(_i) \
     ((((((uint64_t)(_i)) >>  0) & (uint64_t)0xff) << 56) | \
     (((((uint64_t)(_i)) >>  8) & (uint64_t)0xff) << 48) | \

@@ -14,7 +14,6 @@ extern "C" {
 #include "ros.h"
 #include "log.h"
 #include "cli.h"
-#include "cm_debug.h"
 #include "buffer.h"
 
 

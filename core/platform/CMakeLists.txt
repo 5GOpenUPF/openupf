@@ -3,7 +3,6 @@
 add_subdirectory(cli)
 add_subdirectory(log)
 add_subdirectory(ros)
-add_subdirectory(debug)
 add_subdirectory(buffer)
 add_subdirectory(trans)
 

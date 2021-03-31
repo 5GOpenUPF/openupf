@@ -853,22 +853,26 @@ static int upc_parse_local_cfg_redir_server(uint8_t addr_type, session_redirect_
 
         case 4:
             {
-                char str[2][128] = {{0}};
+                uint32_t cnt;
 
-                sscanf(cfg_key_pair[index].val, "%[^|]|%s", str[0], str[1]);
-
-                if (1 != inet_pton(AF_INET, str[0],
-                    &ri_serv->v4_v6.ipv4)) {
-                    LOG(STUB, ERR, "parse ipv4 address failed.");
-                    return -1;
+                for (cnt = 0; cnt < 2; ++cnt) {
+                    if (strchr(cfg_key_pair[index].val, ':')) {
+                        if (1 != inet_pton(AF_INET6, cfg_key_pair[index].val, ri_serv->v4_v6.ipv6)) {
+                            LOG(STUB, ERR, "parse ipv6 address failed.");
+                            return -1;
+                        }
+                    } else if (strchr(cfg_key_pair[index].val, '.')) {
+                        if (1 != inet_pton(AF_INET, cfg_key_pair[index].val, &ri_serv->v4_v6.ipv4)) {
+                            LOG(STUB, ERR, "parse ipv4 address failed.");
+                            return -1;
+                        }
+                        ri_serv->v4_v6.ipv4 = ntohl(ri_serv->v4_v6.ipv4);
+                    } else {
+                        LOG(STUB, ERR, "Should not be here.\n");
+                        return -1;
+                    }
+                    ++index;
                 }
-                ri_serv->v4_v6.ipv4 = ntohl(ri_serv->v4_v6.ipv4);
-
-                if (1 != inet_pton(AF_INET6, str[1], ri_serv->v4_v6.ipv6)) {
-                    LOG(STUB, ERR, "parse ipv6 address failed.");
-                    return -1;
-                }
-                ++index;
             }
             break;
 
@@ -902,10 +906,8 @@ static int upc_parse_local_cfg_redir_info(session_redirect_info *ri,
         LOG(STUB, ERR, "parse redirect address failed.\n");
         return -1;
     }
-
-    if (0 > upc_parse_local_cfg_redir_server(ri->addr_type, &ri->other_address, cfg_key_pair, &index)) {
-        LOG(STUB, ERR, "parse redirect other address failed.\n");
-        return -1;
+    if (ri->addr_type != 4) {
+        ++index;    /* Skip other redirect address */
     }
 
     *offset = index;

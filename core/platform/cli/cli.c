@@ -30,8 +30,6 @@ extern int log_cli_show_log_switch(struct cli_def *cli,int argc, char **argv);
 extern int log_cli_set_log_switch(struct cli_def *cli,int argc, char **argv);
 extern int ros_show_mempool(struct cli_def *cli,int argc, char *argv[]);
 extern void ros_set_task_name(const char *format, ...);
-extern int cli_show_task(struct cli_def *cli,int argc, char **argv);
-extern int ros_show_dpdk_lcore(struct cli_def *cli,int argc, char *argv[]);
 extern int ros_show_mac(struct cli_def *cli,int argc, char *argv[]);
 extern int ros_show_info(struct cli_def *cli,int argc, char *argv[]);
 
@@ -91,8 +89,6 @@ static cmdNode mShowChildren[] =
     { "version","display version",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_show_version,NULL },
     { "time","display time",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_get_time,NULL },
     { "mempool","display dpdk mempool",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,ros_show_mempool,NULL },
-    { "task","display task",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_show_task,NULL },
-    { "dpdklcore","display task",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,ros_show_dpdk_lcore,NULL },
     { "mac","display mac",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,ros_show_mac,NULL },
     { "info","display info",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,ros_show_info,NULL },
 #if (defined(PRODUCT_IS_fpu))

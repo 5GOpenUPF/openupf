@@ -971,7 +971,6 @@ int layer7_url_extract(struct pro_tcp_hdr *tcp_hdr, uint32_t total_len, char *ou
     uint32_t cnt, url_offset = 0;
     struct phr_header *head;
 
-
     if (NULL == tcp_hdr || NULL == out_url || 0 == max_len) {
         LOG(SERVER, ERR, "Parameters abnormal, tcp_hdr(%p), out_url(%p), max_len: %u.\n",
             tcp_hdr, out_url, max_len);
@@ -983,7 +982,7 @@ int layer7_url_extract(struct pro_tcp_hdr *tcp_hdr, uint32_t total_len, char *ou
     payload = ((char *)tcp_hdr) + tcp_hdr_len;
 
     if (0 > phr_parse_request(payload, total_len, &req_info, 0)) {
-        LOG(SESSION, DEBUG, "Parse http request fail.");
+        LOG(SERVER, DEBUG, "Parse http request fail.");
         return -1;
     }
 
@@ -1006,12 +1005,12 @@ int layer7_url_extract(struct pro_tcp_hdr *tcp_hdr, uint32_t total_len, char *ou
             }
             memcpy(&out_url[head->value_len], req_info.path, req_info.path_len);
             out_url[url_offset] = '\0';
-            LOG(SESSION, DEBUG, "Parse URL: %s", out_url);
+            LOG(SERVER, DEBUG, "Parse URL: %s", out_url);
 
             return 0;
         }
     }
-    LOG(SESSION, ERR, "Parse http success, but not found 'host' tag");
+    LOG(SERVER, ERR, "Parse http success, but not found 'host' tag");
 
     return -1;
 }
@@ -1059,7 +1058,7 @@ int pkt_parse_https_client_hello(char *tcp_payload, uint16_t tls_total_len, uint
 
 	if(len_offset != tls_total_len)
 	{
-        LOG(SESSION, ERR,"pkt_parse_https_client_hello tls_total_len[%d] != len_offset[%d], decode failed!",
+        LOG(SERVER, ERR,"pkt_parse_https_client_hello tls_total_len[%d] != len_offset[%d], decode failed!",
 			tls_total_len,len_offset);
         return -1;
     }
@@ -1146,7 +1145,7 @@ int pkt_parse_https(struct pro_tcp_hdr *tcp_hdr, extensions_key *e_key,
 			if(pkt_parse_https_client_hello(tcp_payload,tls_total_len,&offset,
 				e_key,decode_exten_flag,exist_17516)<0)
 			{
-		        LOG(SESSION, ERR,"pkt_parse_https_client_hello decode failed!");
+		        LOG(SERVER, ERR,"pkt_parse_https_client_hello decode failed!");
 		        return -1;
 		    }
 			return 0;
@@ -1154,7 +1153,7 @@ int pkt_parse_https(struct pro_tcp_hdr *tcp_hdr, extensions_key *e_key,
 	}
 	else
 	{
-        LOG(SESSION, ERR,"pkt_parse_https_client_hello unknown type:%d",tls_pro_type);
+        LOG(SERVER, ERR,"pkt_parse_https_client_hello unknown type:%d",tls_pro_type);
     }
 	return -1;
 }

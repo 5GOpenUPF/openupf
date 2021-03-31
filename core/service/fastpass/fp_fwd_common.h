@@ -49,6 +49,9 @@ void fp_pkt_inner_eth_nonip_proc(fp_packet_info *pkt_info);
 void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head,
     fp_fast_entry *entry, fp_cblk_entry *cblk, int trace_flag);
 
+void fp_pkt_redirect_N3_http(fp_packet_info *pkt_info, struct pro_tcp_hdr *tcp_hdr,
+    char *url, uint8_t ip_ver);
+
 
 static inline void fp_pkt_fill_outer_src_mac(struct pro_eth_hdr *eth_hdr, uint8_t fwd_if)
 {
