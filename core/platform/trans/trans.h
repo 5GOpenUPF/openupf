@@ -11,6 +11,7 @@ extern "C" {
 
 #include "comm_msg.h"
 
+#define TRANS_PROTO                         0x9090
 
 #define TRANS_HEARDBEAT_PERIOD              100     /* 100*10ms */
 #define TRANS_TIMEOUT                       2

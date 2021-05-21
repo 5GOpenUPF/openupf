@@ -22,10 +22,9 @@ void urr_table_show(struct urr_table *urr_tbl)
 
     LOG(SESSION, RUNNING, "--------------urr--------------");
     LOG(SESSION, RUNNING, "index: %u", urr_tbl->index);
-    LOG(SESSION, RUNNING, "urr id: %u", urr_tbl->urr.urr_id);
+    LOG(SESSION, RUNNING, "urr id: 0x%08x", urr_tbl->urr.urr_id);
     LOG(SESSION, RUNNING, "method value: %d", urr_tbl->urr.method.value);
-    LOG(SESSION, RUNNING, "trigger value: %d",
-        urr_tbl->urr.trigger.value);
+    LOG(SESSION, RUNNING, "trigger value: %u", urr_tbl->urr.trigger.value);
 
     LOG(SESSION, RUNNING, "period: %u", urr_tbl->urr.period);
     LOG(SESSION, RUNNING, "vol_thres flag value: %u",
@@ -263,171 +262,6 @@ struct urr_table *urr_table_create(struct session_t *sess, uint32_t id)
     return urr_tbl;
 }
 
-struct urr_table *urr_table_create_local(uint32_t id)
-{
-    struct urr_table_head *urr_head = urr_get_head();
-    struct urr_table *urr_tbl = NULL;
-    uint32_t key = 0, index = 0, urr_id = id;
-
-    if (G_FAILURE == Res_Alloc(urr_head->pool_id, &key, &index,
-        EN_RES_ALLOC_MODE_OC)) {
-        LOG(SESSION, ERR,
-            "create failed, Resource exhaustion, pool id: %d.",
-            urr_head->pool_id);
-        return NULL;
-    }
-
-    urr_tbl = urr_get_table(index);
-    if (!urr_tbl) {
-        Res_Free(urr_head->pool_id, key, index);
-        LOG(SESSION, ERR, "Entry index error, index: %u.", index);
-        return NULL;
-    }
-    memset(&urr_tbl->urr, 0, sizeof(comm_msg_urr_config));
-    urr_tbl->urr.urr_id = urr_id;
-	/*本地urr表申请时，暂时不记录会话。
-	等创建会话时再进行关联*/
-    urr_tbl->sess = NULL;
-
-    ros_atomic32_add(&urr_head->use_num, 1);
-
-    return urr_tbl;
-}
-
-inline void urr_config_hton(comm_msg_urr_config *urr_cfg)
-{
-    uint32_t cnt = 0;
-
-    urr_cfg->urr_id = htonl(urr_cfg->urr_id);
-    urr_cfg->trigger.value = htons(urr_cfg->trigger.value);
-    urr_cfg->period = htonl(urr_cfg->period);
-    urr_cfg->vol_thres.total = htonll(urr_cfg->vol_thres.total);
-    urr_cfg->vol_thres.uplink = htonll(urr_cfg->vol_thres.uplink);
-    urr_cfg->vol_thres.downlink = htonll(urr_cfg->vol_thres.downlink);
-    urr_cfg->vol_quota.total = htonll(urr_cfg->vol_quota.total);
-    urr_cfg->vol_quota.uplink = htonll(urr_cfg->vol_quota.uplink);
-    urr_cfg->vol_quota.downlink = htonll(urr_cfg->vol_quota.downlink);
-    urr_cfg->eve_thres = htonl(urr_cfg->eve_thres);
-    urr_cfg->eve_quota = htonl(urr_cfg->eve_quota);
-    urr_cfg->tim_thres = htonl(urr_cfg->tim_thres);
-    urr_cfg->tim_quota = htonl(urr_cfg->tim_quota);
-    urr_cfg->quota_hold = htonl(urr_cfg->quota_hold);
-    urr_cfg->drop_thres.packets = htonll(urr_cfg->drop_thres.packets);
-    urr_cfg->drop_thres.bytes = htonll(urr_cfg->drop_thres.bytes);
-    urr_cfg->mon_time = htonl(urr_cfg->mon_time);
-    urr_cfg->sub_vol_thres.total = htonll(urr_cfg->sub_vol_thres.total);
-    urr_cfg->sub_vol_thres.uplink = htonll(urr_cfg->sub_vol_thres.uplink);
-    urr_cfg->sub_vol_thres.downlink = htonll(urr_cfg->sub_vol_thres.downlink);
-    urr_cfg->sub_tim_thres = htonl(urr_cfg->sub_tim_thres);
-    urr_cfg->sub_vol_quota.total = htonll(urr_cfg->sub_vol_quota.total);
-    urr_cfg->sub_vol_quota.uplink = htonll(urr_cfg->sub_vol_quota.uplink);
-    urr_cfg->sub_vol_quota.downlink = htonll(urr_cfg->sub_vol_quota.downlink);
-    urr_cfg->sub_tim_quota = htonl(urr_cfg->sub_tim_quota);
-    urr_cfg->sub_eve_thres = htonl(urr_cfg->sub_eve_thres);
-    urr_cfg->sub_eve_quota = htonl(urr_cfg->sub_eve_quota);
-    urr_cfg->inact_detect = htonl(urr_cfg->inact_detect);
-    urr_cfg->quota_far = htonl(urr_cfg->quota_far);
-    urr_cfg->eth_inact_time = htonl(urr_cfg->eth_inact_time);
-
-    for (cnt = 0; cnt < urr_cfg->linked_urr_number; ++cnt) {
-        urr_cfg->linked_urr[cnt] = htonl(urr_cfg->linked_urr[cnt]);
-    }
-    urr_cfg->linked_urr_number = htonl(urr_cfg->linked_urr_number);
-
-    for (cnt = 0; cnt < urr_cfg->add_mon_time_number; ++cnt) {
-        urr_cfg->add_mon_time[cnt].mon_time =
-            htonl(urr_cfg->add_mon_time[cnt].mon_time);
-        urr_cfg->add_mon_time[cnt].sub_vol_thres.total =
-            htonll(urr_cfg->add_mon_time[cnt].sub_vol_thres.total);
-        urr_cfg->add_mon_time[cnt].sub_vol_thres.uplink =
-            htonll(urr_cfg->add_mon_time[cnt].sub_vol_thres.uplink);
-        urr_cfg->add_mon_time[cnt].sub_vol_thres.downlink =
-            htonll(urr_cfg->add_mon_time[cnt].sub_vol_thres.downlink);
-        urr_cfg->add_mon_time[cnt].sub_tim_thres =
-            htonl(urr_cfg->add_mon_time[cnt].sub_tim_thres);
-        urr_cfg->add_mon_time[cnt].sub_vol_quota.total =
-            htonll(urr_cfg->add_mon_time[cnt].sub_vol_quota.total);
-        urr_cfg->add_mon_time[cnt].sub_vol_quota.uplink =
-            htonll(urr_cfg->add_mon_time[cnt].sub_vol_quota.uplink);
-        urr_cfg->add_mon_time[cnt].sub_vol_quota.downlink =
-            htonll(urr_cfg->add_mon_time[cnt].sub_vol_quota.downlink);
-        urr_cfg->add_mon_time[cnt].sub_tim_quota =
-            htonl(urr_cfg->add_mon_time[cnt].sub_tim_quota);
-        urr_cfg->add_mon_time[cnt].sub_eve_thres =
-            htonl(urr_cfg->add_mon_time[cnt].sub_eve_thres);
-        urr_cfg->add_mon_time[cnt].sub_eve_quota =
-            htonl(urr_cfg->add_mon_time[cnt].sub_eve_quota);
-    }
-    urr_cfg->add_mon_time_number = htonl(urr_cfg->add_mon_time_number);
-}
-
-inline void urr_config_ntoh(comm_msg_urr_config *urr_cfg)
-{
-    uint32_t cnt = 0;
-
-    urr_cfg->urr_id = ntohl(urr_cfg->urr_id);
-    urr_cfg->trigger.value = ntohs(urr_cfg->trigger.value);
-    urr_cfg->period = ntohl(urr_cfg->period);
-    urr_cfg->vol_thres.total = ntohll(urr_cfg->vol_thres.total);
-    urr_cfg->vol_thres.uplink = ntohll(urr_cfg->vol_thres.uplink);
-    urr_cfg->vol_thres.downlink = ntohll(urr_cfg->vol_thres.downlink);
-    urr_cfg->vol_quota.total = ntohll(urr_cfg->vol_quota.total);
-    urr_cfg->vol_quota.uplink = ntohll(urr_cfg->vol_quota.uplink);
-    urr_cfg->vol_quota.downlink = ntohll(urr_cfg->vol_quota.downlink);
-    urr_cfg->eve_thres = ntohl(urr_cfg->eve_thres);
-    urr_cfg->eve_quota = ntohl(urr_cfg->eve_quota);
-    urr_cfg->tim_thres = ntohl(urr_cfg->tim_thres);
-    urr_cfg->tim_quota = ntohl(urr_cfg->tim_quota);
-    urr_cfg->quota_hold = ntohl(urr_cfg->quota_hold);
-    urr_cfg->drop_thres.packets = ntohll(urr_cfg->drop_thres.packets);
-    urr_cfg->drop_thres.bytes = ntohll(urr_cfg->drop_thres.bytes);
-    urr_cfg->mon_time = ntohl(urr_cfg->mon_time);
-    urr_cfg->sub_vol_thres.total = ntohll(urr_cfg->sub_vol_thres.total);
-    urr_cfg->sub_vol_thres.uplink = ntohll(urr_cfg->sub_vol_thres.uplink);
-    urr_cfg->sub_vol_thres.downlink = ntohll(urr_cfg->sub_vol_thres.downlink);
-    urr_cfg->sub_tim_thres = ntohl(urr_cfg->sub_tim_thres);
-    urr_cfg->sub_vol_quota.total = ntohll(urr_cfg->sub_vol_quota.total);
-    urr_cfg->sub_vol_quota.uplink = ntohll(urr_cfg->sub_vol_quota.uplink);
-    urr_cfg->sub_vol_quota.downlink = ntohll(urr_cfg->sub_vol_quota.downlink);
-    urr_cfg->sub_tim_quota = ntohl(urr_cfg->sub_tim_quota);
-    urr_cfg->sub_eve_thres = ntohl(urr_cfg->sub_eve_thres);
-    urr_cfg->sub_eve_quota = ntohl(urr_cfg->sub_eve_quota);
-    urr_cfg->inact_detect = ntohl(urr_cfg->inact_detect);
-    urr_cfg->quota_far = ntohl(urr_cfg->quota_far);
-    urr_cfg->eth_inact_time = ntohl(urr_cfg->eth_inact_time);
-
-    for (cnt = 0; cnt < urr_cfg->linked_urr_number; ++cnt) {
-        urr_cfg->linked_urr[cnt] = ntohl(urr_cfg->linked_urr[cnt]);
-    }
-    urr_cfg->linked_urr_number = ntohl(urr_cfg->linked_urr_number);
-
-    for (cnt = 0; cnt < urr_cfg->add_mon_time_number; ++cnt) {
-        urr_cfg->add_mon_time[cnt].mon_time =
-            ntohl(urr_cfg->add_mon_time[cnt].mon_time);
-        urr_cfg->add_mon_time[cnt].sub_vol_thres.total =
-            ntohll(urr_cfg->add_mon_time[cnt].sub_vol_thres.total);
-        urr_cfg->add_mon_time[cnt].sub_vol_thres.uplink =
-            ntohll(urr_cfg->add_mon_time[cnt].sub_vol_thres.uplink);
-        urr_cfg->add_mon_time[cnt].sub_vol_thres.downlink =
-            ntohll(urr_cfg->add_mon_time[cnt].sub_vol_thres.downlink);
-        urr_cfg->add_mon_time[cnt].sub_tim_thres =
-            ntohl(urr_cfg->add_mon_time[cnt].sub_tim_thres);
-        urr_cfg->add_mon_time[cnt].sub_vol_quota.total =
-            ntohll(urr_cfg->add_mon_time[cnt].sub_vol_quota.total);
-        urr_cfg->add_mon_time[cnt].sub_vol_quota.uplink =
-            ntohll(urr_cfg->add_mon_time[cnt].sub_vol_quota.uplink);
-        urr_cfg->add_mon_time[cnt].sub_vol_quota.downlink =
-            ntohll(urr_cfg->add_mon_time[cnt].sub_vol_quota.downlink);
-        urr_cfg->add_mon_time[cnt].sub_tim_quota =
-            ntohl(urr_cfg->add_mon_time[cnt].sub_tim_quota);
-        urr_cfg->add_mon_time[cnt].sub_eve_thres =
-            ntohl(urr_cfg->add_mon_time[cnt].sub_eve_thres);
-        urr_cfg->add_mon_time[cnt].sub_eve_quota =
-            ntohl(urr_cfg->add_mon_time[cnt].sub_eve_quota);
-    }
-    urr_cfg->add_mon_time_number = ntohl(urr_cfg->add_mon_time_number);
-}
-
 int urr_insert(struct session_t *sess, void *parse_urr_arr,
     uint32_t urr_num, uint32_t *fail_id)
 {
@@ -490,31 +324,7 @@ int urr_insert(struct session_t *sess, void *parse_urr_arr,
     return 0;
 }
 
-int urr_table_delete_local(uint32_t *arr, uint8_t index_num)
-{
-    struct urr_table_head *urr_head = urr_get_head();
-	 struct urr_table *urr_tbl = NULL;
-	uint32_t index_cnt = 0;
-
-	if (NULL == arr) {
-        LOG(SESSION, ERR, "urr remove failed, arr(%p)",arr);
-        return -1;
-    }
-
-    for (index_cnt = 0; index_cnt < index_num; ++index_cnt) {
-		urr_tbl = urr_get_table(arr[index_cnt]);
-
-        /* Start urr charging if exist */
-        urr_container_destroy(urr_tbl->index);
-
-	    Res_Free(urr_head->pool_id, 0, urr_tbl->index);
-	    ros_atomic32_sub(&urr_head->use_num, 1);
-	}
-
-    return 0;
-}
-
-int urr_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr)
+int urr_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr, uint32_t *fail_id)
 {
     struct urr_table *urr_tbl = NULL;
     struct urr_table_head *urr_head = urr_get_head();
@@ -534,6 +344,8 @@ int urr_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_
 	    if (NULL == urr_tbl) {
 	        LOG(SESSION, ERR, "remove failed, not exist, id: %u.",
 				id_arr[index_cnt]);
+            if (fail_id)
+                *fail_id = id_arr[index_cnt];
             return -1;
 	    }
 
@@ -736,11 +548,6 @@ int urr_clear(struct session_t *sess,
     urr_tbl = (struct urr_table *)rbtree_first(&sess->session.urr_root);
     while (NULL != urr_tbl) {
         id = urr_tbl->urr.urr_id;
-		//取urr_id最高位，如果是1则表示是预定义规则，不需要删除
-		if (((id & 0x80000000)>>31)) {
-			urr_tbl = (struct urr_table *)rbtree_next(&urr_tbl->urr_node);
-			continue;
-		}
 
         urr_tbl = (struct urr_table *)rbtree_delete(&sess->session.urr_root,
             &id, urr_id_compare);

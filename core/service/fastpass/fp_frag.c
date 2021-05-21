@@ -576,44 +576,44 @@ char *fp_tcp_segment_reasm(fp_tcp_segment_mgmt *tcp_seg_mgmt, int *buf_len)
 		return NULL;
 	}
 
-	//重新设置各种头的校验码和长度
-	ipL1_hdr   = (struct pro_ipv4_hdr *)((char *)buf + sizeof(struct pro_eth_hdr));
+    //重新设置各种头的校验码和长度
+    ipL1_hdr   = (struct pro_ipv4_hdr *)((char *)buf + sizeof(struct pro_eth_hdr));
 
-	udp_hdr  = (struct pro_udp_hdr *)((char *)ipL1_hdr + ipL1_hdr->ihl*4);
+    udp_hdr  = (struct pro_udp_hdr *)((char *)ipL1_hdr + ipL1_hdr->ihl*4);
 
-	gtpu_hdr = (struct pro_gtp_hdr *)((char *)udp_hdr + sizeof(struct pro_udp_hdr));
+    gtpu_hdr = (struct pro_gtp_hdr *)((char *)udp_hdr + sizeof(struct pro_udp_hdr));
     ip_frag_calc_head_len(tcp_seg_mgmt->list->buf,tcp_seg_mgmt->list->len,&extlen);
 
     ipL2_hdr   = (struct pro_ipv4_hdr *)((char *)gtpu_hdr + sizeof(struct pro_gtp_hdr) + extlen);
 
-	/* set L2ip header */
-    content_len      	+= (tcp_seg_mgmt->seg_total_len + ipL2_hdr->ihl*4 + first_tcp_hdr->doff*4);
+    /* set L2ip header */
+    content_len         += (tcp_seg_mgmt->seg_total_len + ipL2_hdr->ihl*4 + first_tcp_hdr->doff*4);
     ipL2_hdr->tot_len   = htons(content_len);
-	ipL2_hdr->frag_off	= htons(0x4000);
-	ipL2_hdr->check     = 0;
+    ipL2_hdr->frag_off  = 0;
+    ipL2_hdr->check     = 0;
     ipL2_hdr->check    	= calc_crc_ip(ipL2_hdr);
 
-	/* set GTP header */
-	//gtp头有点特殊，它只包含载荷和额外的头长，不包含自己的头长8字节
+    /* set GTP header */
+    //gtp头有点特殊，它只包含载荷和额外的头长，不包含自己的头长8字节
     content_len      	+= extlen;
     gtpu_hdr->length    = htons(content_len);
 
-	/* set UDP header */
+    /* set UDP header */
     content_len 		+= (sizeof(struct pro_udp_hdr) + sizeof(struct pro_gtp_hdr));
     udp_hdr->len        = htons(content_len);
 
-	/* set L1ip header */
+    /* set L1ip header */
     content_len      	+= (ipL1_hdr->ihl*4);
     ipL1_hdr->tot_len   = htons(content_len);
-	ipL1_hdr->check    = 0;
+    ipL1_hdr->check    = 0;
     ipL1_hdr->check    	= calc_crc_ip(ipL1_hdr);
 
-	udp_hdr->check  = calc_crc_udp(udp_hdr,ipL1_hdr);
+    udp_hdr->check  = calc_crc_udp(udp_hdr,ipL1_hdr);
 
-	LOG(FASTPASS, RUNNING, "ip_frag_reasm [%d %x] [%d] [%d %x] [%d %x]",ntohs(ipL2_hdr->tot_len),ntohs(ipL2_hdr->check),
-		ntohs(gtpu_hdr->length),ntohs(udp_hdr->len),ntohs(udp_hdr->check),
-		ntohs(ipL1_hdr->tot_len),ntohs(ipL1_hdr->check));
-	*buf_len = pos;
+    LOG(FASTPASS, RUNNING, "ip_frag_reasm [%d %x] [%d] [%d %x] [%d %x]",ntohs(ipL2_hdr->tot_len),ntohs(ipL2_hdr->check),
+    	ntohs(gtpu_hdr->length),ntohs(udp_hdr->len),ntohs(udp_hdr->check),
+    	ntohs(ipL1_hdr->tot_len),ntohs(ipL1_hdr->check));
+    *buf_len = pos;
 	return buf;
 
 }

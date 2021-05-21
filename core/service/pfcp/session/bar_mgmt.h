@@ -34,8 +34,6 @@ struct fsm_audit *bar_get_audit_4am(void);
 void bar_table_show(struct bar_table *bar_tbl);
 struct bar_table *bar_table_create(struct session_t *sess, uint8_t id);
 struct bar_table *bar_table_search(struct session_t *sess, uint8_t id);
-struct bar_table *bar_table_create_local(uint8_t id);
-int bar_table_delete_local(uint32_t index);
 int bar_fp_add_or_mod(uint32_t *index_arr, uint32_t index_num, uint8_t is_add, int fd);
 int bar_insert(struct session_t *sess, session_buffer_action_rule *parse_bar);
 int bar_remove(struct session_t *sess, uint8_t bar_id, uint32_t *bar_index);

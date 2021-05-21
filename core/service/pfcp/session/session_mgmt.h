@@ -8,48 +8,46 @@
 
 
 struct pfcp_session {
-    uint32_t                    node_index;
     uint64_t                    local_seid;
     uint64_t                    cp_seid;
     struct rb_root              pdr_root;               /* for create pdr */
     struct rb_root              far_root;               /* for create far */
     struct rb_root              urr_root;               /* for create urr */
     struct rb_root              qer_root;               /* for create qer */
-    struct rb_root              bar_root;              	/* for create bar */
+    struct rb_root              bar_root;               /* for create bar */
     struct rb_root              tc_endpoint_root;       /* for traffic endpoint */
-    struct rb_root              sdf_root;              	/* for bidirectional SDF filter */
-    struct rb_root              eth_root;              	/* for bidirectional ETH packet failter */
-    PDN_TYPE                    pdn_type;
+    struct rb_root              sdf_root;               /* for bidirectional SDF filter */
+    struct rb_root              eth_root;               /* for bidirectional ETH packet failter */
+    uint32_t                    node_index;
     uint32_t                    inactivity_timer;
     session_user_id             user_id;
     session_trace_info          trace_info;
     struct rb_root              mar_root;               /* for create mar */
-	session_apn_dnn        	    apn_dnn;
-	session_rat_type            rat_type;
-    session_user_location_info  user_local_info;
+    session_apn_dnn             apn_dnn;
+    PDN_TYPE                    pdn_type;
+    uint8_t                     rat_type;
     uint8_t                     trace_info_present;
 };
 
 struct session_t {
-    struct rb_node          session_node; /* session pool node */
-    struct dl_list          ue_mac_head; /* UE MAC Linked list head */
-    struct dl_list          eth_dl_head; /* Ethernet PDN type, downlink PDR list */
-    uint32_t                index;
-    ros_rwlock_t            lock;
-    struct pfcp_session     session;
+    struct rb_node                  session_node; /* session pool node */
+    struct dl_list                  ue_mac_head; /* UE MAC Linked list head */
+    struct dl_list                  eth_dl_head; /* Ethernet PDN type, downlink PDR list */
+    uint32_t                        index;
+    ros_rwlock_t                    lock;
+    struct pfcp_session             session;
     /* Use timeout reply waiting for FPU  */
-    uint32_t                qer_index_arr[MAX_QER_NUM];
-	uint32_t                urr_index_arr[MAX_URR_NUM];
-    uint32_t                seq_num;        /* response sequnce number */
-    uint8_t                 msg_type;       /* msg_type */
-    uint8_t                 qer_index_nums;
-	uint16_t 				trigger;
-    struct ros_timer        *timeout_timer; /* FPU reply message timeout timer */
-	struct ros_timer        *inactivity_timer_id;
+    uint32_t                        qer_index_arr[MAX_QER_NUM];
+    uint32_t                        urr_index_arr[MAX_URR_NUM];
+    uint32_t                        seq_num;        /* response sequnce number */
+    uint8_t                         msg_type;       /* msg_type */
+    uint8_t                         qer_index_nums;
+    session_urr_reporting_trigger   trigger;
+    struct ros_timer                *timeout_timer; /* FPU reply message timeout timer */
+    struct ros_timer                *inactivity_timer_id;
 
-	struct dl_list		    report_req_head;
-	struct ros_timer		*report_req_timer;
-	uint32_t				report_req_num;
+    struct dl_list                  report_req_head;
+    struct ros_timer                *report_req_timer;
 };
 
 struct session_mgmt_cb {

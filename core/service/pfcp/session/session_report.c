@@ -198,12 +198,18 @@ int session_start_nocp_timer(struct session_t *session, struct pdr_table *pdr_tb
         LOG(SESSION, ERR, "far table search failed, far_index %u.", far_index);
         return -1;
     }
-    LOG(SESSION, RUNNING,
-        "far action  spare: %d, dupl: %d, nocp: %d, buff: %d,"
-        " forw: %d, drop: %d.", far_tbl->far_cfg.action.d.spar,
-        far_tbl->far_cfg.action.d.dupl, far_tbl->far_cfg.action.d.nocp,
-        far_tbl->far_cfg.action.d.buff, far_tbl->far_cfg.action.d.forw,
-        far_tbl->far_cfg.action.d.drop);
+    LOG(SESSION, RUNNING, "far action: %s%s%s%s%s%s%s%s%s%s%s",
+        far_tbl->far_cfg.action.d.drop ? "drop ":"",
+        far_tbl->far_cfg.action.d.forw ? "forw ":"",
+        far_tbl->far_cfg.action.d.buff ? "buff ":"",
+        far_tbl->far_cfg.action.d.nocp ? "nocp ":"",
+        far_tbl->far_cfg.action.d.dupl ? "dupl ":"",
+        far_tbl->far_cfg.action.d.ipma ? "ipma ":"",
+        far_tbl->far_cfg.action.d.ipmd ? "ipmd ":"",
+        far_tbl->far_cfg.action.d.dfrt ? "dfrt ":"",
+        far_tbl->far_cfg.action.d.edrt ? "edrt ":"",
+        far_tbl->far_cfg.action.d.bdpn ? "bdpn ":"",
+        far_tbl->far_cfg.action.d.ddpn ? "ddpn ":"");
 
     /* forwarding parameters */
     if ((far_tbl->far_cfg.action.d.buff) && (far_tbl->far_cfg.action.d.nocp)) {
@@ -245,50 +251,6 @@ int session_start_nocp_timer(struct session_t *session, struct pdr_table *pdr_tb
     }
 
     return 0;
-}
-
-void session_urr_report_htonl(comm_msg_urr_report_t *urr_rep)
-{
-	urr_rep->urr_id = htonl(urr_rep->urr_id);
-	urr_rep->ur_seqn = htonl(urr_rep->ur_seqn);
-	urr_rep->trigger.value = htonl(urr_rep->trigger.value);
-	urr_rep->start_time = htonl(urr_rep->start_time);
-	urr_rep->end_time = htonl(urr_rep->end_time);
-	urr_rep->vol_meas.total = htonll(urr_rep->vol_meas.total);
-	urr_rep->vol_meas.uplink = htonll(urr_rep->vol_meas.uplink);
-	urr_rep->vol_meas.downlink = htonll(urr_rep->vol_meas.downlink);
-	urr_rep->tim_meas = htonl(urr_rep->tim_meas);
-	/* Too few parameters */
-	urr_rep->app_detect.stub = htonl(urr_rep->app_detect.stub);
-	urr_rep->ue_ip.ipv4 = htonl(urr_rep->ue_ip.ipv4);
-	/* Too few parameters */
-	urr_rep->network_instance = htonl(urr_rep->network_instance);
-	urr_rep->first_pkt_time = htonl(urr_rep->first_pkt_time);
-	urr_rep->last_pkt_time = htonl(urr_rep->last_pkt_time);
-	urr_rep->query_urr_ref = htonl(urr_rep->query_urr_ref);
-	urr_rep->eve_stamp = htonl(urr_rep->eve_stamp);
-}
-
-static void session_urr_report_ntohl(comm_msg_urr_report_t *urr_rep)
-{
-	urr_rep->urr_id = ntohl(urr_rep->urr_id);
-	urr_rep->ur_seqn = ntohl(urr_rep->ur_seqn);
-	urr_rep->trigger.value = ntohl(urr_rep->trigger.value);
-	urr_rep->start_time = ntohl(urr_rep->start_time);
-	urr_rep->end_time = ntohl(urr_rep->end_time);
-	urr_rep->vol_meas.total = ntohll(urr_rep->vol_meas.total);
-	urr_rep->vol_meas.uplink = ntohll(urr_rep->vol_meas.uplink);
-	urr_rep->vol_meas.downlink = ntohll(urr_rep->vol_meas.downlink);
-	urr_rep->tim_meas = ntohl(urr_rep->tim_meas);
-	/* Too few parameters */
-	urr_rep->app_detect.stub = ntohl(urr_rep->app_detect.stub);
-	urr_rep->ue_ip.ipv4 = ntohl(urr_rep->ue_ip.ipv4);
-	/* Too few parameters */
-	urr_rep->network_instance = ntohl(urr_rep->network_instance);
-	urr_rep->first_pkt_time = ntohl(urr_rep->first_pkt_time);
-	urr_rep->last_pkt_time = ntohl(urr_rep->last_pkt_time);
-	urr_rep->query_urr_ref = ntohl(urr_rep->query_urr_ref);
-	urr_rep->eve_stamp = ntohl(urr_rep->eve_stamp);
 }
 
 static inline void session_show_urr_report(comm_msg_urr_report_t *urr_rep)
@@ -441,7 +403,7 @@ void session_report_urr_content_copy(
     }
 }
 
-int session_report_local_urr(comm_msg_urr_report_t *config, uint8_t usage_report_num, uint16_t trigger)
+int session_report_local_urr(comm_msg_urr_report_t *config, uint8_t usage_report_num, uint32_t trigger)
 {
     session_report_request report_req = {{0}};
     struct urr_table *urr_entry;
@@ -491,23 +453,11 @@ int session_report_local_urr(comm_msg_urr_report_t *config, uint8_t usage_report
 	urr_entry = urr_get_table(index);
 	urr_entry->sess->msg_type = SESS_SESSION_REPORT_REQUEST;
 	urr_entry->sess->urr_index_arr[0] = index;
-	urr_entry->sess->trigger = trigger;
+	urr_entry->sess->trigger.value = trigger;
 
 	//ros_timer_start(urr_entry->sess->timeout_timer);
 
     return 0;
-}
-
-int session_report_urr(comm_msg_ie_t *ie)
-{
-    comm_msg_urr_report_t *config = NULL;
-
-    config = (comm_msg_urr_report_t *)(ie->data);
-	session_urr_report_ntohl(config);
-    LOG(SESSION, RUNNING, "get urr report, ie(%u).",
-        ntohl(ie->index));
-
-    return session_report_local_urr(config, 1,0xffff);
 }
 
 int session_report_teid_err(struct session_peer_fteid_entry *fteid_entry)

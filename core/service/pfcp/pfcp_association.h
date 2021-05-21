@@ -12,6 +12,9 @@ extern "C" {
 
 void pfcp_encode_node_id(uint8_t* resp_buffer, uint16_t *buf_pos, uint8_t type);
 
+PFCP_CAUSE_TYPE pfcp_parse_remote_gtpu_peer(session_remote_gtpu_peer *remote_gtpu,
+    uint8_t* buffer, uint16_t *buf_pos, int buf_max, uint16_t obj_len);
+
 int pfcp_local_association_setup(session_association_setup *assoc_setup);
 int pfcp_local_association_update(session_association_update *assoc_update);
 int pfcp_local_association_release(session_association_release_request *assoc_rels);
@@ -32,7 +35,7 @@ void pfcp_parse_association_release_response(uint8_t* buffer,
 
 void pfcp_build_association_setup_request(upc_node_cb *node);
 void pfcp_build_association_setup_response(uint8_t* resp_buffer,
-    uint16_t *buf_pos, uint8_t res_cause, uint32_t pkt_seq, uint8_t node_type);
+    uint16_t *buf_pos, uint8_t res_cause, uint32_t pkt_seq, uint8_t node_type, uint8_t sess_retention);
 void pfcp_build_association_update_request(upc_node_cb *node, uint8_t rel_flag,
     uint8_t gra_flag, uint8_t aur_flag);
 void pfcp_build_association_update_response(uint8_t* resp_buffer,

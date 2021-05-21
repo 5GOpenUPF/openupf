@@ -10,7 +10,6 @@
 #include "key_extract.h"
 #include "fp_msg.h"
 #include "fp_main.h"
-#include "fp_urr.h"
 #include "fp_qer.h"
 #include "fp_dns.h"
 #include "fp_fwd_nonip.h"
@@ -64,111 +63,36 @@ fp_fast_entry *fp_table_match_fast_entry(fp_fast_table *table, uint32_t hash_key
     return entry;
 }
 
-uint8_t fp_msg_inst_stat_collect_immd(fp_inst_entry *inst_entry)
-{
-    comm_msg_header_t *msg;
-    comm_msg_rules_ie_t *ie = NULL;
-    comm_msg_urr_stat_conf_t *stat;
-    uint8_t  buf[FP_TIMER_BUFF_SIZE];
-    uint32_t buf_len = 0;
-    int64_t tmp_value, pkt_trigger = 0;
-
-    msg = fp_fill_msg_header(buf);
-    ie = COMM_MSG_GET_RULES_IE(msg);
-    ie->cmd   = htons(EN_COMM_MSG_UPU_FP_STAT);
-
-    /* set init */
-    stat = (comm_msg_urr_stat_conf_t *)ie->data;
-
-    if (!inst_entry || !inst_entry->valid) {
-        LOG(FASTPASS, ERR, "The inst entry %u is (%p), 'valid' is %d.",
-            inst_entry->index, inst_entry, inst_entry->valid);
-        return -1;
-    }
-
-    /* fill stat */
-    tmp_value = ros_atomic64_read(&inst_entry->stat.forw_pkts);
-    ros_atomic64_set(&stat->urr_stat.forw_pkts, htonll(tmp_value));
-    ros_atomic64_sub(&inst_entry->stat.forw_pkts, tmp_value);
-    pkt_trigger += tmp_value;
-
-    tmp_value = ros_atomic64_read(&inst_entry->stat.forw_bytes);
-    ros_atomic64_set(&stat->urr_stat.forw_bytes, htonll(tmp_value));
-    ros_atomic64_sub(&inst_entry->stat.forw_bytes, tmp_value);
-
-    tmp_value = ros_atomic64_read(&inst_entry->stat.drop_pkts);
-    ros_atomic64_set(&stat->urr_stat.drop_pkts, htonll(tmp_value));
-    ros_atomic64_sub(&inst_entry->stat.drop_pkts, tmp_value);
-    pkt_trigger += tmp_value;
-
-    tmp_value = ros_atomic64_read(&inst_entry->stat.drop_bytes);
-    ros_atomic64_set(&stat->urr_stat.drop_bytes, htonll(tmp_value));
-    ros_atomic64_sub(&inst_entry->stat.drop_bytes, tmp_value);
-
-    tmp_value = ros_atomic64_read(&inst_entry->stat.err_cnt);
-    ros_atomic64_set(&stat->urr_stat.err_cnt, htonll(tmp_value));
-    ros_atomic64_sub(&inst_entry->stat.err_cnt, tmp_value);
-
-    /* Update inactive count */
-    if (pkt_trigger) {
-        inst_entry->inact = inst_entry->config.inact;
-    }
-
-    stat->inst_index = htonl(inst_entry->index);
-
-    /* count buffer length */
-    buf_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_urr_stat_conf_t);
-
-    ie->rules_num   = htonl(1);
-    ie->len         = htons(buf_len);
-    buf_len         += COMM_MSG_HEADER_LEN;
-    msg->total_len = htonl(buf_len);
-
-    if (0 > fp_msg_send((char *)buf, buf_len)) {
-        LOG(FASTPASS, ERR, "Send msg to spu failed.");
-    }
-
-	return 0;
-}
-
 inline void fp_pkt_stat_drop(fp_inst_entry *inst_entry, int pktlen)
 {
-	fp_inst_table *head = fp_inst_table_get();
+    fp_inst_table *head = fp_inst_table_get();
 
     /* update stat */
-    ros_atomic64_inc(&inst_entry->stat.drop_pkts);
-    ros_atomic64_add(&inst_entry->stat.drop_bytes, pktlen);
+    ++inst_entry->stat.drop_pkts;
+    inst_entry->stat.drop_bytes += pktlen;
 
-	Res_MarkSet(head->res_stat, inst_entry->index);
+    Res_MarkSet(head->res_stat, inst_entry->index);
+    if (unlikely(!inst_entry->active)) {
+        inst_entry->active = G_TRUE;
+    }
 }
 
 inline void fp_pkt_stat_forw(fp_inst_entry *inst_entry, int pktlen, comm_msg_fast_cfg *entry_cfg)
 {
-	fp_inst_table *head = fp_inst_table_get();
-#ifdef ENABLE_INST_STAT_COLLECT_IMMD
-	int64_t 	tmp_value;
-	uint64_t	collect_thres;
-#endif
+    fp_inst_table *head = fp_inst_table_get();
 
     /* update stat */
-    ros_atomic64_inc(&inst_entry->stat.forw_pkts);
-    ros_atomic64_add(&inst_entry->stat.forw_bytes, pktlen);
+    ++inst_entry->stat.forw_pkts;
+    inst_entry->stat.forw_bytes += pktlen;
 
     if (unlikely(entry_cfg->tcp_push)) {
-        ros_atomic16_add(&entry_cfg->tcp_hs_stat, (int16_t)pktlen);
+        entry_cfg->tcp_hs_stat += pktlen;
     }
 
-	Res_MarkSet(head->res_stat, inst_entry->index);
-#ifdef ENABLE_INST_STAT_COLLECT_IMMD
-	tmp_value = ros_atomic64_read(&inst_entry->stat.forw_bytes);
-	LOG(FASTPASS, RUNNING, "inst_index(%d), tmp_value %ld.",
-		inst_entry->index, ros_atomic64_read(&inst_entry->stat.forw_bytes));
-
-	if (tmp_value >= FP_STAT_PER_COLLECT_BYTES) {
-		fp_msg_inst_stat_collect_immd(inst_entry);
-		Res_MarkClr(head->res_stat, inst_entry->index);
-	}
-#endif
+    Res_MarkSet(head->res_stat, inst_entry->index);
+    if (unlikely(!inst_entry->active)) {
+        inst_entry->active = G_TRUE;
+    }
 }
 
 inline void fp_pkt_stat_err(fp_inst_entry *inst_entry)
@@ -177,14 +101,17 @@ inline void fp_pkt_stat_err(fp_inst_entry *inst_entry)
 
     if (inst_entry) {
         /* update stat */
-        ros_atomic64_inc(&(inst_entry->stat.err_cnt));
+        ++inst_entry->stat.err_cnt;
 
         Res_MarkSet(head->res_stat, inst_entry->index);
+        if (unlikely(!inst_entry->active)) {
+            inst_entry->active = G_TRUE;
+        }
     }
 }
 
 inline fp_fast_entry *fp_pkt_no_match(fp_packet_info *pkt_info, uint8_t is_tcp,
-        fp_fast_table *head, uint32_t hash_key, uint32_t aux_info, uint8_t port, int trace_flag)
+        fp_fast_table *head, uint32_t hash_key, uint32_t aux_info, int trace_flag)
 {
     fp_fast_entry *entry;
 #ifdef ENABLE_OCTEON_III
@@ -237,7 +164,7 @@ inline fp_fast_entry *fp_pkt_no_match(fp_packet_info *pkt_info, uint8_t is_tcp,
         node->buf       = localbuf;
         node->pkt       = localbuf;
         node->free      = (CBLK_FREE)fp_block_free;
-		node->lcore_id  = core_id;
+        node->lcore_id  = core_id;
 
 #ifdef RECORD_FAST_INFO_NEW_VER
         /* Record fast ID and fast type */
@@ -250,7 +177,7 @@ inline fp_fast_entry *fp_pkt_no_match(fp_packet_info *pkt_info, uint8_t is_tcp,
         node->buf       = mbuf;
         node->pkt       = pkt;
         node->free      = NULL;
-        node->lcore_id	= fp_get_coreid();
+        node->lcore_id  = fp_get_coreid();
 
 #ifdef RECORD_FAST_INFO_NEW_VER
         /* Record fast ID and fast type */
@@ -266,7 +193,7 @@ inline fp_fast_entry *fp_pkt_no_match(fp_packet_info *pkt_info, uint8_t is_tcp,
 #else
         node->len       = len;
 #endif
-        node->port      = port;
+        node->port      = pkt_info->port_id;
 
         /* enqueue */
         ros_rwlock_write_lock(&shadow->rwlock);
@@ -284,14 +211,19 @@ inline fp_fast_entry *fp_pkt_no_match(fp_packet_info *pkt_info, uint8_t is_tcp,
         entry_cfg->temp_flag  = G_TRUE;
         entry_cfg->tcp_push   = entry_cfg->is_tcp = is_tcp ? G_TRUE : G_FALSE;
         entry_cfg->inst_index = COMM_MSG_ORPHAN_NUMBER;
-        ros_atomic16_init(&entry_cfg->tcp_hs_stat);
+        entry_cfg->tcp_hs_stat = 0;
 
         /* Put in hash tree */
-        if (NULL == fp_fast_table_add(head, entry, hash_key, aux_info))
-        {
+        if (NULL == fp_fast_table_add(head, entry, hash_key, aux_info)) {
             LOG_TRACE(FASTPASS, ERR, trace_flag,
-                "put fast entry %d in tree %p IPV4 pool failed!",
-                entry->index, head);
+                "put fast entry %d aux_info 0x%x in tree %p IPV4 pool failed!",
+                entry->index, aux_info, head);
+
+            /* dequeue cblock, MBUF will be free outside */
+            ros_rwlock_write_lock(&shadow->rwlock);
+            lstDelete(&(shadow->list), (NODE *)node);
+            ros_rwlock_write_unlock(&shadow->rwlock);
+            fp_cblk_free(node);
 
             /* Free entry, the free of cblock is also among them */
             fp_fast_free(head, entry->index);
@@ -307,7 +239,7 @@ inline fp_fast_entry *fp_pkt_no_match(fp_packet_info *pkt_info, uint8_t is_tcp,
 }
 
 int fp_pkt_temp_buffer(fp_packet_info *pkt_info, fp_fast_table *head,
-    fp_fast_entry *entry, uint8_t port, int trace_flag)
+    fp_fast_entry *entry, int trace_flag)
 {
 #ifdef ENABLE_OCTEON_III
     char            *localbuf;
@@ -353,7 +285,7 @@ int fp_pkt_temp_buffer(fp_packet_info *pkt_info, fp_fast_table *head,
     node->buf       = localbuf;
     node->pkt       = localbuf;
     node->free      = (CBLK_FREE)fp_block_free;
-	node->lcore_id  = core_id;
+    node->lcore_id  = core_id;
 
 #ifdef RECORD_FAST_INFO_NEW_VER
     /* Record fast ID and fast type */
@@ -380,7 +312,7 @@ int fp_pkt_temp_buffer(fp_packet_info *pkt_info, fp_fast_table *head,
 #else
     node->len       = pkt_info->len;
 #endif
-    node->port      = port;
+    node->port      = pkt_info->port_id;
 
     ros_rwlock_write_lock(&shadow->rwlock);
 
@@ -400,7 +332,7 @@ int fp_pkt_temp_buffer(fp_packet_info *pkt_info, fp_fast_table *head,
                 /* resend current packet, because they belong to same flow */
                 if (unlikely(ERROR == fp_send_to_chn_port(rte_pktmbuf_mtod((struct rte_mbuf *)pkt_info->arg, char *),
                     rte_pktmbuf_data_len((struct rte_mbuf *)pkt_info->arg)))) {
-                    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "forward ipv4 packet to sp port failed!");
+                    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "forward ipv4 packet to SMU failed!");
                 }
 
                 /* update stat */
@@ -463,7 +395,7 @@ inline void fp_pkt_set_transport_level(uint8_t *pkt, comm_msg_transport_level_t 
 
 #ifdef ENABLE_FP_QER
 int fp_pkt_qer_process(comm_msg_inst_config *inst_config, comm_msg_qer_gtpu_ext **gtpu_ext,
-    uint8_t port, int count_len, int trace_flag)
+    uint8_t is_ul, int count_len, int trace_flag)
 {
     fp_qer_entry *qer_entry;
     int qer_idx;
@@ -471,17 +403,13 @@ int fp_pkt_qer_process(comm_msg_inst_config *inst_config, comm_msg_qer_gtpu_ext 
     FP_QER_HANDLE fp_qer_handle;
     fp_qos_meter *meter;
 
-    switch (port) {
-        case EN_PORT_N6:
-            fp_qer_handle = fp_qer_handle_dl;
-            break;
-
-        default:
-            fp_qer_handle = fp_qer_handle_ul;
-            break;
+    if (is_ul) {
+        fp_qer_handle = fp_qer_handle_ul;
+    } else {
+        fp_qer_handle = fp_qer_handle_dl;
     }
 
-	/*只要有一个qer标记为green，就进行转发*/
+    /* As long as there is a QER marked green, it will be forwarded */
     /* check all valid qer items */
     for (qer_idx = 0; qer_idx < inst_config->qer_number; qer_idx++) {
 
@@ -500,37 +428,33 @@ int fp_pkt_qer_process(comm_msg_inst_config *inst_config, comm_msg_qer_gtpu_ext 
         color = fp_qer_handle(count_len, 1, qer_entry, color);
     }
 
-	if ((inst_config->qer_number > 1) && (color == COMM_MSG_LIGHT_GREEN)) {
-		for (qer_idx = 0; qer_idx < inst_config->qer_number; qer_idx++) {
+    if ((inst_config->qer_number > 1) && (color == COMM_MSG_LIGHT_GREEN)) {
+        for (qer_idx = 0; qer_idx < inst_config->qer_number; qer_idx++) {
 
-			/* get entry */
-			qer_entry = fp_qer_entry_get(inst_config->qer_index[qer_idx]);
+            /* get entry */
+            qer_entry = fp_qer_entry_get(inst_config->qer_index[qer_idx]);
             if ((!qer_entry)||(!qer_entry->valid)) {
                 continue;
             }
 
-            switch (port) {
-                case EN_PORT_N6:
-                    meter = &qer_entry->dl_meter;
-                    break;
-
-                default:
-                    meter = &qer_entry->ul_meter;
-                    break;
+            if (is_ul) {
+                meter = &qer_entry->ul_meter;
+            } else {
+                meter = &qer_entry->dl_meter;
             }
 
-			if(meter->color == COMM_MSG_LIGHT_RED) {
-				ros_atomic64_add(&meter->debt, count_len);
-				LOG_TRACE(FASTPASS, RUNNING, trace_flag, "get qer(%d) debt %ld!",
-            		qer_entry->index, ros_atomic64_read(&meter->debt));
-			}
-		}
-	}
+            if(meter->color == COMM_MSG_LIGHT_RED) {
+                ros_atomic64_add(&meter->debt, count_len);
+                LOG_TRACE(FASTPASS, RUNNING, trace_flag, "get qer(%d) debt %ld!",
+                    qer_entry->index, ros_atomic64_read(&meter->debt));
+            }
+        }
+    }
 
     LOG_TRACE(FASTPASS, RUNNING, trace_flag, "qer handle finish, color: %s.",
         color == COMM_MSG_LIGHT_RED ? "Red" : color == COMM_MSG_LIGHT_GREEN ? "Green" : "Yellow");
 
-	/* if action is drop */
+    /* if action is drop */
     if (color == COMM_MSG_LIGHT_RED) {
         return -1;
     }
@@ -540,7 +464,7 @@ int fp_pkt_qer_process(comm_msg_inst_config *inst_config, comm_msg_qer_gtpu_ext 
 #endif
 
 int fp_pkt_buffer_action_process(fp_packet_info *pkt_info, fp_fast_table *head, fp_fast_entry *entry,
-    comm_msg_far_config *far_cfg, uint8_t port, int trace_flag)
+    comm_msg_far_config *far_cfg, int trace_flag)
 {
     fp_bar_entry        *bar_entry;
     comm_msg_bar_config *bar_conf;
@@ -578,8 +502,7 @@ int fp_pkt_buffer_action_process(fp_packet_info *pkt_info, fp_fast_table *head, 
         /* if buffered packet over number limit, drop */
         if (ros_atomic32_read(&(bar_cont->pkts_count)) >= bar_conf->pkts_max) {
             LOG_TRACE(FASTPASS, RUNNING, trace_flag,
-                "buffered packets(%d) over number limit(%d), "
-                "port %d, type %d.",
+                "buffered packets(%d) over number limit(%d), port %d, type %d.",
                 ros_atomic32_read(&(bar_cont->pkts_count)), bar_conf->pkts_max,
                 head->port_no, head->port_type);
 
@@ -597,8 +520,7 @@ int fp_pkt_buffer_action_process(fp_packet_info *pkt_info, fp_fast_table *head, 
             if (fp_get_time() - ros_atomic32_read(&(bar_cont->time_start))
                 >= bar_conf->time_max) {
                 LOG_TRACE(FASTPASS, RUNNING, trace_flag,
-                    "buffered packets(%d) over time limit(%d), "
-                    "port %d, type %d.",
+                    "buffered packets(%d) over time limit(%d), port %d, type %d.",
                     ros_atomic32_read(&bar_cont->pkts_count),
                     bar_conf->pkts_max, head->port_no, head->port_type);
 
@@ -629,7 +551,7 @@ int fp_pkt_buffer_action_process(fp_packet_info *pkt_info, fp_fast_table *head, 
     node->buf       = localbuf;
     node->pkt       = localbuf;
     node->free      = (CBLK_FREE)fp_block_free;
-	node->lcore_id  = core_id;
+    node->lcore_id  = core_id;
 
     /* in nic mode, we saved the copied buffer, so the original buffer needs to be released */
     fp_free_pkt(pkt_info->arg);
@@ -642,7 +564,7 @@ int fp_pkt_buffer_action_process(fp_packet_info *pkt_info, fp_fast_table *head, 
 
     /* fill cblk */
     node->len       = pkt_info->len;
-    node->port      = port;
+    node->port      = pkt_info->port_id;
 
     /* enqueue */
     ros_rwlock_write_lock(&shadow->rwlock);
@@ -654,11 +576,11 @@ int fp_pkt_buffer_action_process(fp_packet_info *pkt_info, fp_fast_table *head, 
     return 0;
 }
 
-void fp_pkt_send2phy(void *m, fp_cblk_entry *cblk, uint8_t fwd_if)
+void fp_pkt_send2phy(void *m, fp_cblk_entry *cblk, uint8_t fwd_if, uint16_t port_id)
 {
     /* Send buffer */
 #ifdef CONFIG_FP_DPDK_PORT
-	if (unlikely(cblk)) {
+    if (unlikely(cblk)) {
         switch (fwd_if) {
             case EN_COMM_DST_IF_ACCESS:
                 fp_dpdk_add_cblk_buf(cblk);
@@ -670,30 +592,28 @@ void fp_pkt_send2phy(void *m, fp_cblk_entry *cblk, uint8_t fwd_if)
                 fp_packet_stat_count(COMM_MSG_FP_STAT_UP_FWD);
                 break;
         }
-	}
-	else
+    }
+    else
 #endif
-	{
+    {
+        fp_fwd_snd_to_phy(m, port_id);
         switch (fwd_if) {
             case EN_COMM_DST_IF_ACCESS:
-                fp_fwd_snd_to_n3_phy(m);
                 fp_packet_stat_count(COMM_MSG_FP_STAT_DOWN_FWD);
                 break;
 
             case EN_COMM_DST_IF_CORE:
-                fp_fwd_snd_to_n6_phy(m);
                 fp_packet_stat_count(COMM_MSG_FP_STAT_UP_FWD);
                 break;
 
             default:
-                fp_fwd_snd_to_n3_phy(m);
                 fp_packet_stat_count(COMM_MSG_FP_STAT_UP_FWD);
                 break;
         }
 
-    	if (cblk)
-    		fp_cblk_free(cblk);
-	}
+        if (cblk)
+            fp_cblk_free(cblk);
+    }
 }
 
 char *fp_pkt_outer_header_remove(fp_packet_info *pkt_info, comm_msg_outh_rm_t *outh_rm)
@@ -922,31 +842,31 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
             ip_hdr->tos         = 0;
             content_len        += 20;
             ip_hdr->tot_len     = htons(content_len);
-            ip_hdr->id          = (uint16_t)ros_get_tsc_hz();
-            ip_hdr->frag_off    = 0x0040;
+            ip_hdr->id          = (uint16_t)ros_rdtsc();
+            ip_hdr->frag_off    = 0;
             ip_hdr->ttl         = 0xFF;
             ip_hdr->protocol    = IP_PRO_UDP;
             ip_hdr->dest        = htonl(outh->ipv4);
             ip_hdr->check       = 0;
 
             switch (forw_if) {
-                case EN_COMM_SRC_IF_ACCESS:
+                case EN_COMM_DST_IF_ACCESS:
                     ip_hdr->source = fp_net_n3_local_ip;
                     break;
 
-                case EN_COMM_SRC_IF_CORE:
+                case EN_COMM_DST_IF_CORE:
                     break;
 
-                case EN_COMM_SRC_IF_SGILAN:
+                case EN_COMM_DST_IF_SGILAN:
                     break;
 
-                case EN_COMM_SRC_IF_CP:
+                case EN_COMM_DST_IF_CP:
                     ip_hdr->source  = fp_net_n4_local_ip;
                     ip_hdr->check   = calc_crc_ip(ip_hdr);
-            		udp_hdr->check  = calc_crc_udp(udp_hdr,ip_hdr);
+                    udp_hdr->check  = calc_crc_udp(udp_hdr,ip_hdr);
                     break;
 
-                case EN_COMM_SRC_IF_5GVN:
+                case EN_COMM_DST_IF_5GVN:
                     break;
 
                 default:
@@ -980,6 +900,10 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
                 udp_hdr->check = calc_crc_udp(udp_hdr, ip_hdr);
             }
 
+#ifdef CONFIG_FP_DPDK_PORT
+            m_local->packet_type |= RTE_PTYPE_L3_IPV4; /* For IP fragment */
+#endif
+
             /* change packet start position and length */
             payload   = (char *)ip_hdr - 2;
             *(uint16_t *)payload = FLOW_ETH_PRO_IP;
@@ -992,30 +916,30 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
 
             /* set ip header */
             ip_hdr->vtc_flow.d.version  = 6;
-    		ip_hdr->vtc_flow.d.priority	= 0;
-    		ip_hdr->vtc_flow.d.flow_lbl	= 0;
+            ip_hdr->vtc_flow.d.priority = 0;
+            ip_hdr->vtc_flow.d.flow_lbl = 0;
             ip_hdr->vtc_flow.value      = htonl(ip_hdr->vtc_flow.value);
-    		ip_hdr->payload_len         = htons(content_len);
-    		ip_hdr->nexthdr		        = IP_PRO_UDP;
-    		ip_hdr->hop_limit	        = 64;
+            ip_hdr->payload_len         = htons(content_len);
+            ip_hdr->nexthdr             = IP_PRO_UDP;
+            ip_hdr->hop_limit           = 64;
 
             switch (forw_if) {
-                case EN_COMM_SRC_IF_ACCESS:
+                case EN_COMM_DST_IF_ACCESS:
                     ros_memcpy(ip_hdr->saddr, fp_host_n3_local_ipv6, IPV6_ALEN);
                     break;
 
-                case EN_COMM_SRC_IF_CORE:
+                case EN_COMM_DST_IF_CORE:
                     break;
 
-                case EN_COMM_SRC_IF_SGILAN:
+                case EN_COMM_DST_IF_SGILAN:
                     break;
 
-                case EN_COMM_SRC_IF_CP:
+                case EN_COMM_DST_IF_CP:
                     ros_memcpy(ip_hdr->saddr, fp_host_n4_local_ipv6, IPV6_ALEN);
                     udp_hdr->check = calc_crc_udp6(udp_hdr, ip_hdr);
                     break;
 
-                case EN_COMM_SRC_IF_5GVN:
+                case EN_COMM_DST_IF_5GVN:
                     break;
 
                 default:
@@ -1023,8 +947,8 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
                     break;
             }
 
-    		ros_memcpy(ip_hdr->daddr, outh->ipv6.s6_addr, IPV6_ALEN);
-    		content_len += 40;
+            ros_memcpy(ip_hdr->daddr, outh->ipv6.s6_addr, IPV6_ALEN);
+            content_len += 40;
 
 #ifdef CONFIG_FP_DPDK_PORT
             /* set udp header checksum */
@@ -1041,6 +965,10 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
             {
                 udp_hdr->check  = calc_crc_udp6(udp_hdr, ip_hdr);
             }
+
+#ifdef CONFIG_FP_DPDK_PORT
+            m_local->packet_type |= RTE_PTYPE_L3_IPV6; /* For IP fragment */
+#endif
 
             /* change packet start position and length */
             payload = (char *)ip_hdr - 2;
@@ -1072,19 +1000,19 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
             ip_hdr->tos         = 0;
             content_len        += 20;
             ip_hdr->tot_len     = htons(content_len);
-            ip_hdr->id          = (uint16_t)ros_get_tsc_hz();
-            ip_hdr->frag_off    = 0x0040;
+            ip_hdr->id          = (uint16_t)ros_rdtsc();
+            ip_hdr->frag_off    = 0;
             ip_hdr->ttl         = 0xFF;
             ip_hdr->protocol    = IP_PRO_UDP;
             ip_hdr->dest        = htonl(outh->ipv4);
             ip_hdr->check       = 0;
 
             switch (forw_if) {
-                case EN_COMM_SRC_IF_ACCESS:
+                case EN_COMM_DST_IF_ACCESS:
                     ip_hdr->source = fp_net_n3_local_ip;
                     break;
 
-                case EN_COMM_SRC_IF_CORE:
+                case EN_COMM_DST_IF_CORE:
                     if (0 == inst->choose.d.flag_ueip_type) {
                         ip_hdr->source = htonl(inst->ueip.ipv4);
                     } else {
@@ -1093,16 +1021,16 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
                     }
                     break;
 
-                case EN_COMM_SRC_IF_SGILAN:
+                case EN_COMM_DST_IF_SGILAN:
                     break;
 
-                case EN_COMM_SRC_IF_CP:
+                case EN_COMM_DST_IF_CP:
                     ip_hdr->source  = fp_net_n4_local_ip;
                     ip_hdr->check   = calc_crc_ip(ip_hdr);
-            		udp_hdr->check  = calc_crc_udp(udp_hdr, ip_hdr);
+                    udp_hdr->check  = calc_crc_udp(udp_hdr, ip_hdr);
                     break;
 
-                case EN_COMM_SRC_IF_5GVN:
+                case EN_COMM_DST_IF_5GVN:
                     break;
 
                 default:
@@ -1136,6 +1064,10 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
                 udp_hdr->check  = calc_crc_udp(udp_hdr, ip_hdr);
             }
 
+#ifdef CONFIG_FP_DPDK_PORT
+            m_local->packet_type |= RTE_PTYPE_L3_IPV4; /* For IP fragment */
+#endif
+
             /* change packet start position and length */
             payload   = (char *)ip_hdr - 2;
             *(uint16_t *)payload = FLOW_ETH_PRO_IP;
@@ -1148,19 +1080,19 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
 
             /* set ip header */
             ip_hdr->vtc_flow.d.version  = 6;
-    		ip_hdr->vtc_flow.d.priority	= 0;
-    		ip_hdr->vtc_flow.d.flow_lbl	= 0;
+            ip_hdr->vtc_flow.d.priority = 0;
+            ip_hdr->vtc_flow.d.flow_lbl = 0;
             ip_hdr->vtc_flow.value      = htonl(ip_hdr->vtc_flow.value);
-    		ip_hdr->payload_len         = htons(content_len);
-    		ip_hdr->nexthdr		        = IP_PRO_UDP;
-    		ip_hdr->hop_limit	        = 64;
+            ip_hdr->payload_len         = htons(content_len);
+            ip_hdr->nexthdr             = IP_PRO_UDP;
+            ip_hdr->hop_limit           = 64;
 
             switch (forw_if) {
-                case EN_COMM_SRC_IF_ACCESS:
+                case EN_COMM_DST_IF_ACCESS:
                     ros_memcpy(ip_hdr->saddr, fp_host_n3_local_ipv6, IPV6_ALEN);
                     break;
 
-                case EN_COMM_SRC_IF_CORE:
+                case EN_COMM_DST_IF_CORE:
                     if (1 == inst->choose.d.flag_ueip_type) {
                         ros_memcpy(ip_hdr->saddr, inst->ueip.ipv6, IPV6_ALEN);
                     } else {
@@ -1169,15 +1101,15 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
                     }
                     break;
 
-                case EN_COMM_SRC_IF_SGILAN:
+                case EN_COMM_DST_IF_SGILAN:
                     break;
 
-                case EN_COMM_SRC_IF_CP:
+                case EN_COMM_DST_IF_CP:
                     ros_memcpy(ip_hdr->saddr, fp_host_n4_local_ipv6, IPV6_ALEN);
                     udp_hdr->check = calc_crc_udp6(udp_hdr, ip_hdr);
                     break;
 
-                case EN_COMM_SRC_IF_5GVN:
+                case EN_COMM_DST_IF_5GVN:
                     break;
 
                 default:
@@ -1185,8 +1117,8 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
                     break;
             }
 
-    		ros_memcpy(ip_hdr->daddr, outh->ipv6.s6_addr, IPV6_ALEN);
-    		content_len += 40;
+            ros_memcpy(ip_hdr->daddr, outh->ipv6.s6_addr, IPV6_ALEN);
+            content_len += 40;
 
 #ifdef CONFIG_FP_DPDK_PORT
             /* set udp header checksum */
@@ -1204,6 +1136,10 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
                 udp_hdr->check  = calc_crc_udp6(udp_hdr, ip_hdr);
             }
 
+#ifdef CONFIG_FP_DPDK_PORT
+            m_local->packet_type |= RTE_PTYPE_L3_IPV6; /* For IP fragment */
+#endif
+
             /* change packet start position and length */
             payload = (char *)ip_hdr - 2;
             *(uint16_t *)payload = FLOW_ETH_PRO_IPV6;
@@ -1211,8 +1147,123 @@ char *fp_pkt_outer_header_create(char *pkt, int *pkt_len, void *mbuf, comm_msg_o
         }
     }
     if (outh->type.d.ipv4) {
+        struct pro_ipv4_hdr *ip_hdr = (struct pro_ipv4_hdr *)(payload - sizeof(struct pro_ipv4_hdr));
+
+        /* set ip header */
+        ip_hdr->version     = 4;
+        ip_hdr->ihl         = 5;
+        ip_hdr->tos         = 0;
+        content_len        += sizeof(struct pro_ipv4_hdr);
+        ip_hdr->tot_len     = htons(content_len);
+        ip_hdr->id          = (uint16_t)ros_rdtsc();
+        ip_hdr->frag_off    = 0;
+        ip_hdr->ttl         = 0xFF;
+        ip_hdr->protocol    = 0;
+        ip_hdr->dest        = htonl(outh->ipv4);
+        ip_hdr->check       = 0;
+
+        switch (forw_if) {
+            case EN_COMM_DST_IF_ACCESS:
+                ip_hdr->source = fp_net_n3_local_ip;
+                break;
+
+            case EN_COMM_DST_IF_CORE:
+                if (0 == inst->choose.d.flag_ueip_type) {
+                    ip_hdr->source = htonl(inst->ueip.ipv4);
+                } else {
+                    LOG(FASTPASS, ERR, "Outer header create failed, UEIP type: %s error.",
+                        inst->choose.d.flag_ueip_type ? "IPv6" : "IPv4");
+                }
+                break;
+
+            case EN_COMM_DST_IF_SGILAN:
+                break;
+
+            case EN_COMM_SRC_IF_CP:
+                ip_hdr->source  = fp_net_n4_local_ip;
+                ip_hdr->check   = calc_crc_ip(ip_hdr);
+                break;
+
+            case EN_COMM_DST_IF_5GVN:
+                break;
+
+            default:
+                LOG(FASTPASS, ERR, "Abnormal source interface: %d", forw_if);
+                break;
+        }
+
+#ifdef CONFIG_FP_DPDK_PORT
+        if (likely(dpdk_get_tx_offload() & DEV_TX_OFFLOAD_IPV4_CKSUM)) {
+            m_local->l2_len = ETH_HLEN;
+            m_local->ol_flags |= (PKT_TX_IPV4|PKT_TX_IP_CKSUM);
+        }
+        else
+#endif
+        {
+            ip_hdr->check   = calc_crc_ip(ip_hdr);
+        }
+
+#ifdef CONFIG_FP_DPDK_PORT
+        m_local->packet_type |= RTE_PTYPE_L3_IPV4; /* For IP fragment */
+#endif
+
+        /* change packet start position and length */
+        payload   = (char *)ip_hdr - 2;
+        *(uint16_t *)payload = FLOW_ETH_PRO_IP;
+        *pkt_len = content_len + 2;
     }
     if (outh->type.d.ipv6) {
+        struct pro_ipv6_hdr *ip_hdr = (struct pro_ipv6_hdr *)(payload - sizeof(struct pro_ipv6_hdr));
+
+        /* set ip header */
+        ip_hdr->vtc_flow.d.version  = 6;
+        ip_hdr->vtc_flow.d.priority = 0;
+        ip_hdr->vtc_flow.d.flow_lbl = 0;
+        ip_hdr->vtc_flow.value      = htonl(ip_hdr->vtc_flow.value);
+        ip_hdr->payload_len         = htons(content_len);
+        ip_hdr->nexthdr             = IP_PRO_UDP;
+        ip_hdr->hop_limit           = 64;
+
+        switch (forw_if) {
+            case EN_COMM_DST_IF_ACCESS:
+                ros_memcpy(ip_hdr->saddr, fp_host_n3_local_ipv6, IPV6_ALEN);
+                break;
+
+            case EN_COMM_DST_IF_CORE:
+                if (1 == inst->choose.d.flag_ueip_type) {
+                    ros_memcpy(ip_hdr->saddr, inst->ueip.ipv6, IPV6_ALEN);
+                } else {
+                    LOG(FASTPASS, ERR, "Outer header create failed, UEIP type: %s error.",
+                        inst->choose.d.flag_ueip_type ? "IPv6" : "IPv4");
+                }
+                break;
+
+            case EN_COMM_DST_IF_SGILAN:
+                break;
+
+            case EN_COMM_DST_IF_CP:
+                ros_memcpy(ip_hdr->saddr, fp_host_n4_local_ipv6, IPV6_ALEN);
+                break;
+
+            case EN_COMM_DST_IF_5GVN:
+                break;
+
+            default:
+                LOG(FASTPASS, ERR, "Abnormal source interface: %d", forw_if);
+                break;
+        }
+
+        ros_memcpy(ip_hdr->daddr, outh->ipv6.s6_addr, IPV6_ALEN);
+        content_len += sizeof(struct pro_ipv6_hdr);
+
+#ifdef CONFIG_FP_DPDK_PORT
+        m_local->packet_type |= RTE_PTYPE_L3_IPV6; /* For IP fragment */
+#endif
+
+        /* change packet start position and length */
+        payload = (char *)ip_hdr - 2;
+        *(uint16_t *)payload = FLOW_ETH_PRO_IPV6;
+        *pkt_len = content_len + 2;
     }
     if (outh->type.d.ctag) {
         union vlan_tci *vlan_hdr = (union vlan_tci *)(payload
@@ -1339,8 +1390,8 @@ int32_t fp_pkt_ipv4_reply_dns(fp_packet_info *pkt_info, struct pro_udp_hdr *udp_
                     ros_memcpy(tmp_ip, l1_hdr->daddr, IPV6_ALEN);
                     ros_memcpy(l1_hdr->daddr, l1_hdr->saddr, IPV6_ALEN);
                     ros_memcpy(l1_hdr->saddr, tmp_ip, IPV6_ALEN);
-            		l1_hdr->payload_len = htons(ntohs(l1_hdr->payload_len) + (newlen - oldlen));
-            		l1_hdr->hop_limit	= 64;
+                    l1_hdr->payload_len = htons(ntohs(l1_hdr->payload_len) + (newlen - oldlen));
+                    l1_hdr->hop_limit   = 64;
                 }
                 break;
 
@@ -1386,8 +1437,8 @@ int32_t fp_pkt_ipv4_reply_dns(fp_packet_info *pkt_info, struct pro_udp_hdr *udp_
                     ros_memcpy(tmp_ip, l2_hdr->daddr, IPV6_ALEN);
                     ros_memcpy(l2_hdr->daddr, l2_hdr->saddr, IPV6_ALEN);
                     ros_memcpy(l2_hdr->saddr, tmp_ip, IPV6_ALEN);
-            		l2_hdr->payload_len = htons(ntohs(l2_hdr->payload_len) + (newlen - oldlen));
-            		l2_hdr->hop_limit	= 64;
+                    l2_hdr->payload_len = htons(ntohs(l2_hdr->payload_len) + (newlen - oldlen));
+                    l2_hdr->hop_limit   = 64;
                 }
                 break;
 
@@ -1421,13 +1472,12 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
     void                    *mbuf = pkt_info->arg;
     char                    *pkt = pkt_info->buf;
     int                     len = pkt_info->len;
-    int						count_len = len - pkt_info->match_key.field_offset[FLOW_FIELD_GTP_CONTENT];
+    int                     count_len = len - pkt_info->match_key.field_offset[FLOW_FIELD_GTP_CONTENT];
     comm_msg_fast_cfg       *entry_cfg;
     fp_inst_entry           *inst_entry = NULL;
     comm_msg_inst_config    *inst_config;
     pkt_buf_struct          *m = (pkt_buf_struct *)mbuf;
     fp_far_entry            *far_entry;
-    char                    action_str[64];
 
     /* Get configuration */
     entry_cfg = (comm_msg_fast_cfg *)&(entry->cfg_data);
@@ -1444,8 +1494,7 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
 
     /* If temp status, buffer it */
     if (unlikely(entry_cfg->temp_flag)) {
-        if (likely(0 == fp_pkt_temp_buffer(pkt_info, head,
-            entry, EN_PORT_N3, trace_flag))) {
+        if (likely(0 == fp_pkt_temp_buffer(pkt_info, head, entry, trace_flag))) {
             /* Don't check other action bit */
             /* Exit 1, temp branch. Queue mbuf, no cblk in this case, update 2 stats */
             return;
@@ -1496,9 +1545,8 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
     }
 
     /* get read lock, keep no reading when writing */
-    ros_rwlock_write_lock(&inst_entry->rwlock);
-    fp_get_action_str(far_entry->config.action.value, action_str);
-    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "action: %s", action_str);
+    ros_rwlock_read_lock(&inst_entry->rwlock);
+    fp_print_action_str(&far_entry->config.action, trace_flag);
 
     /* If forw */
     if (likely(far_entry->config.action.d.forw)) {
@@ -1507,7 +1555,7 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
                 /* Ethernet */
                 if (-1 == fp_pkt_n3_eth_forw(pkt_info, entry_cfg,
                     inst_entry, far_entry, count_len, trace_flag)) {
-                    ros_rwlock_write_unlock(&inst_entry->rwlock);
+                    ros_rwlock_read_unlock(&inst_entry->rwlock);
 
                     goto drop;
                 }
@@ -1517,7 +1565,7 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
                 /* Unstructured */
                 if (-1 == fp_pkt_n3_nonip_forw(pkt_info, entry,
                     inst_entry, far_entry, count_len, trace_flag)) {
-                    ros_rwlock_write_unlock(&inst_entry->rwlock);
+                    ros_rwlock_read_unlock(&inst_entry->rwlock);
 
                     goto drop;
                 }
@@ -1526,6 +1574,8 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
             default:
                 /* IP */
 
+                ros_rwlock_read_unlock(&inst_entry->rwlock);
+
                 fp_packet_stat_count(COMM_MSG_FP_STAT_UP_DROP);
                 /* update stat */
                 fp_pkt_stat_drop(inst_entry, count_len);
@@ -1533,7 +1583,7 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
                 /* if fail, free cblk or mbuf */
 #ifdef CONFIG_FP_DPDK_PORT
                 if (cblk) {
-                    cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+                    cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
                     fp_dpdk_add_cblk_buf(cblk);
                 } else {
                     /* free buffer */
@@ -1554,21 +1604,10 @@ void fp_pkt_match_n3_eth_and_nonip(fp_packet_info *pkt_info, fp_fast_table *head
     /* only download flow support BUFF and NOCP, refer to 3gpp 25244-5.2.3.1 */
 
     /* Transmit branch */
-    ros_rwlock_write_unlock(&inst_entry->rwlock);
+    ros_rwlock_read_unlock(&inst_entry->rwlock);
 
     /* Send buffer */
-#ifdef CONFIG_FP_DPDK_PORT
-    if (cblk) {
-        fp_dpdk_add_cblk_buf(cblk);
-    }
-    else
-#endif
-    {
-        fp_fwd_snd_to_n6_phy(m);
-        if (cblk)
-            fp_cblk_free(cblk);
-    }
-    fp_packet_stat_count(COMM_MSG_FP_STAT_UP_FWD);
+    fp_pkt_send2phy(m, cblk, EN_COMM_DST_IF_CORE, pkt_info->port_id);
 
     LOG_TRACE(FASTPASS, RUNNING, trace_flag,
         "forward ipv4 packet(len %d) to interface %d!",
@@ -1586,7 +1625,7 @@ drop:
     /* if fail, free cblk or mbuf */
 #ifdef CONFIG_FP_DPDK_PORT
     if (cblk) {
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
     } else {
         /* free buffer */
@@ -1613,7 +1652,7 @@ err:
     /* if fail, free cblk or mbuf */
 #ifdef CONFIG_FP_DPDK_PORT
     if (cblk) {
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
     } else {
         /* free buffer */
@@ -1702,8 +1741,7 @@ void fp_pkt_inner_eth_nonip_proc(fp_packet_info *pkt_info)
         LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N3 fast table match failed");
 
         /* Alloc new entry */
-        entry = fp_pkt_no_match(pkt_info, G_FALSE,
-            head, hash_key, aux_info, EN_PORT_N3, trace_flag);
+        entry = fp_pkt_no_match(pkt_info, G_FALSE, head, hash_key, aux_info, trace_flag);
         if (unlikely(NULL == entry)) {
             LOG_TRACE(FASTPASS, ERR, trace_flag, "Alloc fast entry failed.");
             fp_free_pkt(pkt_info->arg);

@@ -4,7 +4,6 @@
  ***************************************************************/
 
 #include "service.h"
-#include "lb_ctrl_service.h"
 #include "lb_backend_mgmt.h"
 
 
@@ -87,9 +86,9 @@ static inline int lb_backend_compare(struct rb_node *node, void *key)
     lb_backend_config *be_cfg = (lb_backend_config *)node;
     uint64_t key_vlu = *(uint64_t *)key;
 
-    if (be_cfg->be_key > key_vlu) {
+    if (be_cfg->be_config.key > key_vlu) {
         return -1;
-    } else if (be_cfg->be_key < key_vlu) {
+    } else if (be_cfg->be_config.key < key_vlu) {
         return 1;
     }
 
@@ -122,14 +121,12 @@ void lb_backend_table_update(lb_sync_backend_config *be_data)
 
                     be_cfg = lb_get_backend_config(be_data->be_index);
 
-                    memcpy(be_cfg->be_mac, be_data->be_mac, ETH_ALEN);
+                    memcpy(&be_cfg->be_config, &be_data->be_config, sizeof(comm_msg_backend_config));
                     ros_atomic16_set(&be_cfg->valid, TRUE);
                     ros_atomic32_set(&be_cfg->assign_count, be_data->assign_count);
 
-                    LOG(LB, MUST,
-                        "Backend registered successful, MAC: %02x:%02x:%02x:%02x:%02x:%02x, be_index: %d.",
-                        be_cfg->be_mac[0], be_cfg->be_mac[1], be_cfg->be_mac[2],
-                        be_cfg->be_mac[3], be_cfg->be_mac[4], be_cfg->be_mac[5],
+                    LOG(LB, MUST, "Backend registered successful, key: 0x%lx, be_index: %d.",
+                        be_cfg->be_config.key,
                         be_data->be_index);
                 }
             }
@@ -178,15 +175,32 @@ static inline lb_backend_config *lb_choose_backend(void)
 /**
  * @param hash
  *  Calculated using UEIP
+ * @param dest_mac
+ *  Destination MAC address
  * @return
- *  Destination MAC address of forwarding
+ *  - 0 Success
+ *  - -1 Failed
  */
-uint8_t *lb_match_backend(uint32_t hash)
+int lb_match_backend(uint32_t hash, uint8_t *dest_mac)
 {
-    uint8_t hash_1 = (hash >> 24) ^ (hash & 0xFF0000);
-    uint16_t hash_2 = hash & 0xFFFF;
-    uint8_t be_index;
+    uint8_t hash_1 = (hash >> 24) ^ ((hash >> 16) & 0x000000FF);
+    uint16_t hash_2 = hash & 0x000000FFFF;
+    uint8_t be_index, port_index;
     lb_backend_config *be_cfg;
+
+    /**
+     *  LBU classifies the flow of the same PDR in advance and forwards it to the port of the corresponding FPU
+     *
+     *       ________
+     *      |        |       _________
+     *  ===>|   LBU  |----->|FPU1->|p1|
+     *      |________|      | ---->|p2|
+     *          |           |_________|
+     *          |       _________
+     *          +----->|FPU2->|p1|
+     *                 | ---->|p2|
+     *                 |_________|
+     */
 
     be_index = lb_hash_table[hash_1][hash_2];
     be_cfg = lb_get_backend_config(be_index);
@@ -197,7 +211,7 @@ uint8_t *lb_match_backend(uint32_t hash)
         /* Invalid, modify the backend ID of the hash table */
         be_cfg = lb_choose_backend();
         if (unlikely(NULL == be_cfg)) {
-            return NULL;
+            return -1;
         }
         lb_hash_table[hash_1][hash_2] = (uint8_t)be_cfg->index;
         if (lb_hk_delay_sync_hash) {
@@ -208,7 +222,16 @@ uint8_t *lb_match_backend(uint32_t hash)
         }
     }
 
-    return be_cfg->be_mac;
+    if (unlikely(0 == be_cfg->be_config.dpdk_lcores)) {
+        LOG(LB, ERR, "Serious error, the number of backend dpdk cores cannot be 0");
+        return -1;
+    }
+    port_index = (hash_1 ^ (uint8_t)hash_2) % be_cfg->be_config.dpdk_lcores;
+    ros_memcpy(dest_mac, be_cfg->be_config.mac[port_index], ETH_ALEN);
+    LOG(LB, DEBUG, "Match backend port: %d, destination MAC: %02x:%02x:%02x:%02x:%02x:%02x",
+        port_index, dest_mac[0], dest_mac[1], dest_mac[2], dest_mac[3], dest_mac[4], dest_mac[5]);
+
+    return 0;
 }
 
 void lb_ha_tell_backend_change_active_mac(uint8_t local_active)
@@ -220,7 +243,7 @@ void lb_ha_tell_backend_change_active_mac(uint8_t local_active)
     lb_backend_config *cur_cfg;
     uint32_t buf_len;
     int32_t cur_index, pool_id = lb_get_backend_pool_public();
-    comm_msg_heartbeat_config *be_reg_cfg;
+    comm_msg_heartbeat_config *lb_reset_cfg;
 
     msg = lb_fill_msg_header(buf);
 
@@ -229,22 +252,22 @@ void lb_ha_tell_backend_change_active_mac(uint8_t local_active)
     ie->index = 0;
 
     /* Filling node data config */
-    be_reg_cfg = (comm_msg_heartbeat_config *)ie->data;
+    lb_reset_cfg = (comm_msg_heartbeat_config *)ie->data;
 
     /* Set config */
     switch (local_active) {
         case TRUE:
-            memcpy(be_reg_cfg->mac[EN_PORT_N3], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
-            memcpy(be_reg_cfg->mac[EN_PORT_N6], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
-            memcpy(be_reg_cfg->mac[EN_PORT_N9], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
-            memcpy(be_reg_cfg->mac[EN_PORT_N4], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N3], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N6], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N9], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N4], lb_get_local_port_mac(EN_LB_PORT_INT), ETH_ALEN);
             break;
 
         default:
-            memcpy(be_reg_cfg->mac[EN_PORT_N3], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
-            memcpy(be_reg_cfg->mac[EN_PORT_N6], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
-            memcpy(be_reg_cfg->mac[EN_PORT_N9], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
-            memcpy(be_reg_cfg->mac[EN_PORT_N4], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N3], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N6], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N9], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
+            memcpy(lb_reset_cfg->mac[EN_PORT_N4], lb_get_peer_port_mac(EN_LB_PORT_INT), ETH_ALEN);
             break;
     }
 
@@ -255,8 +278,7 @@ void lb_ha_tell_backend_change_active_mac(uint8_t local_active)
     msg->total_len = htonl(buf_len);
 
     cur_index = COMM_MSG_BACKEND_START_INDEX - 1;
-    cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER);
-    for (; -1 != cur_index; cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER)) {
+    while (-1 != (cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER))) {
         cur_cfg = lb_get_backend_config_public((uint8_t)cur_index);
         if (cur_cfg->fd > 0) {
            /* Send to backend */
@@ -379,7 +401,7 @@ void lb_backend_validity(int fd)
     }
 }
 
-lb_backend_config *lb_backend_register(comm_msg_heartbeat_config *reg_cfg)
+lb_backend_config *lb_backend_register(comm_msg_backend_config *reg_cfg)
 {
     lb_backend_mgmt *be_mgmt = lb_get_backend_mgmt();
     lb_backend_config *be_cfg;
@@ -392,13 +414,12 @@ lb_backend_config *lb_backend_register(comm_msg_heartbeat_config *reg_cfg)
 
     be_cfg = lb_get_backend_config(res_index);
 
-    memcpy(be_cfg->be_mac, reg_cfg->mac[EN_PORT_N3], ETH_ALEN);
+    ros_memcpy(&be_cfg->be_config, reg_cfg, sizeof(comm_msg_backend_config));
     ros_atomic16_set(&be_cfg->valid, TRUE);
     ros_atomic32_init(&be_cfg->assign_count);
-    be_cfg->be_key = reg_cfg->key;
 
     ros_rwlock_write_lock(&be_mgmt->lock); /* lock */
-    if (0 > rbtree_insert(&be_mgmt->be_root, &be_cfg->be_node, &be_cfg->be_key, lb_backend_compare)) {
+    if (0 > rbtree_insert(&be_mgmt->be_root, &be_cfg->be_node, &be_cfg->be_config.key, lb_backend_compare)) {
         LOG(LB, ERR, "Insert backend to RB-tree failed.");
         Res_Free(lb_get_backend_pool(), res_key, res_index);
         ros_rwlock_write_unlock(&be_mgmt->lock); /* unlock */
@@ -407,9 +428,8 @@ lb_backend_config *lb_backend_register(comm_msg_heartbeat_config *reg_cfg)
     }
     ros_rwlock_write_unlock(&be_mgmt->lock); /* unlock */
 
-    LOG(LB, MUST, "Backend registered successful, MAC: %02x:%02x:%02x:%02x:%02x:%02x, be_index: %u.",
-        be_cfg->be_mac[0], be_cfg->be_mac[1], be_cfg->be_mac[2],
-        be_cfg->be_mac[3], be_cfg->be_mac[4], be_cfg->be_mac[5], res_index);
+    LOG(LB, MUST, "Backend registered successful, key: 0x%lx, be_index: %u.",
+        be_cfg->be_config.key, res_index);
 
     if (lb_hk_sync_be_table) {
         lb_hk_sync_be_table(res_index);
@@ -455,10 +475,8 @@ void lb_backend_unregister(uint8_t be_index)
         lb_hk_sync_be_table(be_index);
     }
 
-    LOG(LB, MUST, "Backend unregistered successful, MAC: %02x:%02x:%02x:%02x:%02x:%02x, be_index: %u.",
-        be_cfg->be_mac[0], be_cfg->be_mac[1],
-        be_cfg->be_mac[2], be_cfg->be_mac[3],
-        be_cfg->be_mac[4], be_cfg->be_mac[5], be_index);
+    LOG(LB, MUST, "Backend unregistered successful, key: 0x%lx, be_index: %u.",
+        be_cfg->be_config.key, be_index);
 }
 
 lb_backend_config *lb_backend_search(uint64_t be_key)
@@ -496,10 +514,7 @@ static void *lb_mb_heartbeat_task(void *arg)
                 ros_atomic32_init(&be_mgmt->mb_heartbeat_cnt);
 
                 /* Unregister all backend */
-                cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER);
-                for (; -1 != cur_index; cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1,
-                    COMM_MSG_BACKEND_NUMBER)) {
-
+                while (-1 != (cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER))) {
                     lb_backend_unregister(cur_index);
                 }
             }
@@ -561,10 +576,10 @@ int32_t lb_backend_init(lb_system_config *system_cfg)
         return -1;
     }
 
-	if (pthread_create(&pthr_id, &attr1, lb_mb_heartbeat_task, NULL) != 0)    {
-		LOG(LB, ERR, "Fail to create tcp client pthread, errno:%s", strerror(errno));
-		return -1;
-	}
+    if (pthread_create(&pthr_id, &attr1, lb_mb_heartbeat_task, NULL) != 0)    {
+        LOG(LB, ERR, "Fail to create tcp client pthread, errno:%s", strerror(errno));
+        return -1;
+    }
 
     /* Init backend management service */
     if (0 == system_cfg->ha_remote_ip_num) {

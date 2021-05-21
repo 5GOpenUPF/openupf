@@ -23,7 +23,7 @@ struct qer_private {
 struct qer_table {
     struct rb_node          qer_node;
     comm_msg_qer_config     qer;
-	struct qer_private		qer_priv;
+    struct qer_private		qer_priv;
     ros_rwlock_t            lock;
     uint32_t                index;
 };
@@ -43,14 +43,12 @@ struct fsm_audit *qer_get_audit_simple(void);
 struct fsm_audit *qer_get_audit_4am(void);
 
 struct qer_table *qer_table_create(struct session_t *sess, uint32_t id);
-struct qer_table *qer_table_create_local(uint32_t id);
-int qer_table_delete_local(uint32_t *index_arr, uint8_t index_num);
 struct qer_table *qer_table_search(struct session_t *sess, uint32_t id);
 int qer_id_compare_externel(struct rb_node *node, void *key);
 int qer_fp_add_or_mod(uint32_t *index_arr, uint32_t index_num, uint8_t is_add, int fd);
 int qer_insert(struct session_t *sess, void *parse_qer_arr,
     uint32_t qer_num, uint32_t *fail_id);
-int qer_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr);
+int qer_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr, uint32_t *fail_id);
 int qer_modify(struct session_t *sess, void *parse_qer_arr,
     uint32_t qer_num, uint32_t *fail_id);
 int qer_clear(struct session_t *sess,

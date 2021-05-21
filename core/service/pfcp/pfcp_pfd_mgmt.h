@@ -30,7 +30,7 @@ int pfcp_local_pfd_request_proc(session_pfd_mgmt_request *pfd_mgmt_req);
 void pfcp_parse_pfd_mgmt_request(uint8_t* buffer, uint16_t buf_pos1, int buf_max,
     uint32_t pkt_seq, struct sockaddr *sa);
 void pfcp_build_pfd_management_response(session_pfd_management_response *pfd_rep, uint8_t *resp_buffer,
-    uint16_t *resp_pos, uint32_t pkt_seq);
+    uint16_t *resp_pos, uint32_t pkt_seq, uint8_t node_type);
 
 #ifdef __cplusplus
 }

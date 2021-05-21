@@ -37,8 +37,8 @@ struct session_inst_cb {
 
 struct session_inst_entry {
     comm_msg_inst_config        inst_config;
-    comm_msg_urr_stat_t         stat;           /* stat of this instance */
-    struct session_inst_control control;        /* local control block */
+    comm_msg_urr_stat_t         stat;           /* Last statistics */
+    struct session_inst_control control;        /* Local control block */
     ros_rwlock_t                rwlock;
     uint32_t                    index;
     uint8_t                     valid;

@@ -25,16 +25,29 @@ SET(UPF_HEADER_FILES ${UPF_HEADER_FILES} PARENT_SCOPE)
 add_library(${PROJECT_NAME} STATIC ${CMAKE_CURRENT_SOURCE_DIR}/service.c ${UPF_SOURCE_FILES})
 
 if(${PROGRAM_NAME} MATCHES "smu")
-    target_include_directories(${PROJECT_NAME} 
+    target_compile_options(${PROJECT_NAME} 
+        PRIVATE
+            ${PKG_ULFIUS_CFLAGS}
+            ${PKG_ORCANIA_CFLAGS}
+    )
+    
+    target_link_directories(${PROJECT_NAME} 
         PRIVATE 
-            ${UPF_INSTALL_PATH}/include
+            ${UPF_INSTALL_PATH}/lib
+    )
+    
+    target_link_libraries(${PROJECT_NAME}
+        PRIVATE 
+            #${PKG_ULFIUS_LDFLAGS}
+            #${PKG_ULFIUS_LIBRARIES}
+            ulfius
+            ${PKG_ORCANIA_LDFLAGS}
+            ${PKG_ORCANIA_LIBRARIES}
     )
     
 elseif(${PROGRAM_NAME} MATCHES "fpu" OR ${PROGRAM_NAME} MATCHES "lbu")
     target_compile_definitions(${PROJECT_NAME} 
         PRIVATE 
-            CONFIG_FP_DPDK_PORT
-            ENABLE_DPDK_LIB
             RTE_MACHINE_CPUFLAG_SSE
             RTE_MACHINE_CPUFLAG_SSE2
             RTE_MACHINE_CPUFLAG_SSE3
@@ -47,27 +60,13 @@ elseif(${PROGRAM_NAME} MATCHES "fpu" OR ${PROGRAM_NAME} MATCHES "lbu")
     )
     
     target_compile_options(${PROJECT_NAME} 
-        PRIVATE 
-            -m64 -pthread -march=native 
+        PRIVATE
             ${PKG_DPDK_CFLAGS}
     )
-    
-    if(${DPDK_COMPILE_MODE} MATCHES "make")
-        add_dependencies(${PROJECT_NAME} LIBDPDK-build)
-        
-        target_include_directories(${PROJECT_NAME} 
-            PRIVATE
-                ${LIBDPDK_INCLUDE_DIR}
-        )
-    elseif(${DPDK_COMPILE_MODE} MATCHES "ninja")
-        target_include_directories(${PROJECT_NAME} 
-            PRIVATE
-                ${PKG_DPDK_INCLUDE_DIRS}
-        )
-    else()
-        target_include_directories(${PROJECT_NAME} 
-            PRIVATE
-                ${LIBDPDK_INCLUDE_DIR}
-        )
-    endif()
+    target_link_libraries(${PROJECT_NAME}
+        PRIVATE 
+            ${PKG_DPDK_LDFLAGS}
+            #${PKG_DPDK_STATIC_LIBRARIES}
+            ${PKG_DPDK_LIBRARIES}
+    )
 endif()

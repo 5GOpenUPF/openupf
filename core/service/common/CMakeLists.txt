@@ -1,5 +1,4 @@
 
-add_subdirectory(lz4)
 if(${PROGRAM_NAME} MATCHES "fpu" OR ${PROGRAM_NAME} MATCHES "lbu")
     add_subdirectory(dpdk)
 endif()

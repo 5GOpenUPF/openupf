@@ -41,9 +41,10 @@ extern "C" {
 #define FORWARDING_POLICY_LEN           256
 #define HEADER_FIELD_NAME_LEN           64
 #define REDIRECT_SERVER_ADDR_LEN        128
-#define ACTIVATE_PREDEF_LEN             64
+#define ACTIVATE_PREDEF_LEN             16
 #define DATA_NET_ACCESS_ID_LEN          32
 #define PORT_MGMT_INFO_CONT_LEN         32
+#define BRIDGE_MGMT_INFO_CONT_LEN       32
 
 #define SESSION_MAX_BCD_BYTES               8
 #define SESSION_MAX_NAI_LEN                 256
@@ -72,6 +73,14 @@ extern "C" {
 #define JOIN_IP_MUL_INFO_NUM                (4)
 #define MAC_ADDRESS_DETECTED_NUM            (4)
 #define MAC_ADDRESS_REMOVED_NUM             (4)
+#define MAX_S_NSSAI_NUM                     (4)
+#define TSC_MGMT_INFO_NUM                   (2)
+#define PKT_RATE_STATUS_REPORT_NUM          (2)
+#define EXEMPTED_APPLICATION_ID_NUM         (4)
+#define EXEMPTED_SDF_FILTER_NUM             (2)
+#define OFFENDING_IE_INFO_NUM               (4)
+#define PARTIAL_FAILURE_INFO_NUM            (4)
+#define UPDATED_PDR_NUM                     (2)
 
 #define MAR_WEIGHT_SUM                      (100)
 
@@ -86,6 +95,7 @@ extern "C" {
 typedef enum {
     SESS_REQUEST_ACCEPTED                           = 1,
     SESS_MORE_USAGE_REPORT_TO_SEND                  = 2,
+    SESS_REQUEST_PARTIALLY_ACCEPTED                 = 3,
     SESS_REQUEST_REJECTED                           = 64,
     SESS_SESSION_CONTEXT_NOT_FOUND                  = 65,
     SESS_MANDATORY_IE_MISSING                       = 66,
@@ -101,6 +111,9 @@ typedef enum {
     SESS_SERVICE_NOT_SUPPORTED                      = 76,
     SESS_SYSTEM_FAILURE                             = 77,
     SESS_REDIRECTION_REQUESTED                      = 78,
+    SESS_ALL_DYNAMIC_ADDRESSES_ARE_OCCUPIED         = 79,
+    SESS_UNKNOWN_PRE_DEFINED_RULE                   = 80,
+    SESS_UNKNOWN_APPLICATION_ID                     = 81,
 
     /* Userdef */
     SESS_CREATE_SYNC_DATA_BLOCK_FAILURE             = 204,
@@ -270,7 +283,7 @@ typedef union tag_session_ueip_address_flag {
 
 typedef struct tag_session_ue_ip {
     session_ueip_address_flag   ueip_flag;
-    uint8_t                     ipv6_prefix;
+    uint8_t                     ipv6_prefix; /* IPv6 Prefix Delegation Bits */
     uint8_t                     ipv6_prefix_len;
     uint8_t                     spare;
     uint32_t                    ipv4_addr;
@@ -647,7 +660,9 @@ typedef union tag_session_pkt_rd_carry_on_info {
 typedef union tag_session_pdr_member_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint32_t        spare                       : 23;
+        uint32_t        spare                       : 21;
+        uint32_t        transport_delay_rep_present : 1;
+        uint32_t        mptcp_app_indication_present: 1;
         uint32_t        pkt_rd_carry_on_info_present: 1;
         uint32_t        mar_id_present              : 1;
         uint32_t        deact_time_present          : 1;
@@ -667,7 +682,9 @@ typedef union tag_session_pdr_member_flags {
         uint32_t        deact_time_present          : 1;
         uint32_t        mar_id_present              : 1;
         uint32_t        pkt_rd_carry_on_info_present: 1;
-        uint32_t        spare                       : 23;
+        uint32_t        mptcp_app_indication_present: 1;
+        uint32_t        transport_delay_rep_present : 1;
+        uint32_t        spare                       : 21;
 #endif
     } d;
     uint32_t value;
@@ -678,9 +695,6 @@ typedef union tag_session_pdr_member_flags {
 typedef union {
     struct tag_session_far_action {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint16_t         spar: 7;        /* not define */
-        uint16_t         edrt: 1;        /* Eliminate Duplicate Packets for Redundant Transmission */
-
         uint16_t         dfrt: 1;        /* Duplicate for Redundant Transmission */
         uint16_t         ipmd: 1;        /* IP Multicast Deny */
         uint16_t         ipma: 1;        /* IP Multicast Accept */
@@ -689,7 +703,17 @@ typedef union {
         uint16_t         buff: 1;        /* buffering */
         uint16_t         forw: 1;        /* forward */
         uint16_t         drop: 1;        /* drop */
+
+        uint16_t         spare: 5;       /* not define */
+        uint16_t         ddpn: 1;        /* Discarded Downlink Packet Notification */
+        uint16_t         bdpn: 1;        /* Buffered Downlink Packet Notification */
+        uint16_t         edrt: 1;        /* Eliminate Duplicate Packets for Redundant Transmission */
 #else
+        uint16_t         edrt: 1;        /* Eliminate Duplicate Packets for Redundant Transmission */
+        uint16_t         bdpn: 1;        /* Buffered Downlink Packet Notification */
+        uint16_t         ddpn: 1;        /* Discarded Downlink Packet Notification */
+        uint16_t         spare: 5;       /* not define */
+
         uint16_t         drop: 1;        /* drop */
         uint16_t         forw: 1;        /* forward */
         uint16_t         buff: 1;        /* buffering */
@@ -698,9 +722,6 @@ typedef union {
         uint16_t         ipma: 1;        /* IP Multicast Accept */
         uint16_t         ipmd: 1;        /* IP Multicast Deny */
         uint16_t         dfrt: 1;        /* Duplicate for Redundant Transmission */
-
-        uint16_t         edrt: 1;        /* Eliminate Duplicate Packets for Redundant Transmission */
-        uint16_t         spare: 7;        /* not define */
 #endif
     }d;
     uint16_t             value;          /* value in integer */
@@ -712,7 +733,7 @@ typedef union tag_session_redirect_server_address {
     uint32_t    ipv4_addr;
     uint8_t     ipv6_addr[IPV6_ALEN];
     char        url[REDIRECT_SERVER_ADDR_LEN];
-    char        sip_url[REDIRECT_SERVER_ADDR_LEN];
+    char        sip_uri[REDIRECT_SERVER_ADDR_LEN];
     struct {
         uint32_t    ipv4;
         uint8_t     ipv6[IPV6_ALEN];
@@ -721,7 +742,7 @@ typedef union tag_session_redirect_server_address {
 #pragma pack()
 
 typedef struct tag_session_redirect_info {
-    /* 0:ipv4 1:ipv6 2:URL 3:SIP URL 4:v4 and v6 */
+    /* 0:ipv4 1:ipv6 2:URL 3:SIP URI 4:v4 and v6 */
     uint8_t                     addr_type;
     uint8_t                     spare[7];
     session_redirect_server     address;
@@ -788,10 +809,10 @@ typedef struct tag_session_header_enrichment {
     char                value[SESSION_MAX_HEADER_FIELD_LEN];
 } session_header_enrichment;
 
-typedef struct tag_session_redundant_trans_param_in_pdi {
+typedef struct tag_session_redundant_transmission_detection_param {
     session_f_teid              fteid;
     char                        network_instance[NETWORK_INSTANCE_LEN];
-} session_redundant_trans_param_in_pdi;
+} session_redundant_transmission_detection_param;
 
 typedef struct tag_session_redundant_trans_param_in_far {
     session_outer_header_create ohc;
@@ -1006,46 +1027,83 @@ typedef union {
 typedef union {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint16_t        liusa:1;        /* linked usage reporting */
-        uint16_t        droth:1;        /* dropped dl traffic threshold */
-        uint16_t        stopt:1;        /* stop of traffic */
-        uint16_t        start:1;        /* start of traffic */
-        uint16_t        quhti:1;        /* quota holding time */
-        uint16_t        timth:1;        /* time threshold */
-        uint16_t        volth:1;        /* volume threshold */
-        uint16_t        perio:1;        /* periodic reporting */
+        uint32_t        spare_8:8;      /* spare */
 
-        uint16_t        spare:1;        /* spare */
-        uint16_t        ipmjl:1;        /* IP Multicast Join/Leave */
-        uint16_t        evequ:1;        /* event quota */
-        uint16_t        eveth:1;        /* event threshold */
-        uint16_t        macar:1;        /* mac address reporting */
-        uint16_t        envcl:1;        /* envelope closure */
-        uint16_t        timqu:1;        /* time quota */
-        uint16_t        volqu:1;        /* volume quota */
+        uint32_t        liusa:1;        /* linked usage reporting */
+        uint32_t        droth:1;        /* dropped dl traffic threshold */
+        uint32_t        stopt:1;        /* stop of traffic */
+        uint32_t        start:1;        /* start of traffic */
+        uint32_t        quhti:1;        /* quota holding time */
+        uint32_t        timth:1;        /* time threshold */
+        uint32_t        volth:1;        /* volume threshold */
+        uint32_t        perio:1;        /* periodic reporting */
+
+        uint32_t        quvti:1;        /* Quota Validity Time */
+        uint32_t        ipmjl:1;        /* IP Multicast Join/Leave */
+        uint32_t        evequ:1;        /* event quota */
+        uint32_t        eveth:1;        /* event threshold */
+        uint32_t        macar:1;        /* mac address reporting */
+        uint32_t        envcl:1;        /* envelope closure */
+        uint32_t        timqu:1;        /* time quota */
+        uint32_t        volqu:1;        /* volume quota */
+
+        uint32_t        spare_7:7;      /* spare */
+        uint32_t        reemr:1;        /* REport the End Marker Reception */
 #else
-        uint16_t        volqu:1;        /* volume quota */
-        uint16_t        timqu:1;        /* time quota */
-        uint16_t        envcl:1;        /* envelope closure */
-        uint16_t        macar:1;        /* mac address reporting */
-        uint16_t        eveth:1;        /* event threshold */
-        uint16_t        evequ:1;        /* event quota */
-        uint16_t        ipmjl:1;        /* IP Multicast Join/Leave */
-        uint16_t        spare:1;        /* spare */
+        uint32_t        reemr:1;        /* REport the End Marker Reception */
+        uint32_t        spare_7:7;      /* spare */
 
-        uint16_t        perio:1;        /* periodic reporting */
-        uint16_t        volth:1;        /* volume threshold */
-        uint16_t        timth:1;        /* time threshold */
-        uint16_t        quhti:1;        /* quota holding time */
-        uint16_t        start:1;        /* start of traffic */
-        uint16_t        stopt:1;        /* stop of traffic */
-        uint16_t        droth:1;        /* dropped dl traffic threshold */
-        uint16_t        liusa:1;        /* linked usage reporting */
+        uint32_t        volqu:1;        /* volume quota */
+        uint32_t        timqu:1;        /* time quota */
+        uint32_t        envcl:1;        /* envelope closure */
+        uint32_t        macar:1;        /* mac address reporting */
+        uint32_t        eveth:1;        /* event threshold */
+        uint32_t        evequ:1;        /* event quota */
+        uint32_t        ipmjl:1;        /* IP Multicast Join/Leave */
+        uint32_t        quvti:1;        /* Quota Validity Time */
+
+        uint32_t        perio:1;        /* periodic reporting */
+        uint32_t        volth:1;        /* volume threshold */
+        uint32_t        timth:1;        /* time threshold */
+        uint32_t        quhti:1;        /* quota holding time */
+        uint32_t        start:1;        /* start of traffic */
+        uint32_t        stopt:1;        /* stop of traffic */
+        uint32_t        droth:1;        /* dropped dl traffic threshold */
+        uint32_t        liusa:1;        /* linked usage reporting */
+
+        uint32_t        spare_8:8;      /* spare */
 #endif
     }d;
-    uint16_t value;
+    uint32_t value;
 }session_urr_reporting_trigger;
 #pragma pack()
+
+#pragma pack(1)
+typedef union {
+    struct {
+#if BYTE_ORDER == BIG_ENDIAN
+        uint8_t         spare:5;        /* spare */
+        uint8_t         dlvol:1;        /* downlink volume */
+        uint8_t         ulvol:1;        /* uplink volume */
+        uint8_t         tovol:1;        /* total volume */
+#else
+        uint8_t         tovol:1;        /* total volume */
+        uint8_t         ulvol:1;        /* uplink volume */
+        uint8_t         dlvol:1;        /* downlink volume */
+        uint8_t         spare:5;        /* spare */
+#endif
+    } d;
+    uint8_t value;
+} session_urr_vol_flag;
+#pragma pack()
+
+typedef struct tag_session_urr_volume {
+    session_urr_vol_flag            flag;
+    uint8_t                         spare[7];
+    uint64_t                        total;      /* in byte */
+    uint64_t                        uplink;
+    uint64_t                        downlink;
+} session_urr_volume;
 
 #pragma pack(1)
 typedef union {
@@ -1069,11 +1127,11 @@ typedef union {
 #endif
     } d;
     uint8_t value;
-} session_urr_vol_flag;
+} session_volume_measurement_flag;
 #pragma pack()
 
-typedef struct tag_session_urr_volume {
-    session_urr_vol_flag            flag;
+typedef struct tag_session_volume_measurement {
+    session_volume_measurement_flag flag;
     uint8_t                         spare[7];
     uint64_t                        total;      /* in byte */
     uint64_t                        uplink;
@@ -1081,7 +1139,7 @@ typedef struct tag_session_urr_volume {
     uint64_t                        to_pkts;
     uint64_t                        ul_pkts;
     uint64_t                        dl_pkts;
-} session_urr_volume;
+} session_volume_measurement;
 
 #pragma pack(1)
 typedef union {
@@ -1112,7 +1170,9 @@ typedef struct tag_session_urr_drop_thres {
 typedef union {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint8_t         spare:3;        /* spare */
+        uint8_t         spare:1;        /* spare */
+        uint8_t         aspoc:1;        /* Applicable for Start of Pause of Charging */
+        uint8_t         sspoc:1;        /* Send Start Pause of Charging */
         uint8_t         mnop:1;         /* Measurement of Number of Packets */
         uint8_t         istm:1;         /* Immediate start time metering */
         uint8_t         radi:1;         /* reduced app detection info */
@@ -1124,7 +1184,9 @@ typedef union {
         uint8_t         radi:1;         /* reduced app detection info */
         uint8_t         istm:1;         /* Immediate start time metering */
         uint8_t         mnop:1;         /* Measurement of Number of Packets */
-        uint8_t         spare:3;        /* spare */
+        uint8_t         sspoc:1;        /* Send Start Pause of Charging */
+        uint8_t         aspoc:1;        /* Applicable for Start of Pause of Charging */
+        uint8_t         spare:1;        /* spare */
 #endif
     }d;
     uint8_t value;
@@ -1245,6 +1307,9 @@ typedef struct tag_session_usage_report_rule {
     uint8_t                         add_mon_time_number;
     session_urr_reporting_trigger   trigger;
     uint16_t                        number_of_reports;/* > 0 */
+    uint8_t                         exempted_app_id_num;
+    uint8_t                         exempted_sdf_filter_num;
+    uint8_t                         spare[4];
 
     session_urr_volume              vol_thres;
     session_urr_volume              vol_quota;
@@ -1271,6 +1336,8 @@ typedef struct tag_session_usage_report_rule {
 
     uint32_t                        linked_urr[MAX_URR_NUM];
     session_urr_add_mon_time        add_mon_time[MAX_ADDED_MONITOR_TIME_NUM];
+    char                            exempted_app_id[EXEMPTED_APPLICATION_ID_NUM][MAX_APP_ID_LEN];
+    session_sdf_filter              exempted_sdf_filter[EXEMPTED_SDF_FILTER_NUM];
 } session_usage_report_rule;
 
 #pragma pack(1)
@@ -1375,7 +1442,8 @@ typedef struct tag_session_dl_fl_marking {
 typedef union tag_session_qer_member_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint16_t        spare                       : 6;
+        uint16_t        spare                       : 5;
+        uint16_t        qer_ctrl_indic_present      : 1;
         uint16_t        averaging_window_present    : 1;
         uint16_t        ppi_present                 : 1;
         uint16_t        ref_qos_present             : 1;
@@ -1397,7 +1465,8 @@ typedef union tag_session_qer_member_flags {
         uint16_t        ref_qos_present             : 1;
         uint16_t        ppi_present                 : 1;
         uint16_t        averaging_window_present    : 1;
-        uint16_t        spare                       : 6;
+        uint16_t        qer_ctrl_indic_present      : 1;
+        uint16_t        spare                       : 5;
 #endif
     } d;
     uint16_t value;
@@ -1437,15 +1506,11 @@ typedef struct tag_session_packet_rate_status {
 typedef union tag_session_qer_control_indications {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint8_t     spare   : 5;
-        uint8_t     NORD    : 1;
-        uint8_t     MOED    : 1;
+        uint8_t     spare   : 7;
         uint8_t     RCSR    : 1;
 #else
         uint8_t     RCSR    : 1;
-        uint8_t     MOED    : 1;
-        uint8_t     NORD    : 1;
-        uint8_t     spare   : 5;
+        uint8_t     spare   : 7;
 #endif
     } d;
     uint8_t value;
@@ -1500,7 +1565,8 @@ typedef struct  tag_session_buffer_action_rule {
 typedef union tag_session_tc_endpoint_member_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint32_t        spare                           : 26;
+        uint32_t        spare                           : 25;
+        uint32_t        source_if_type_present          : 1;
         uint32_t        framed_routing_present          : 1;
         uint32_t        eth_pdu_ses_info_present        : 1;
         uint32_t        redundant_transmission_present  : 1;
@@ -1514,7 +1580,8 @@ typedef union tag_session_tc_endpoint_member_flags {
         uint32_t        redundant_transmission_present  : 1;
         uint32_t        eth_pdu_ses_info_present        : 1;
         uint32_t        framed_routing_present          : 1;
-        uint32_t        spare                           : 26;
+        uint32_t        source_if_type_present          : 1;
+        uint32_t        spare                           : 25;
 #endif
     } d;
     uint32_t value;
@@ -1530,16 +1597,18 @@ typedef struct tag_session_tc_endpoint {
 
     session_f_teid                          local_fteid;
     char                                    network_instance[NETWORK_INSTANCE_LEN];
-    session_redundant_trans_param_in_pdi    redundant_transmission_param;
+    session_redundant_transmission_detection_param      redundant_transmission_param;
     session_ue_ip                           ue_ipaddr[MAX_UE_IP_NUM];
     session_framed_route                    framed_route[MAX_FRAMED_ROUTE_NUM];
     session_framed_route_ipv6               framed_ipv6_route[MAX_FRAMED_ROUTE_NUM];
 
     uint8_t                                 qfi_array[MAX_QFI_NUM];
+    /* 0:None  1:Send routing packets  2:Listen for routing packets  3:Send and Listen */
     uint32_t                                framed_routing;
     session_eth_pdu_sess_info               eth_pdu_ses_info;
     uint8_t                                 qfi_number;
-    uint8_t                                 spare[2];
+    session_3gpp_interface_type             source_if_type;
+    uint8_t                                 spare;
 } session_tc_endpoint;
 
 #pragma pack(1)
@@ -1793,7 +1862,8 @@ typedef struct tag_session_access_avail_control_info {
 typedef union tag_session_requested_qos_monitor {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint8_t     spare   : 5;
+        uint8_t     spare   : 4;
+        uint8_t     GTPUPM  : 1;
         uint8_t     RP      : 1;
         uint8_t     UL      : 1;
         uint8_t     DL      : 1;
@@ -1801,7 +1871,8 @@ typedef union tag_session_requested_qos_monitor {
         uint8_t     DL      : 1;
         uint8_t     UL      : 1;
         uint8_t     RP      : 1;
-        uint8_t     spare   : 5;
+        uint8_t     GTPUPM  : 1;
+        uint8_t     spare   : 4;
 #endif
     } d;
     uint8_t value;
@@ -1922,11 +1993,13 @@ typedef union tag_session_atsss_ll_control_info {
 typedef union tag_session_pmf_control_info {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint8_t     spare     : 7;
+        uint8_t     spare     : 6;
+        uint8_t     DRTTI     : 1;
         uint8_t     PMFI      : 1;
 #else
         uint8_t     PMFI      : 1;
-        uint8_t     spare     : 7;
+        uint8_t     DRTTI     : 1;
+        uint8_t     spare     : 6;
 #endif
     } d;
     uint8_t value;
@@ -1961,10 +2034,17 @@ typedef struct tag_session_mac_address_removed {
     uint8_t             mac_addr[MAX_MAC_ADDRESS_NUM][ETH_ALEN];
 } session_mac_address_removed;
 
-/* Port Management Information for TSC IE within PFCP Session Modification Request/Response */
-typedef struct tag_session_port_management_info {
+/* TSC Management Information */
+typedef struct tag_session_tsc_management_info {
     char                            port_mgmt_info_container[PORT_MGMT_INFO_CONT_LEN];
-} session_port_management_info;
+    char                            bridge_mgmt_info_container[BRIDGE_MGMT_INFO_CONT_LEN];
+    /* When PMIC IE is present, this IE shall contain the related NW-TT Port Number. */
+    uint32_t                        nw_tt_port_number;
+    uint8_t                         pmic_present;
+    uint8_t                         bmic_present;
+    uint8_t                         ntpn_present;
+    uint8_t                         spare;
+} session_tsc_management_info;
 
 typedef struct tag_session_ethernet_context_information {
     uint8_t                             mac_addr_detected_num;
@@ -2033,8 +2113,7 @@ typedef union tag_session_creare_rep_member_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
         uint32_t        spare                           : 22;
-        uint32_t        pkt_rate_status_report_present  : 1;
-        uint32_t        port_mgmt_info_present          : 1;
+        uint32_t        rds_config_info_present         : 1;
         uint32_t        atsss_ctrl_para_present         : 1;
         uint32_t        created_bg_info_present         : 1;
         uint32_t        added_usage_report_present      : 1;
@@ -2053,8 +2132,7 @@ typedef union tag_session_creare_rep_member_flags {
         uint32_t        added_usage_report_present      : 1;
         uint32_t        created_bg_info_present         : 1;
         uint32_t        atsss_ctrl_para_present         : 1;
-        uint32_t        port_mgmt_info_present          : 1;
-        uint32_t        pkt_rate_status_report_present  : 1;
+        uint32_t        rds_config_info_present         : 1;
         uint32_t        spare                           : 22;
 #endif
     } d;
@@ -2078,7 +2156,7 @@ typedef union tag_session_added_usage_report_info {
 #pragma pack()
 
 typedef struct tag_session_failed_rule_id {
-    uint8_t         rule_type;/* PDR:0 FAR:1 QER:2 URR:3 BAR:4 MAR:5 */
+    uint8_t         rule_type;/* See SESSION_FAILED_RULE_TYPE */
     uint8_t         spare[3];
     uint32_t        rule_id;
 } session_failed_rule_id;
@@ -2118,7 +2196,9 @@ typedef union tag_session_usage_report_trigger {
         uint32_t        timqu:1;        /* time quota */
         uint32_t        volqu:1;        /* volume quota */
 
-        uint32_t        spare_b1:5;     /* spare */
+        uint32_t        spare_b1:3;     /* spare */
+        uint32_t        emrre:1;        /* End Marker Reception REport */
+        uint32_t        quvti:1;        /* Quota Validity Time */
         uint32_t        ipmjl:1;        /* IP Multicast Join/Leave */
         uint32_t        tebur:1;        /* Termination By UP function Report */
         uint32_t        evequ:1;        /* event quota */
@@ -2126,7 +2206,9 @@ typedef union tag_session_usage_report_trigger {
         uint32_t        evequ:1;        /* event quota */
         uint32_t        tebur:1;        /* Termination By UP function Report */
         uint32_t        ipmjl:1;        /* IP Multicast Join/Leave */
-        uint32_t        spare_b1:5;     /* spare */
+        uint32_t        quvti:1;        /* Quota Validity Time */
+        uint32_t        emrre:1;        /* End Marker Reception REport */
+        uint32_t        spare_b1:3;     /* spare */
 
         uint32_t        volqu:1;        /* volume quota */
         uint32_t        timqu:1;        /* time quota */
@@ -2215,35 +2297,73 @@ typedef union tag_session_md_usage_report_member_flags {
 #pragma pack()
 
 #pragma pack(1)
-typedef union tag_session_tsn_brige_id_flags {
+typedef union tag_session_tsn_bridge_id_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
         uint8_t         spare:7;
-        uint8_t         MAC:1;
+        uint8_t         bid:1;
 #else
-        uint8_t         MAC:1;
+        uint8_t         bid:1;
         uint8_t         spare:7;
 #endif
     }d;
     uint8_t value;
-} session_tsn_brige_id_flags;
+} session_tsn_bridge_id_flags;
+#pragma pack()
+
+#pragma pack(1)
+typedef union tag_session_bridge_id_value {
+    struct {
+#if BYTE_ORDER == BIG_ENDIAN
+        uint16_t        priority;
+        uint8_t         mac[ETH_ALEN];
+#else
+        uint8_t         mac[ETH_ALEN];
+        uint16_t        priority;
+#endif
+    }d;
+    uint64_t value;
+} session_bridge_id_value;
 #pragma pack()
 
 typedef struct tag_session_tsn_brige_id {
-   session_tsn_brige_id_flags   flag;
-   uint8_t                      spare;
-   uint8_t                      mac_addr[ETH_ALEN];
+   session_tsn_bridge_id_flags  flag;
+   uint8_t                      spare[7];
+   session_bridge_id_value      bridge_id;
 } session_tsn_brige_id;
 
 typedef struct tag_session_create_bg_info_within_resp {
    uint32_t                     ds_tt_port_number;
-   uint32_t                     nw_tt_port_number;
-   session_tsn_brige_id         tsn_brige_id;
    uint8_t                      ds_tt_port_number_present;
-   uint8_t                      nw_tt_port_number_present;
    uint8_t                      tsn_brige_id_present;
-   uint8_t                      spare[5];
+   uint8_t                      spare[2];
+   session_tsn_brige_id         tsn_brige_id;
 } session_created_bg_info_within_resp;
+
+typedef struct tag_session_query_packet_rate_status {
+   uint32_t                     qer_id;
+} session_query_packet_rate_status;
+
+#pragma pack(1)
+typedef union tag_session_rds_config_info {
+    struct {
+#if BYTE_ORDER == BIG_ENDIAN
+        uint8_t         spare   :7;
+        uint8_t         rds     :1;
+#else
+        uint8_t         rds     :1;
+        uint8_t         spare   :7;
+#endif
+    }d;
+    uint8_t             value;
+} session_rds_config_info;
+#pragma pack()
+
+#pragma pack(1)
+typedef struct tag_session_provide_rds_config_info {
+    session_rds_config_info     rds_config_info;
+} session_provide_rds_config_info;
+#pragma pack()
 
 #pragma pack(1)
 typedef union tag_session_mptcp_address_info_flags {
@@ -2375,8 +2495,12 @@ typedef struct tag_session_atsss_control_param {
 typedef struct tag_session_updated_pdr {
     uint16_t                    pdr_id;
     uint8_t                     rt_local_fteid_present;
-    uint8_t                     spare[5];
+    uint8_t                     ueip_addr_num;
+    uint8_t                     local_fteid_present;
+    uint8_t                     spare[3];
     session_f_teid              rt_local_fteid;/* Local F-TEID for Redundant Transmission */
+    session_f_teid              local_fteid;
+    session_ue_ip               ueip_addr[UPDATED_PDR_NUM];
 } session_updated_pdr;
 
 typedef struct tag_session_packet_rate_status_report {
@@ -2385,9 +2509,22 @@ typedef struct tag_session_packet_rate_status_report {
     session_packet_rate_status          packet_rate_status;
 } session_packet_rate_status_report;
 
+typedef struct tag_session_offending_ie_information {
+    void                                *value;
+} session_offending_ie_information;
+
+typedef struct tag_session_partial_failure_information {
+    session_failed_rule_id              fail_rule_id;
+    uint8_t                             cause;
+    uint8_t                             spare[6];
+    uint8_t                             offending_ie_info_num;
+    session_offending_ie_information    offending_ie_info[OFFENDING_IE_INFO_NUM];
+} session_partial_failure_information;
+
 #pragma pack(1)
 typedef struct tag_session_access_avail_report {
-    session_access_avail_info           access_avail_info;
+    uint8_t                             access_avail_info_num;
+    session_access_avail_info           access_avail_info[2];
 } session_access_avail_report;
 #pragma pack()
 
@@ -2433,7 +2570,7 @@ typedef struct tag_session_report {
     uint8_t                             access_avail_report_present;
     uint8_t                             qos_monitor_report_num;
     session_access_avail_report         access_avail_report;
-    uint8_t                             spare[4];
+    uint8_t                             spare[2];
     session_qos_monitor_report          qos_monitor_report[QOS_MONITOR_NUM];
 } session_report;
 
@@ -2471,7 +2608,7 @@ typedef struct tag_session_md_usage_report {
     session_md_usage_report_member_flags    member_flag;
     uint32_t                                start_time;     /* UTC time */
     uint32_t                                end_time;       /* UTC time */
-    session_urr_volume                      vol_meas;
+    session_volume_measurement              vol_meas;
     uint32_t                                duration;
     uint32_t                                first_pkt_time; /* UTC time */
     uint32_t                                last_pkt_time;  /* UTC time */
@@ -2497,6 +2634,7 @@ typedef struct tag_session_md_usage_report {
 *       Created Traffic Endpoint
 *       Created Bridge Info for TSC
 *       ATSSS Control Parameters
+*       RDS configuration information
 *
 *   session modification apply:
 *       Cause
@@ -2508,9 +2646,10 @@ typedef struct tag_session_md_usage_report {
 *       Failed Rule ID
 *       Additional Usage Reports Information
 *       Created Traffic Endpoint
-*       Port Management Information for TSC
+*       TSC Management Information
 *       ATSSS Control Parameters
 *       Updated PDR
+*       Packet Rate Status Report
 *
 *   session delete apply:
 *       Cause
@@ -2535,11 +2674,16 @@ typedef struct tag_session_emd_response {
     uint16_t                                offending_ie;
 
     uint8_t                                 usage_report_num;
-    session_added_usage_report_info         added_usage_report;
     uint8_t                                 created_tc_endpoint_num;
+    session_added_usage_report_info         added_usage_report;
     uint8_t                                 updated_pdr_num;
     uint8_t                                 sess_report_num;
-    uint8_t                                 spare[3];
+    session_rds_config_info                 rds_config_info;
+    uint8_t                                 pkt_rate_status_report_num;
+
+    uint8_t                                 tsc_mgmt_info_num;
+    uint8_t                                 partial_failure_info_num;
+    uint8_t                                 spare[6];
 
     session_f_seid                          local_f_seid;
     session_created_pdr                     created_pdr[MAX_PDR_NUM];
@@ -2550,11 +2694,12 @@ typedef struct tag_session_emd_response {
     session_failed_rule_id                  failed_rule_id;
     session_created_tc_endpoint             created_tc_endpoint[MAX_TC_ENDPOINT_NUM];
     session_created_bg_info_within_resp     created_bg_info;
-    session_port_management_info            port_mgmt_info;
+    session_tsc_management_info             tsc_mgmt_info[TSC_MGMT_INFO_NUM];
     session_atsss_control_param             atsss_ctrl_para;
     session_updated_pdr                     updated_pdr[MAX_PDR_NUM];
-    session_packet_rate_status_report       pkt_rate_status_report;
+    session_packet_rate_status_report       pkt_rate_status_report[PKT_RATE_STATUS_REPORT_NUM];
     session_report                          sess_report[MAX_SRR_NUM];
+    session_partial_failure_information     partial_failure_info[PARTIAL_FAILURE_INFO_NUM];
 } session_emd_response;
 
 typedef struct tag_session_pfd_management_response {
@@ -2576,7 +2721,7 @@ typedef union tag_session_report_type {
         uint8_t     spare:1;
         uint8_t     UISR:1;
         uint8_t     SESR:1;
-        uint8_t     PMIR:1;
+        uint8_t     TMIR:1;
         uint8_t     UPIR:1;
         uint8_t     ERIR:1;
         uint8_t     USAR:1;
@@ -2586,7 +2731,7 @@ typedef union tag_session_report_type {
         uint8_t     USAR:1;
         uint8_t     ERIR:1;
         uint8_t     UPIR:1;
-        uint8_t     PMIR:1;
+        uint8_t     TMIR:1;
         uint8_t     SESR:1;
         uint8_t     UISR:1;
         uint8_t     spare:1;
@@ -2643,9 +2788,27 @@ typedef struct tag_session_dl_data_service {
   uint8_t                       spare;
 } session_dl_data_service_info;
 
+#pragma pack(1)
+typedef union tag_session_dl_data_status {
+    struct {
+#if BYTE_ORDER == BIG_ENDIAN
+        uint8_t     spare   :6;
+        uint8_t     buff    :1;
+        uint8_t     drop    :1;
+#else
+        uint8_t     drop    :1;
+        uint8_t     buff    :1;
+        uint8_t     spare   :6;
+#endif
+    } d;
+    uint8_t         value;
+} session_dl_data_status;
+#pragma pack()
+
 typedef struct tag_session_dl_data_report {
     uint8_t                         pdr_id_num;
-    uint8_t                         spare[3];
+    uint8_t                         spare[2];
+    session_dl_data_status          dl_data_status;
     uint16_t                        pdr_id_arr[MAX_PDR_NUM];
     session_dl_data_service_info    dl_data_service[MAX_PDR_NUM];
 } session_dl_data_report;
@@ -2779,15 +2942,15 @@ typedef union tag_session_ip_multicast_address_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
         uint8_t         spare   : 4;
-        uint8_t         A       : 1;/* any */
-        uint8_t         R       : 1;/* range */
-        uint8_t         V4      : 1;
-        uint8_t         V6      : 1;
+        uint8_t         a       : 1;/* any */
+        uint8_t         r       : 1;/* range */
+        uint8_t         v4      : 1;
+        uint8_t         v6      : 1;
 #else
-        uint8_t         V6      : 1;
-        uint8_t         V4      : 1;
-        uint8_t         R       : 1;
-        uint8_t         A       : 1;
+        uint8_t         v6      : 1;
+        uint8_t         v4      : 1;
+        uint8_t         r       : 1;
+        uint8_t         a       : 1;
         uint8_t         spare   : 4;
 #endif
     } d;
@@ -2878,7 +3041,7 @@ typedef struct tag_session_usage_report_request {
     session_ur_request_member_flags     member_flag;
     uint32_t                            start_time;     /* UTC time */
     uint32_t                            end_time;       /* UTC time */
-    session_urr_volume                  vol_meas;
+    session_volume_measurement          vol_meas;
 
     uint8_t                             network_inst_len;
     session_urr_usage_info              usage_info;
@@ -3125,7 +3288,9 @@ typedef union tag_session_up_features {
         uint8_t            QFQM    :1;
         uint8_t            ATSSS_LL:1;
 
-        uint8_t            spare_6 :7;
+        uint8_t            spare_6 :5;
+        uint8_t            NSPOC   :1;
+        uint8_t            QUASF   :1;
         uint8_t            RTTWP   :1;
 
         uint8_t            spare_7;
@@ -3137,7 +3302,9 @@ typedef union tag_session_up_features {
         uint8_t            spare_7;
 
         uint8_t            RTTWP   :1;
-        uint8_t            spare_6 :7;
+        uint8_t            QUASF   :1;
+        uint8_t            NSPOC   :1;
+        uint8_t            spare_6 :5;
 
         uint8_t            ATSSS_LL:1;
         uint8_t            QFQM    :1;
@@ -3193,7 +3360,7 @@ typedef union tag_session_up_features {
 typedef union tag_session_cp_features {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint8_t         spare   :1;/* spare */
+        uint8_t         uiaur   :1;/* CP function supports the UE IP Address Usage Reporting feature */
         uint8_t         ardr    :1;/* CP function supports Additional Usage Reports in the PFCP Session Deletion Response */
         uint8_t         mpas    :1;/* SMF support for multiple PFCP associations from an SMF set to a single UPF */
         uint8_t         bundl   :1;/* PFCP messages bunding is supported by the CP function */
@@ -3201,7 +3368,13 @@ typedef union tag_session_cp_features {
         uint8_t         epfar   :1;/* PFCP Association Release feature */
         uint8_t         ovrl    :1;/* overload */
         uint8_t         load    :1;/* load */
+
+        uint8_t         spare   :7;
+        uint8_t         psucc   :1;/* CP function supports PFCP session establishment or modification with Partial Success. */
 #else
+        uint8_t         psucc   :1;/* CP function supports PFCP session establishment or modification with Partial Success. */
+        uint8_t         spare   :7;
+
         uint8_t         load    :1;/* load */
         uint8_t         ovrl    :1;/* overload */
         uint8_t         epfar   :1;/* PFCP Association Release feature */
@@ -3209,10 +3382,10 @@ typedef union tag_session_cp_features {
         uint8_t         bundl   :1;/* PFCP messages bunding is supported by the CP function */
         uint8_t         mpas    :1;/* SMF support for multiple PFCP associations from an SMF set to a single UPF */
         uint8_t         ardr    :1;/* CP function supports Additional Usage Reports in the PFCP Session Deletion Response */
-        uint8_t         spare   :1;/* spare */
+        uint8_t         uiaur   :1;/* CP function supports the UE IP Address Usage Reporting feature */
 #endif
     }d;
-    uint8_t             value;
+    uint16_t            value;
 } session_cp_features;
 #pragma pack()
 
@@ -3337,15 +3510,27 @@ typedef struct tag_session_retention_information {
 } session_retention_information;
 
 typedef struct tag_session_ue_ip_address_pool_identity {
-    uint16_t                            pool_id_len;
-    uint8_t                             spare[6];
     char                                pool_identity[UE_IP_ADDRESS_POOL_LEN];
 } session_ue_ip_address_pool_identity;
+
+#pragma pack(1)
+typedef struct tag_session_s_nssai {
+#if BYTE_ORDER == BIG_ENDIAN
+    uint32_t        sst :8;     /* Slice/Service Type */
+    uint32_t        sd  :24;    /* Slice Differentiator */
+#else
+    uint32_t        sd  :24;    /* Slice Differentiator */
+    uint32_t        sst :8;     /* Slice/Service Type */
+#endif
+} session_s_nssai;
+#pragma pack()
 
 typedef struct tag_session_ue_ip_address_pool_info {
     uint8_t                             pool_identity_num;
     uint8_t                             network_instance_present;
-    uint8_t                             spare[6];
+    uint8_t                             s_nssai_num;
+    uint8_t                             ip_version; /* 1:IPv4 2:IPv6 3:IPv4&IPv6 */
+    session_s_nssai                     s_nssai[MAX_S_NSSAI_NUM];
     session_ue_ip_address_pool_identity pool_identity[UEIP_POOL_NUM];
     char                                network_instance[APN_DNN_LEN];
 } session_ue_ip_address_pool_info;
@@ -3460,15 +3645,41 @@ typedef struct tag_session_clock_drift_control_info {
 typedef union tag_session_pfcpasrsp_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint8_t         spare   :7;
+        uint8_t         spare   :6;
+        uint8_t         uupsi   :1;
         uint8_t         psrei   :1;
 #else
         uint8_t         psrei   :1;
-        uint8_t         spare   :7;
+        uint8_t         uupsi   :1;
+        uint8_t         spare   :6;
 #endif
     }d;
     uint8_t             value;
 } session_pfcpasrsp_flags;
+#pragma pack()
+
+#pragma pack(1)
+typedef union tag_session_mptcp_applicable_indication {
+    struct {
+#if BYTE_ORDER == BIG_ENDIAN
+        uint8_t         spare   :7;
+        uint8_t         mai     :1;
+#else
+        uint8_t         mai     :1;
+        uint8_t         spare   :7;
+#endif
+    }d;
+    uint8_t             value;
+} session_mptcp_applicable_indication;
+#pragma pack()
+
+#pragma pack(1)
+typedef struct tag_session_transport_delay_reporting {
+    session_remote_gtpu_peer        preceding_ul_gtpu_peer;
+    session_tos_tc                  dscp;
+    uint8_t                         dscp_present;
+    uint8_t                         spare[5];
+} session_transport_delay_reporting;
 #pragma pack()
 
 typedef struct tag_session_gtpu_path_qos_report {
@@ -3488,7 +3699,9 @@ typedef struct tag_session_gtpu_path_qos_report {
 typedef union tag_session_establish_member_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint32_t        spare                           : 25;
+        uint32_t        spare                           : 23;
+        uint32_t        provide_rds_config_info_present : 1;
+        uint32_t        s_nssai_present                 : 1;
         uint32_t        recovery_time_stamp_present     : 1;
         uint32_t        provide_atsss_ctrl_info_present : 1;
         uint32_t        apn_dnn_present                 : 1;
@@ -3504,7 +3717,9 @@ typedef union tag_session_establish_member_flags {
         uint32_t        apn_dnn_present                 : 1;
         uint32_t        provide_atsss_ctrl_info_present : 1;
         uint32_t        recovery_time_stamp_present     : 1;
-        uint32_t        spare                           : 25;
+        uint32_t        s_nssai_present                 : 1;
+        uint32_t        provide_rds_config_info_present : 1;
+        uint32_t        spare                           : 23;
 #endif
     } d;
     uint32_t value;
@@ -3515,10 +3730,10 @@ typedef union tag_session_establish_member_flags {
 typedef union tag_session_modification_member_flags {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
-        uint32_t        spare                           : 21;
+        uint32_t        spare                           : 20;
+        uint32_t        s_nssai_present                 : 1;
         uint32_t        eth_context_info_present        : 1;
         uint32_t        provide_atsss_ctrl_info_present : 1;
-        uint32_t        port_mgmt_info_present          : 1;
         uint32_t        change_node_present             : 1;
         uint32_t        trace_info_present              : 1;
         uint32_t        query_urr_reference_present     : 1;
@@ -3536,10 +3751,10 @@ typedef union tag_session_modification_member_flags {
         uint32_t        query_urr_reference_present     : 1;
         uint32_t        trace_info_present              : 1;
         uint32_t        change_node_present             : 1;
-        uint32_t        port_mgmt_info_present          : 1;
         uint32_t        provide_atsss_ctrl_info_present : 1;
         uint32_t        eth_context_info_present        : 1;
-        uint32_t        spare                           : 21;
+        uint32_t        s_nssai_present                 : 1;
+        uint32_t        spare                           : 20;
 #endif
     } d;
     uint32_t value;
@@ -3564,7 +3779,7 @@ typedef struct tag_session_packet_detection_info {
 
     session_f_teid                          local_fteid;
     char                                    network_instance[NETWORK_INSTANCE_LEN];
-    session_redundant_trans_param_in_pdi    redundant_transmission_param;
+    session_redundant_transmission_detection_param      redundant_transmission_param;
     session_ue_ip                           ue_ipaddr[MAX_UE_IP_NUM];
     session_sdf_filter                      sdf_filter[MAX_SDF_FILTER_NUM];
     session_eth_filter                      eth_filter[MAX_ETH_FILTER_NUM];
@@ -3575,6 +3790,7 @@ typedef struct tag_session_packet_detection_info {
 
     uint8_t                                 traffic_endpoint_id[MAX_TC_ENDPOINT_NUM];
     uint8_t                                 qfi_array[MAX_QFI_NUM];
+    /* 0:None  1:Send routing packets  2:Listen for routing packets  3:Send and Listen */
     uint32_t                                framed_routing;
 } session_packet_detection_info;
 
@@ -3592,8 +3808,10 @@ typedef struct tag_session_pdr_create {
     uint8_t                                 ip_mul_addr_num;
     uint16_t                                mar_id;
     session_pkt_rd_carry_on_info            pkt_rd_carry_on_info;
+    session_transport_delay_reporting       transport_delay_rep;
     uint8_t                                 ueip_addr_pool_identity_num;
-    uint8_t                                 spare[4];
+    uint8_t                                 spare[2];
+    session_mptcp_applicable_indication     mptcp_app_indication;
     uint32_t                                pdr_index; /* Local alloc index */
 
     uint32_t                                urr_id_array[MAX_URR_NUM];
@@ -3603,6 +3821,7 @@ typedef struct tag_session_pdr_create {
     uint32_t                                deactivation_time;
 
     session_ip_multicast_addr_info          ip_mul_addr_info[IP_MUL_ADDR_INFO_NUM];
+    /* UE IPv4 Address Pool Identity shall be encoded before the UE IPv6 Address Pool Identity. */
     session_ue_ip_address_pool_identity     ueip_addr_pool_identity[2];
     session_packet_detection_info           pdi_content;
 } session_pdr_create;
@@ -3632,8 +3851,33 @@ typedef struct tag_session_pdr_update {
 
     session_ip_multicast_addr_info  ip_mul_addr[IP_MUL_ADDR_INFO_NUM];
     session_packet_detection_info   pdi_content;
+    session_transport_delay_reporting   transport_delay_rep;
 } session_pdr_update;
 
+#pragma pack(1)
+typedef union tag_session_pfcpasreq_flags {
+    struct {
+#if BYTE_ORDER == BIG_ENDIAN
+        uint8_t         spare   :7;
+        uint8_t         uupsi   :1;
+#else
+        uint8_t         uupsi   :1;
+        uint8_t         spare   :7;
+#endif
+    }d;
+    uint8_t             value;
+} session_pfcpasreq_flags;
+#pragma pack()
+
+typedef struct tag_session_ueip_address_usage_info {
+    uint32_t                            seq_num;
+    uint16_t                            validity_timer;
+    uint8_t                             metric;
+    uint32_t                            ue_ipv4_num;
+    uint32_t                            ue_ipv6_num;
+    char                                network_instance[NETWORK_INSTANCE_LEN];
+    session_ue_ip_address_pool_identity ueip_pool_id;
+} session_ueip_address_usage_info;
 
 #pragma pack(1)
 typedef union tag_session_assoc_setup_member_flags {
@@ -3658,7 +3902,7 @@ typedef union tag_session_assoc_setup_member_flags {
 } session_assoc_setup_member_flags;
 #pragma pack()
 
-/* 包含 association setup request/response可能用到的IE */
+/* It contains ie that may be used by association setup request/response */
 typedef struct tag_session_association_setup {
     session_msg_header                      msg_header;
 
@@ -3673,6 +3917,7 @@ typedef struct tag_session_association_setup {
     uint8_t                                 gtpu_path_qos_ctrl_num;
     uint8_t                                 clock_drift_ctrl_num;
     session_pfcpasrsp_flags                 pfcpasrsp_flag;
+    uint8_t                                 spare[7];
     session_assoc_setup_member_flags        member_flag;
 
     session_alternative_smf_addr            smf_ip_arr[ALTERNATIVE_SMF_IP_NUM];
@@ -3681,7 +3926,8 @@ typedef struct tag_session_association_setup {
     session_ue_ip_address_pool_info         up_ip_pool_info[UEIP_POOL_NUM];
     session_gtpu_path_qos_control_info      gtpu_path_qos_ctrl_info[MONITOR_GTPU_PATH_NUM];
     session_clock_drift_control_info        clock_drift_ctrl_info[CLOCK_DRIFT_CONTROL_NUM];
-    char                                    nf_instance_id[16];
+    //char                                    upf_instance_id[16];
+    session_pfcpasreq_flags                 pfcpasreq_flag;
 } session_association_setup;
 
 typedef struct tag_session_association_update {
@@ -3699,11 +3945,15 @@ typedef struct tag_session_association_update {
     uint8_t                                 clock_drift_ctrl_num;
     uint8_t                                 ue_ip_pool_num;
     uint8_t                                 gtpu_path_qos_ctrl_num;
+    uint8_t                                 ueip_addrees_usage_info_num;
+    uint8_t                                 spare[6];
 
     session_alternative_smf_addr            smf_ip_arr[ALTERNATIVE_SMF_IP_NUM];
+    session_smf_set_id                      smf_set_id;
     session_clock_drift_control_info        clock_drift_ctrl_info[CLOCK_DRIFT_CONTROL_NUM];
     session_ue_ip_address_pool_info         up_ip_pool_info[UEIP_POOL_NUM];
     session_gtpu_path_qos_control_info      gtpu_path_qos_ctrl_info[MONITOR_GTPU_PATH_NUM];
+    session_ueip_address_usage_info         ueip_addrees_usage_info[UEIP_POOL_NUM];
 } session_association_update;
 
 typedef struct tag_session_association_release_request {
@@ -3716,45 +3966,6 @@ typedef struct tag_session_association_release_response {
     uint32_t                    node_id_index;
     uint8_t                     cause;
 } session_association_release_response;
-
-typedef struct tag_session_rat_type {
-    uint16_t                        enterprise_id; /* CMCC: 28357 */
-    uint8_t                         rat_type; /*
-                                                <reserved>          0
-                                                UTRAN               1
-                                                GERAN               2
-                                                WLAN                3
-                                                GAN                 4
-                                                HSPA Evolution      5
-                                                EUTRAN (WB-E-UTRAN) 6
-                                                Virtual             7
-                                                EUTRAN-NB-IoT       8
-                                                LTE-M               9
-                                                NR                  10
-                                                <spare>             11-255
-                                                */
-    uint8_t                         spare;
-} session_rat_type;
-
-typedef struct tag_session_user_location_info {
-    uint16_t                        enterprise_id; /* CMCC: 28357 */
-    uint8_t                         geographic_location_type; /*
-                                                <reserved>          0
-                                                UTRAN               1
-                                                GERAN               2
-                                                WLAN                3
-                                                GAN                 4
-                                                HSPA Evolution      5
-                                                EUTRAN (WB-E-UTRAN) 6
-                                                Virtual             7
-                                                EUTRAN-NB-IoT       8
-                                                LTE-M               9
-                                                NR                  10
-                                                <spare>             11-255
-                                                */
-    uint8_t                         spare;
-    uint8_t                         geographic_location[GEOGRAPHIC_LOCAL_LEN];
-} session_user_location_info;
 
 typedef struct tag_session_content_create {
     session_msg_header              msg_header;
@@ -3780,10 +3991,10 @@ typedef struct tag_session_content_create {
     session_provide_atsss_ctrl_info provide_atsss_ctrl_info;
 
     uint8_t                         srr_num;
-    uint8_t                         spare[3];
-    session_rat_type                rat_type;
+    session_provide_rds_config_info provide_rds_config_info;
+    uint8_t                         spare;
+    uint8_t                         rat_type;
     session_establish_member_flags  member_flag;
-    session_user_location_info      user_local_info;
 
     uint32_t                        recovery_time_stamp;
     uint32_t                        inactivity_timer;
@@ -3795,6 +4006,7 @@ typedef struct tag_session_content_create {
     session_apn_dnn                 apn_dnn;
     session_mar_create              mar_arr[MAX_MAR_NUM];
     session_srr_create              srr_arr[MAX_SRR_NUM];
+    session_s_nssai                 s_nssai;
 } session_content_create;
 
 typedef struct tag_session_content_modify {
@@ -3851,12 +4063,14 @@ typedef struct tag_session_content_modify {
     session_provide_atsss_ctrl_info         provide_atsss_ctrl_info;
     uint8_t                                 access_avail_info_num;
     session_access_avail_info               access_avail_info[2];
-    uint8_t                                 spare[2];
+    uint8_t                                 tsc_mgmt_info_num;
+    uint8_t                                 query_pkt_rate_status_num;
     uint32_t                                remove_bar_index;
     uint32_t                                remove_pdr_index_num;
 
-    session_rat_type                        rat_type;
-    session_user_location_info              user_local_info;
+    uint8_t                                 rat_type;
+    uint8_t                                 spare[3];
+    session_s_nssai                         s_nssai;
 
     /* session create */
     session_pdr_create                      create_pdr_arr[MAX_PDR_NUM];
@@ -3881,8 +4095,9 @@ typedef struct tag_session_content_modify {
     uint32_t                                inactivity_timer;
     uint32_t                                query_urr_reference;
     session_trace_info                      trace_info;
-    session_port_management_info            port_mgmt_info;
+    session_tsc_management_info             tsc_mgmt_info[TSC_MGMT_INFO_NUM];
     session_ethernet_context_information    eth_context_info;
+    session_query_packet_rate_status        query_pkt_rate_status[MAX_QER_NUM];
 } session_content_modify;
 
 typedef struct tag_session_content_delete {
@@ -3909,7 +4124,7 @@ typedef struct tag_session_report_request {
     uint8_t                                 old_cp_fseid_present;
     uint8_t                                 packet_rate_status_report_present;
 
-    uint8_t                                 port_mgmt_info_present;
+    uint8_t                                 tsc_mgmt_info_num;
     uint8_t                                 sess_report_num;
     uint8_t                                 spare[6];
 
@@ -3920,7 +4135,7 @@ typedef struct tag_session_report_request {
     session_overload_contrl_info            overload_ctrl_info;
     session_f_seid                          old_cp_fseid;
     session_packet_rate_status_report       packet_rate_status_report;
-    session_port_management_info            port_mgmt_info;
+    session_tsc_management_info             tsc_mgmt_info[TSC_MGMT_INFO_NUM];
     session_report                          sess_report[MAX_SRR_NUM];
 } session_report_request;
 

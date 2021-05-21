@@ -10,8 +10,18 @@
 extern "C" {
 #endif
 
+/* Neighbor function switch (1:enabled 0:disabled) */
+#define LB_NEIGHBOR_ENABLED         1
+
 /* Hash of Ethernet or Non-IP bearer */
 #define ETH_OR_NONIP_HASH       0xFFFFFFFF
+
+/** LBU health value weight
+ *  The health value weight of each port needs to be greater than the sum of the health values of other factors,
+ *  in order to quickly determine whether the decisive condition is healthy or not
+ */
+#define LB_DPDK_PER_PORT_WEIGHT     30
+
 
 /* LB work status, Don't change the order */
 enum EN_LB_WORK_STATUS {
@@ -25,10 +35,20 @@ enum EN_LB_WORK_STATUS {
 #define LB_FORWARD_THRESHOLD    LB_STATUS_SMOOTH2ACTIVE
 
 typedef enum tag_EN_LB_PORT {
-    EN_LB_PORT_EXT,     /* External port */
-    EN_LB_PORT_INT,     /* Internal port */
+    EN_LB_PORT_EXT = 0,     /* External port */
+    EN_LB_PORT_INT,         /* Internal port */
     EN_LB_PORT_BUTT,
 }EN_LB_PORT;
+
+/* Packet statistics of LBU */
+enum EN_LBU_PKT_STAT{
+    EN_LB_RECV_EXT_STAT = 0,
+    EN_LB_RECV_INT_STAT,
+    EN_LB_SENT_EXT_STAT,
+    EN_LB_SENT_FPU_STAT,
+    EN_LB_SENT_SMU_STAT,
+    EN_LB_PKT_STAT_BUTT,
+};
 
 
 typedef struct tag_lb_system_config {
@@ -82,6 +102,9 @@ void lb_fwd_to_external_network_public(void *m);
 int32_t lb_init_prepare(struct pcf_file *conf);
 int32_t lb_init(void);
 int32_t lb_deinit();
+
+uint16_t lb_get_qualified_health_threshold(void);
+uint16_t lb_get_health_value(void);
 
 int lb_ha_active_standby_switch(struct cli_def *cli,int argc, char **argv);
 int lb_ha_get_lbu_status(struct cli_def *cli,int argc, char **argv);

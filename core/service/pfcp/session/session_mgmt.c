@@ -426,8 +426,9 @@ int session_establish(session_content_create *session_content, session_emd_respo
     /* 2. bar */
     if (session_content->member_flag.d.bar_present) {
         if (0 > bar_insert(sess_tbl, &session_content->bar)) {
-            LOG(SESSION, ERR, "bar_insert failed.");
+            LOG(SESSION, ERR, "Create BAR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_id = session_content->bar.bar_id;
             resp->failed_rule_id.rule_type = SESS_FAILED_BAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
@@ -440,8 +441,9 @@ int session_establish(session_content_create *session_content, session_emd_respo
     if (0 < session_content->far_num) {
         if (0 > far_insert(sess_tbl, session_content->far_arr,
     		session_content->far_num, &resp->failed_rule_id.rule_id)) {
-            LOG(SESSION, ERR, "far_insert failed.");
+            LOG(SESSION, ERR, "Create FAR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_FAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -453,8 +455,9 @@ int session_establish(session_content_create *session_content, session_emd_respo
     if (0 < session_content->qer_num) {
         if (0 > qer_insert(sess_tbl, session_content->qer_arr,
     		session_content->qer_num, &resp->failed_rule_id.rule_id)) {
-            LOG(SESSION, ERR, "qer_insert failed.");
+            LOG(SESSION, ERR, "Create QER failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_QER;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -466,8 +469,9 @@ int session_establish(session_content_create *session_content, session_emd_respo
     if (0 < session_content->urr_num) {
         if (0 > urr_insert(sess_tbl, session_content->urr_arr,
     		session_content->urr_num, &resp->failed_rule_id.rule_id)) {
-            LOG(SESSION, ERR, "urr_insert failed.");
+            LOG(SESSION, ERR, "Create URR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_URR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -479,7 +483,7 @@ int session_establish(session_content_create *session_content, session_emd_respo
     if (0 < session_content->tc_endpoint_num) {
         if (0 > traffic_endpoint_insert(sess_tbl, session_content->tc_endpoint_arr,
     		session_content->tc_endpoint_num)) {
-            LOG(SESSION, ERR, "traffic_endpoint insert failed.");
+            LOG(SESSION, ERR, "Create traffic endpoint failed.");
 
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -491,8 +495,9 @@ int session_establish(session_content_create *session_content, session_emd_respo
     if (0 < session_content->mar_num) {
         if (0 > mar_insert(sess_tbl, session_content->mar_arr,
     		session_content->mar_num, &resp->failed_rule_id.rule_id)) {
-            LOG(SESSION, ERR, "mar_insert failed.");
+            LOG(SESSION, ERR, "Create MAR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_MAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -538,17 +543,15 @@ int session_establish(session_content_create *session_content, session_emd_respo
             sizeof(session_apn_dnn));
     }
 
-	ros_memcpy(&sess_tbl->session.rat_type, &session_content->rat_type,
-            sizeof(session_rat_type));
-	ros_memcpy(&sess_tbl->session.user_local_info, &session_content->user_local_info,
-            sizeof(session_user_location_info));
+	sess_tbl->session.rat_type = session_content->rat_type;
 
     /* 10. fill and add pdr */
     if (0 < session_content->pdr_num) {
         if (0 > pdr_insert(sess_tbl, session_content->pdr_arr,
             session_content->pdr_num, &resp->failed_rule_id.rule_id)) {
-            LOG(SESSION, ERR, "pdr_insert failed.");
+            LOG(SESSION, ERR, "Create PDR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_PDR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -638,12 +641,15 @@ void session_establish_to_fp(session_content_create *session_content)
             ros_rwlock_read_unlock(&entry->rwlock);// unlock
         }
 
-        if (-1 == session_instance_fp_add_or_mod(index_arr, valid_cnt, TRUE, MB_SEND2BE_BROADCAST_FD)) {
-            LOG(SESSION, ERR, "Sent Instance config to fp failed.");
-        }
+        /* Maybe PDR hasn't been activated yet */
+        if (valid_cnt > 0) {
+            if (-1 == session_instance_fp_add_or_mod(index_arr, valid_cnt, TRUE, MB_SEND2BE_BROADCAST_FD)) {
+                LOG(SESSION, ERR, "Sent Instance config to fp failed.");
+            }
 
-        if (-1 == session_orphan_modify(index_arr, valid_cnt)) {
-            LOG(SESSION, ERR, "remove fast entry for orphan tree failed.");
+            if (-1 == session_orphan_modify(index_arr, valid_cnt)) {
+                LOG(SESSION, ERR, "remove fast entry for orphan tree failed.");
+            }
         }
     }
 
@@ -694,15 +700,14 @@ int session_modify(session_content_modify *session_content, session_emd_response
         }
     }
 
-	//sess_tbl->session.node_index = session_content->node_index;
-
     /*********************** Remove rules ***************************/
     /* Bar remove */
     if (session_content->member_flag.d.remove_bar_present) {
         if (0 > bar_remove(sess_tbl, session_content->remove_bar, &session_content->remove_bar_index)) {
-            LOG(SESSION, ERR, "bar remove failed.");
+            LOG(SESSION, ERR, "Remove BAR failed.");
 
-            resp->failed_rule_id.rule_id = session_content->update_bar.bar_id;
+            resp->member_flag.d.failed_rule_id_present = 1;
+            resp->failed_rule_id.rule_id = session_content->remove_bar;
             resp->failed_rule_id.rule_type = SESS_FAILED_BAR;
             resp->cause = SESS_REQUEST_REJECTED;
 
@@ -712,9 +717,11 @@ int session_modify(session_content_modify *session_content, session_emd_response
     /* Far remove */
     if (0 < session_content->remove_far_num) {
     	if (0 > far_remove(sess_tbl, session_content->remove_far_arr,
-    		session_content->remove_far_num, session_content->remove_far_index_arr)) {
-            LOG(SESSION, ERR, "far_remove failed.");
+    		session_content->remove_far_num, session_content->remove_far_index_arr,
+    		&resp->failed_rule_id.rule_id)) {
+            LOG(SESSION, ERR, "Remove FAR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_FAR;
             resp->cause = SESS_REQUEST_REJECTED;
 
@@ -724,9 +731,11 @@ int session_modify(session_content_modify *session_content, session_emd_response
     /* Qer remove */
     if (0 < session_content->remove_qer_num) {
     	if (0 > qer_remove(sess_tbl, session_content->remove_qer_arr,
-    		session_content->remove_qer_num, session_content->remove_qer_index_arr)) {
-            LOG(SESSION, ERR, "qer_remove failed.");
+    		session_content->remove_qer_num, session_content->remove_qer_index_arr,
+    		&resp->failed_rule_id.rule_id)) {
+            LOG(SESSION, ERR, "Remove QER failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_QER;
             resp->cause = SESS_REQUEST_REJECTED;
 
@@ -736,9 +745,11 @@ int session_modify(session_content_modify *session_content, session_emd_response
     /* Urr remove */
     if (0 < session_content->remove_urr_num) {
     	if (0 > urr_remove(sess_tbl, session_content->remove_urr_arr,
-    		session_content->remove_urr_num, session_content->remove_urr_arr)) {
-            LOG(SESSION, ERR, "urr_remove failed.");
+    		session_content->remove_urr_num, session_content->remove_urr_arr,
+    		&resp->failed_rule_id.rule_id)) {
+            LOG(SESSION, ERR, "Remove URR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_URR;
             resp->cause = SESS_REQUEST_REJECTED;
 
@@ -748,9 +759,10 @@ int session_modify(session_content_modify *session_content, session_emd_response
     /* Mar remove */
     if (0 < session_content->remove_mar_num) {
         if (0 > mar_remove(sess_tbl, session_content->remove_mar_arr,
-    		session_content->remove_mar_num)) {
-            LOG(SESSION, ERR, "mar_remove failed.");
+    		session_content->remove_mar_num, &resp->failed_rule_id.rule_id)) {
+            LOG(SESSION, ERR, "Remove MAR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_MAR;
             resp->cause = SESS_REQUEST_REJECTED;
 
@@ -760,9 +772,11 @@ int session_modify(session_content_modify *session_content, session_emd_response
     /* Pdr remove */
     if (0 < session_content->remove_pdr_num) {
     	if (0 > pdr_remove(sess_tbl, session_content->remove_pdr_arr, session_content->remove_pdr_num,
-            session_content->remove_pdr_index_arr, &session_content->remove_pdr_index_num)) {
-            LOG(SESSION, ERR, "Pdr remove failed.");
+            session_content->remove_pdr_index_arr, &session_content->remove_pdr_index_num,
+            &resp->failed_rule_id.rule_id)) {
+            LOG(SESSION, ERR, "Remove PDR failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_PDR;
             resp->cause = SESS_REQUEST_REJECTED;
 
@@ -774,7 +788,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
         if (0 > traffic_endpoint_remove(sess_tbl, session_content->remove_tc_endpoint_arr,
     		session_content->remove_tc_endpoint_num, session_content->remove_pdr_index_arr,
     		&session_content->remove_pdr_index_num)) {
-            LOG(SESSION, ERR, "traffic_endpoint_remove failed.");
+            LOG(SESSION, ERR, "Remove traffic endpoint failed.");
 
             resp->cause = SESS_REQUEST_REJECTED;
 
@@ -788,6 +802,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
         if (0 > bar_modify(sess_tbl, &session_content->update_bar)) {
             LOG(SESSION, ERR, "BAR modify failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_id = session_content->update_bar.bar_id;
             resp->failed_rule_id.rule_type = SESS_FAILED_BAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
@@ -801,6 +816,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
             session_content->update_far_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "FAR modify failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_FAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -813,6 +829,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     		session_content->update_qer_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "QER modify failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_QER;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -825,6 +842,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     		session_content->update_urr_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "URR modify failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_URR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -837,6 +855,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     		session_content->update_mar_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "MAR update failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_MAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -849,6 +868,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
             session_content->update_pdr_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "PDR modify failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_PDR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -873,6 +893,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
         if (0 > bar_insert(sess_tbl, &session_content->create_bar)) {
             LOG(SESSION, ERR, "BAR insert failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_id = session_content->create_bar.bar_id;
             resp->failed_rule_id.rule_type = SESS_FAILED_BAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
@@ -886,6 +907,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     		session_content->create_far_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "FAR insert failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_FAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -898,6 +920,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     		session_content->create_qer_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "QER insert failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_QER;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -910,6 +933,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     		session_content->create_urr_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "URR insert failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_URR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -922,6 +946,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
     		session_content->create_mar_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "MAR insert failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_MAR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -934,6 +959,7 @@ int session_modify(session_content_modify *session_content, session_emd_response
             session_content->create_pdr_num, &resp->failed_rule_id.rule_id)) {
             LOG(SESSION, ERR, "PDR insert failed.");
 
+            resp->member_flag.d.failed_rule_id_present = 1;
             resp->failed_rule_id.rule_type = SESS_FAILED_PDR;
             resp->cause = SESS_RULE_CREATION_MODIFICATION_FAILURE;
 
@@ -1075,12 +1101,15 @@ void session_modify_to_fp(session_content_modify *session_content)
             ros_rwlock_read_unlock(&entry->rwlock);// unlock
         }
 
-        if (-1 == session_instance_fp_add_or_mod(index_arr, valid_cnt, FALSE, MB_SEND2BE_BROADCAST_FD)) {
-            LOG(SESSION, ERR, "Sent Instance config to fp failed.");
-        }
+        /* Maybe PDR hasn't been activated yet */
+        if (valid_cnt > 0) {
+            if (-1 == session_instance_fp_add_or_mod(index_arr, valid_cnt, FALSE, MB_SEND2BE_BROADCAST_FD)) {
+                LOG(SESSION, ERR, "Sent Instance config to fp failed.");
+            }
 
-        if (-1 == session_orphan_modify(index_arr, valid_cnt)) {
-            LOG(SESSION, ERR, "remove fast entry for orphan tree failed.");
+            if (-1 == session_orphan_modify(index_arr, valid_cnt)) {
+                LOG(SESSION, ERR, "remove fast entry for orphan tree failed.");
+            }
         }
     }
 
@@ -1168,7 +1197,7 @@ int session_delete(uint64_t local_seid, uint64_t cp_seid,
     resp->cp_seid = cp_seid;
     resp->cause = SESS_REQUEST_ACCEPTED;
 
-    sess_tbl = session_table_remove(&key);
+    sess_tbl = session_table_search(&key);
     if (NULL == sess_tbl) {
         LOG(SESSION, ERR, "delete failed, no such session, seid:0x%016lx:0x%016lx.",
             key.local_seid, key.cp_seid);
@@ -1221,8 +1250,14 @@ int session_delete(uint64_t local_seid, uint64_t cp_seid,
         LOG(SESSION, ERR, "Session UE MAC clear failed");
     }
 
-    LOG(SESSION, RUNNING,
-        "sesssion delete finish, seid:0x%016lx:0x%016lx.\r\n",
+    if (NULL == session_table_remove(&key)) {
+        LOG(SESSION, ERR, "delete failed, seid:0x%016lx:0x%016lx.",
+            key.local_seid, key.cp_seid);
+        resp->cause = SESS_SESSION_CONTEXT_NOT_FOUND;
+        return -1;
+    }
+
+    LOG(SESSION, RUNNING, "sesssion delete finish, seid:0x%016lx:0x%016lx.\r\n",
         key.local_seid, key.cp_seid);
     return 0;
 }

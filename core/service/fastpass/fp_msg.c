@@ -11,7 +11,6 @@
 #include "fp_fwd_eth.h"
 #include "fp_fwd_common.h"
 #include "fp_start.h"
-#include "fp_urr.h"
 #include "fp_qer.h"
 #include "fp_recycle.h"
 #include "fp_frag.h"
@@ -268,9 +267,9 @@ uint32_t fp_msg_entry_mod(comm_msg_ie_t *ie)
 
             old_inst = fp_inst_entry_get(old_inst_index);
             new_inst = fp_inst_entry_get(new_inst_index);
-            ros_atomic64_sub(&old_inst->stat.forw_bytes, ros_atomic16_read(&entry_cfg->tcp_hs_stat));
-            ros_atomic64_add(&new_inst->stat.forw_bytes, ros_atomic16_read(&entry_cfg->tcp_hs_stat));
-            ros_atomic16_init(&entry_cfg->tcp_hs_stat);
+            old_inst->stat.forw_bytes -= entry_cfg->tcp_hs_stat;
+            new_inst->stat.forw_bytes += entry_cfg->tcp_hs_stat;
+            entry_cfg->tcp_hs_stat = 0;
             Res_MarkSet(inst_head->res_stat, old_inst_index);
             Res_MarkSet(inst_head->res_stat, new_inst_index);
             LOG(FASTPASS, RUNNING, "Re record TCP handshake volume.");
@@ -589,6 +588,7 @@ uint32_t fp_msg_inst_add(comm_msg_ie_t *ie)
         dl_list_init(&inst_entry->far2_node);
         fp_msg_inst_copy(&inst_entry->config, &ie_data[cnt].cfg);
         inst_entry->valid = G_TRUE;
+        inst_entry->active = G_FALSE;
 
         inst_entry->max_act = inst_entry->config.max_act;
         if (inst_entry->config.immediately_act) {
@@ -819,7 +819,6 @@ static uint32_t fp_msg_inst_mod_proc(fp_inst_entry *inst_entry)
     fp_far_entry            *far_entry;
     comm_msg_inst_config    *config;
     NODE                    *node;
-    char                    action_str[64];
 
     if (NULL == inst_entry) {
         /* No inst refer to it */
@@ -837,8 +836,7 @@ static uint32_t fp_msg_inst_mod_proc(fp_inst_entry *inst_entry)
             return ret;
         }
 
-        fp_get_action_str(far_entry->config.action.value, action_str);
-        LOG(FASTPASS, RUNNING, "new action is %s.", action_str);
+        fp_print_action_str(&far_entry->config.action, G_FALSE);
 
         /* Check action, if not buff or nocp, send buffered packets */
         if ((far_entry->config.action.d.buff)
@@ -1054,7 +1052,7 @@ uint32_t fp_msg_inst_sum()
 
     sum_num = Res_GetAlloced(head->res_no);
 
-    LOG(FASTPASS, RUNNING, "GET inst entry number %d.", sum_num);
+    LOG(FASTPASS, DEBUG, "GET inst entry number %d.", sum_num);
 
     return sum_num;
 }
@@ -1169,6 +1167,11 @@ int fp_msg_init_check_timeout(uint32_t inst_index)
     }
 
     if (inst_entry->config.inact) {
+        if (inst_entry->active) {
+            inst_entry->inact = inst_entry->config.inact;
+            inst_entry->active = G_FALSE;
+            return FALSE;
+        }
         if (inst_entry->inact) {
             inst_entry->inact--;
             return FALSE;
@@ -1198,7 +1201,7 @@ uint8_t *fp_msg_inst_stat_collect(uint8_t *buf, uint32_t *buf_len, uint32_t buf_
     uint32_t entry_num = 0;
     int32_t  cur_index;
     uint32_t tmp_len = 0;/* ie total length */
-    int64_t tmp_value, pkt_trigger = 0;
+    int64_t pkt_trigger = 0;
     uint32_t max_rules = (buf_max - COMM_MSG_HEADER_LEN - COMM_MSG_IE_LEN_COMMON) / sizeof(comm_msg_urr_stat_conf_t);
 
     msg = fp_fill_msg_header(buf);
@@ -1225,7 +1228,7 @@ uint8_t *fp_msg_inst_stat_collect(uint8_t *buf, uint32_t *buf_len, uint32_t buf_
         /* not first */
         if (inst_entry) {
             /* if index reverse, we consider it reaches end */
-            if (cur_index < inst_entry->index) {
+            if (cur_index <= inst_entry->index) {
                 break;
             }
         }
@@ -1238,40 +1241,21 @@ uint8_t *fp_msg_inst_stat_collect(uint8_t *buf, uint32_t *buf_len, uint32_t buf_
             continue;
         }
 
-		ros_rwlock_write_lock(&inst_entry->rwlock);
-
         /* fill stat */
-        tmp_value = ros_atomic64_read(&inst_entry->stat.forw_pkts);
-        ros_atomic64_set(&stat[entry_num].urr_stat.forw_pkts, htonll(tmp_value));
-        ros_atomic64_sub(&inst_entry->stat.forw_pkts, tmp_value);
-        pkt_trigger += tmp_value;
+        stat[entry_num].urr_stat.forw_pkts    = htonll(inst_entry->stat.forw_pkts);
+        stat[entry_num].urr_stat.forw_bytes   = htonll(inst_entry->stat.forw_bytes);
+        stat[entry_num].urr_stat.drop_pkts    = htonll(inst_entry->stat.drop_pkts);
+        stat[entry_num].urr_stat.drop_bytes   = htonll(inst_entry->stat.drop_bytes);
+        stat[entry_num].urr_stat.err_cnt      = htonll(inst_entry->stat.err_cnt);
 
-        tmp_value = ros_atomic64_read(&inst_entry->stat.forw_bytes);
-        ros_atomic64_set(&stat[entry_num].urr_stat.forw_bytes, htonll(tmp_value));
-        ros_atomic64_sub(&inst_entry->stat.forw_bytes, tmp_value);
-
-        tmp_value = ros_atomic64_read(&inst_entry->stat.drop_pkts);
-        ros_atomic64_set(&stat[entry_num].urr_stat.drop_pkts, htonll(tmp_value));
-        ros_atomic64_sub(&inst_entry->stat.drop_pkts, tmp_value);
-        pkt_trigger += tmp_value;
-
-        tmp_value = ros_atomic64_read(&inst_entry->stat.drop_bytes);
-        ros_atomic64_set(&stat[entry_num].urr_stat.drop_bytes, htonll(tmp_value));
-        ros_atomic64_sub(&inst_entry->stat.drop_bytes, tmp_value);
-
-        tmp_value = ros_atomic64_read(&inst_entry->stat.err_cnt);
-        ros_atomic64_set(&stat[entry_num].urr_stat.err_cnt, htonll(tmp_value));
-        ros_atomic64_sub(&inst_entry->stat.err_cnt, tmp_value);
-
-		ros_rwlock_write_unlock(&inst_entry->rwlock);
-
-        LOG(FASTPASS, RUNNING, "inst entry %u, fwd_pkts: %ld, fwd_bytes: %ld, drop_pkts: %ld, drop_bytes: %ld, err_cnt: %ld.",
+        LOG(FASTPASS, RUNNING,
+            "inst entry %u, fwd_pkts: %ld, fwd_bytes: %ld, drop_pkts: %ld, drop_bytes: %ld, err_cnt: %ld.",
             cur_index,
-            ntohll(ros_atomic64_read(&stat[entry_num].urr_stat.forw_pkts)),
-            ntohll(ros_atomic64_read(&stat[entry_num].urr_stat.forw_bytes)),
-            ntohll(ros_atomic64_read(&stat[entry_num].urr_stat.drop_pkts)),
-            ntohll(ros_atomic64_read(&stat[entry_num].urr_stat.drop_bytes)),
-            ntohll(ros_atomic64_read(&stat[entry_num].urr_stat.err_cnt)));
+            ntohll(stat[entry_num].urr_stat.forw_pkts),
+            ntohll(stat[entry_num].urr_stat.forw_bytes),
+            ntohll(stat[entry_num].urr_stat.drop_pkts),
+            ntohll(stat[entry_num].urr_stat.drop_bytes),
+            ntohll(stat[entry_num].urr_stat.err_cnt));
 
         /* Update inactive count */
         if (pkt_trigger) {
@@ -1549,7 +1533,7 @@ uint32_t fp_msg_far_mod(comm_msg_ie_t *ie)
     comm_msg_far_ie_data *ie_data = NULL;
     uint8_t tmp_ohc_flag;
     comm_msg_outh_cr_t tmp_ohc;
-    comm_msg_far_action_t tmp_act;
+    session_far_action tmp_act;
     struct dl_list *pos = NULL, *next = NULL;
     fp_inst_entry *inst_entry = NULL;
 
@@ -1648,7 +1632,7 @@ uint32_t fp_msg_far_sum()
 
     sum_num = Res_GetAlloced(far_head->res_no);
 
-    LOG(FASTPASS, RUNNING, "GET total far entry number %d.", sum_num);
+    LOG(FASTPASS, DEBUG, "GET total far entry number %d.", sum_num);
 
     return sum_num;
 }
@@ -1797,7 +1781,7 @@ uint32_t fp_msg_far_show(struct cli_def *cli,uint32_t far_num)
             break;
 
         case 4:
-            cli_print(cli,"redirect SIP URL  %s\n", far_entry->config.forw_redirect.sip_url);
+            cli_print(cli,"redirect SIP URL  %s\n", far_entry->config.forw_redirect.sip_uri);
             break;
 
         case 5:
@@ -2013,7 +1997,7 @@ uint32_t fp_msg_bar_sum()
 
     sum_num  = Res_GetAlloced(bar_head->res_no);
 
-    LOG(FASTPASS, RUNNING, "GET total bar entry number %d.", sum_num);
+    LOG(FASTPASS, DEBUG, "GET total bar entry number %d.", sum_num);
 
     return sum_num;
 }
@@ -2271,7 +2255,7 @@ uint32_t fp_msg_qer_sum()
     qer_head = fp_qer_table_get();
     sum_num  = Res_GetAlloced(qer_head->res_no);
 
-    LOG(FASTPASS, RUNNING, "GET total qer entry number %d.", sum_num);
+    LOG(FASTPASS, DEBUG, "GET total qer entry number %d.", sum_num);
 
     return sum_num;
 }
@@ -2501,7 +2485,7 @@ uint32_t fp_msg_dns_sum()
 
     sum_num = Res_GetAlloced(head->res_no);
 
-    LOG(FASTPASS, RUNNING, "GET total dns entry number %d.", sum_num);
+    LOG(FASTPASS, DEBUG, "GET total dns entry number %d.", sum_num);
 
     return sum_num;
 }
@@ -3018,7 +3002,8 @@ fp_fast_table_add(fp_fast_table *head, fp_fast_entry *entry,
     /* Check if item exist in table */
     entry_tmp = (fp_fast_entry *)avluint_search(bucket->hash_tree, aux_info);
     if (entry_tmp) {
-
+        /*LOG(FASTPASS, ERR, "hash value %x, aux_info %x, tree(%p) already exist.",
+            (hash_key & head->bucket_mask), aux_info, bucket->hash_tree);*/
         ros_rwlock_write_unlock(&bucket->rwlock);
         return NULL;
     }
@@ -3066,10 +3051,9 @@ static uint32_t fp_fast_table_del(fp_fast_table *head, uint32_t entry_no,
         bucket->hash_tree, bucket, aux_info);
 
     node = (AVLU_NODE *)avluint_delete(&bucket->hash_tree, aux_info);
-    if (unlikely(!node))
-    {
+    if (unlikely(!node)) {
         ros_rwlock_write_unlock(&shadow->rwlock);
-        LOG(FASTPASS, ERR, "del node from tree failed.");
+        LOG(FASTPASS, ERR, "del node aux_info:0x%x from tree(%p) failed.", aux_info, bucket->hash_tree);
         return EN_COMM_ERRNO_OTHER_ERROR;
     }
     entry->valid = G_FALSE;
@@ -3110,8 +3094,7 @@ fp_fast_entry *fp_fast_table_test(uint32_t hash_key, uint32_t aux_info)
         entry_cfg->inst_index = COMM_MSG_ORPHAN_NUMBER;
 
         /* Put in hash tree */
-        if (NULL == fp_fast_table_add(fast_head, entry, hash_key, aux_info))
-        {
+        if (NULL == fp_fast_table_add(fast_head, entry, hash_key, aux_info)) {
             LOG(FASTPASS, RUNNING,
                 "put fast entry %d in tree %p IPV4 pool failed!",
                 entry->index, fast_head);
@@ -3235,6 +3218,7 @@ static uint32_t fp_fast_send_buff_pkt(fp_fast_shadow *shadow)
         pkt_info.arg = cblk->buf;
         pkt_info.buf = cblk->pkt;
         pkt_info.len = cblk->len;
+        pkt_info.port_id = cblk->port;
         desc.buf = cblk->pkt;
         desc.len = cblk->len;
         desc.offset = 0;
@@ -3247,7 +3231,7 @@ static uint32_t fp_fast_send_buff_pkt(fp_fast_shadow *shadow)
         if (unlikely(packet_dissect(&desc, &pkt_info.match_key) < 0)) {
             LOG(FASTPASS, ERR, "packet dissect failed!");
 #ifdef CONFIG_FP_DPDK_PORT
-            cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+            cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
             fp_dpdk_add_cblk_buf(cblk);
 #else
             /* free buffer */
@@ -3261,218 +3245,87 @@ static uint32_t fp_fast_send_buff_pkt(fp_fast_shadow *shadow)
 
         if (likely(0 == FLOW_MASK_FIELD_ISSET(field_ofs, FLOW_FIELD_ETHERNET_DL))) {
             /* Ethernet II should be >= 1536(0x0600) */
-
-            if (likely(FLOW_MASK_FIELD_ISSET(field_ofs, FLOW_FIELD_L1_IPV4))) {
-                struct pro_ipv4_hdr *ip_hdr = FlowGetL1Ipv4Header(&pkt_info.match_key);
-
-                /* ipv4 package */
-                switch (cblk->port) {
-                    case EN_PORT_N6:
-                        switch (cblk->port) {
-                            case IP_PRO_UDP:
-                            case IP_PRO_TCP:
-                            case IP_PRO_SCTP:
-                                trace_flag = fp_check_signal_trace(ip_hdr->source, ip_hdr->dest,
-                                    ((struct tp_port *)(ip_hdr + 1))->source,
-                                    ((struct tp_port *)(ip_hdr + 1))->dest, ip_hdr->protocol);
-                                break;
-
-                            default:
-                                trace_flag = fp_check_signal_trace(ip_hdr->source, ip_hdr->dest,
-                                    0, 0, ip_hdr->protocol);
-                                break;
-                        }
-
-                        fp_pkt_match_n6_ipv4(&pkt_info, shadow->head,
-                            entry, cblk, trace_flag);
-
-                        LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N6 buff packet process success.");
-                        break;
-
-                    default:
-                        /* N3 and N4 */
-                        switch (FlowGetL2IpVersion(&pkt_info.match_key)) {
-                            case 4:
-                                {
-                                    struct pro_ipv4_hdr *l2_hdr = FlowGetL2Ipv4Header(&pkt_info.match_key);
-
-                                    switch (cblk->port) {
-                                        case IP_PRO_UDP:
-                                        case IP_PRO_TCP:
-                                        case IP_PRO_SCTP:
-                                            trace_flag = fp_check_signal_trace(l2_hdr->source, l2_hdr->dest,
-                                                ((struct tp_port *)(l2_hdr + 1))->source,
-                                                ((struct tp_port *)(l2_hdr + 1))->dest, l2_hdr->protocol);
-                                            break;
-
-                                        default:
-                                            trace_flag = fp_check_signal_trace(l2_hdr->source, l2_hdr->dest,
-                                                0, 0, l2_hdr->protocol);
-                                            break;
-                                    }
-
-                                    fp_pkt_match_n3_ipv4(&pkt_info, shadow->head,
-                                        entry, cblk, trace_flag);
-
-                                    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N3 buff packet process success.");
-                                }
-                                break;
-
-                            case 6:
-                                {
-                                    //struct pro_ipv6_hdr *ipv6_l2 = FlowGetL2Ipv6Header(&pkt_info.match_key);
-
-                                    fp_pkt_match_l1v4_l2v6(&pkt_info, shadow->head,
-                                        entry, cblk, trace_flag, cblk->port);
-
-                                    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N3 buff packet process success.");
-                                }
-                                break;
-
-                            default:
-#ifdef ETHERNET_SIMPLE_PROC
-                                fp_pkt_match_n3_eth_and_nonip(&pkt_info, shadow->head, entry, cblk, trace_flag);
-#else
-                                if (FLOW_MASK_FIELD_ISSET(field_ofs, FLOW_FIELD_ETHERNET_LLC)) {
-                                    /* Ethernet 802.3 */
-                                    LOG(FASTPASS, RUNNING, "N3 Ethernet 802.3 packet process success.");
-                                    fp_pkt_match_n3_eth(&pkt_info, shadow->head, entry, cblk, trace_flag);
-                                } else {
-                                    /* Non-IP */
-                                    LOG(FASTPASS, DEBUG, "N3 Non-IP packet process success.");
-                                    fp_pkt_match_n3_nonip(&pkt_info, shadow->head, entry, cblk, trace_flag);
-                                }
-#endif
-                                break;
-#if 0
-#ifdef CONFIG_FP_DPDK_PORT
-                                cblk->port = EN_PORT_BUTT; /* Let the applicant release */
-                                fp_dpdk_add_cblk_buf(cblk);
-#else
-                                /* free buffer */
-                                fp_free_pkt(cblk->buf);
-                                cblk->buf = NULL;
-                                fp_cblk_free(cblk);
-#endif
-                                fp_packet_stat_count(COMM_MSG_FP_STAT_ERR_PROC);
-
-                                LOG(FASTPASS, ERR, "Unsupported packet, unable to get inner header!\r\n");
-                                LOG(FASTPASS, ERR, "l1_hdr->src:%08x, l1_hdr->dst: %08x.",
-                                    l1_hdr->source, l1_hdr->dest);
-                                LOG(FASTPASS, ERR, "udp_hdr->src:%d, udp_hdr->dst: %d.",
-                                    udp_hdr->source, udp_hdr->dest);
-                                LOG(FASTPASS, ERR, "gtp_hdr->msg_type:%d, gtp_hdr->length:%d, gtp_hdr->teid:%u.",
-                                    gtp_hdr->msg_type, gtp_hdr->length, gtp_hdr->teid);
-                                break;
-#endif
-                        }
-                        break;
-                }
-            }
-            else if (FLOW_MASK_FIELD_ISSET(field_ofs, FLOW_FIELD_L1_IPV6)) {
-                switch (cblk->port) {
-                    case EN_PORT_N6:
-                        fp_pkt_match_n6_ipv6(&pkt_info, shadow->head,
-                            entry, cblk, trace_flag);
-
-                        LOG(FASTPASS, RUNNING, "N6 buff ipv6 packet process success.");
-                        break;
-
-                    default:
+            if (FLOW_MASK_FIELD_ISSET(field_ofs, FLOW_FIELD_GTP_T_PDU)) {
+                /* GTP-U */
+                switch (FlowGetL2IpVersion(&pkt_info.match_key)) {
+                    case 4:
                         {
-                            switch (FlowGetL2IpVersion(&pkt_info.match_key)) {
-                                case 4:
-                                    {
-                                        struct pro_ipv4_hdr *l2_hdr = FlowGetL2Ipv4Header(&pkt_info.match_key);
+                            struct pro_ipv4_hdr *l2_hdr = FlowGetL2Ipv4Header(&pkt_info.match_key);
 
-                                        switch (cblk->port) {
-                                            case IP_PRO_UDP:
-                                            case IP_PRO_TCP:
-                                            case IP_PRO_SCTP:
-                                                trace_flag = fp_check_signal_trace(l2_hdr->source, l2_hdr->dest,
-                                                    ((struct tp_port *)(l2_hdr + 1))->source,
-                                                    ((struct tp_port *)(l2_hdr + 1))->dest, l2_hdr->protocol);
-                                                break;
+                            trace_flag = fp_check_signal_trace(l2_hdr->source, l2_hdr->dest);
 
-                                            default:
-                                                trace_flag = fp_check_signal_trace(l2_hdr->source, l2_hdr->dest,
-                                                    0, 0, l2_hdr->protocol);
-                                                break;
-                                        }
+                            fp_pkt_match_n3_ipv4(&pkt_info, shadow->head, entry, cblk, trace_flag);
 
-                                        fp_pkt_match_n3_ipv4(&pkt_info, shadow->head,
-                                            entry, cblk, trace_flag);
-
-                                        LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N3 buff packet process success.");
-                                    }
-                                    break;
-
-                                case 6:
-                                    {
-                                        //struct pro_ipv6_hdr *ipv6_l2 = FlowGetL2Ipv6Header(&pkt_info.match_key);
-
-                                        fp_pkt_match_n3_ipv6(&pkt_info, shadow->head,
-                                            entry, cblk, trace_flag, cblk->port);
-
-                                        LOG(FASTPASS, RUNNING, "N3 buff packet process success.");
-                                    }
-                                    break;
-
-                                default:
-#ifdef ETHERNET_SIMPLE_PROC
-                                    fp_pkt_match_n3_eth_and_nonip(&pkt_info, shadow->head, entry, cblk, trace_flag);
-#else
-                                    if (FLOW_MASK_FIELD_ISSET(field_ofs, FLOW_FIELD_ETHERNET_LLC)) {
-                                        /* Ethernet 802.3 */
-                                        LOG(FASTPASS, RUNNING, "N3 Ethernet 802.3 packet process success.");
-                                        fp_pkt_match_n3_eth(&pkt_info, shadow->head, entry, cblk, trace_flag);
-                                    } else {
-                                        /* Non-IP */
-                                        LOG(FASTPASS, DEBUG, "N3 Non-IP packet process success.");
-                                        fp_pkt_match_n3_nonip(&pkt_info, shadow->head, entry, cblk, trace_flag);
-                                    }
-#endif
-                                    break;
-#if 0
-#ifdef CONFIG_FP_DPDK_PORT
-                                    cblk->port = EN_PORT_BUTT; /* Let the applicant release */
-                                    fp_dpdk_add_cblk_buf(cblk);
-#else
-                                    /* free buffer */
-                                    fp_free_pkt(cblk->buf);
-                                    cblk->buf = NULL;
-                                    fp_cblk_free(cblk);
-#endif
-                                    fp_packet_stat_count(COMM_MSG_FP_STAT_ERR_PROC);
-
-                                    LOG(FASTPASS, ERR, "Unsupported packet, unable to get inner header!\r\n");
-                                    LOG(FASTPASS, ERR, "l1_hdr->src:%08x, l1_hdr->dst: %08x.",
-                                        l1_hdr->source, l1_hdr->dest);
-                                    LOG(FASTPASS, ERR, "udp_hdr->src:%d, udp_hdr->dst: %d.",
-                                        udp_hdr->source, udp_hdr->dest);
-                                    LOG(FASTPASS, ERR, "gtp_hdr->msg_type:%d, gtp_hdr->length:%d, gtp_hdr->teid:%u.",
-                                        gtp_hdr->msg_type, gtp_hdr->length, gtp_hdr->teid);
-                                    break;
-#endif
-                            }
+                            LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N3 buff packet process success.");
                         }
+                        break;
+
+                    case 6:
+                        {
+                            //struct pro_ipv6_hdr *ipv6_l2 = FlowGetL2Ipv6Header(&pkt_info.match_key);
+
+                            fp_pkt_match_n3_ipv6(&pkt_info, shadow->head, entry, cblk, trace_flag);
+
+                            LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N3 buff packet process success.");
+                        }
+                        break;
+
+                    default:
+#ifdef ETHERNET_SIMPLE_PROC
+                        fp_pkt_match_n3_eth_and_nonip(&pkt_info, shadow->head, entry, cblk, trace_flag);
+#else
+                        if (FLOW_MASK_FIELD_ISSET(field_ofs, FLOW_FIELD_ETHERNET_LLC)) {
+                            /* Ethernet 802.3 */
+                            LOG(FASTPASS, RUNNING, "N3 Ethernet 802.3 packet process success.");
+                            fp_pkt_match_n3_eth(&pkt_info, shadow->head, entry, cblk, trace_flag);
+                        } else {
+                            /* Non-IP */
+                            LOG(FASTPASS, DEBUG, "N3 Non-IP packet process success.");
+                            fp_pkt_match_n3_nonip(&pkt_info, shadow->head, entry, cblk, trace_flag);
+                        }
+#endif
                         break;
                 }
             } else {
-                LOG(FASTPASS, ERR,"buff or nocp pkt is not a ipv4 or ipv6  packet!");
-                /* if fail, free cblk or mbuf */
-#ifdef CONFIG_FP_DPDK_PORT
-                cblk->port = EN_PORT_BUTT; /* Let the applicant release */
-                fp_dpdk_add_cblk_buf(cblk);
-#else
-                /* free buffer */
-                fp_free_pkt(cblk->buf);
-                cblk->buf = NULL;
-                fp_cblk_free(cblk);
-#endif
-                fp_packet_stat_count(COMM_MSG_FP_STAT_ERR_PROC);
-            }
+                switch (FlowGetL1IpVersion(&pkt_info.match_key)) {
+                    case 4:
+                        {
+                            struct pro_ipv4_hdr *ip_hdr = FlowGetL1Ipv4Header(&pkt_info.match_key);
 
+                            trace_flag = fp_check_signal_trace(ip_hdr->source, ip_hdr->dest);
+
+                            fp_pkt_match_n6_ipv4(&pkt_info, shadow->head, entry, cblk, trace_flag);
+
+                            LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N6 buff IPv4 packet process success.");
+                        }
+                        break;
+
+                    case 6:
+                        {
+                            //struct pro_ipv6_hdr *ipv6_l1 = FlowGetL1Ipv6Header(&pkt_info.match_key);
+
+                            fp_pkt_match_n6_ipv6(&pkt_info, shadow->head, entry, cblk, trace_flag);
+
+                            LOG(FASTPASS, RUNNING, "N6 buff ipv6 packet process success.");
+                        }
+                        break;
+
+                    default:
+                        LOG(FASTPASS, ERR,"buff or nocp pkt is not a ipv4 or ipv6  packet!");
+                        /* if fail, free cblk or mbuf */
+#ifdef CONFIG_FP_DPDK_PORT
+                        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
+                        fp_dpdk_add_cblk_buf(cblk);
+#else
+                        /* free buffer */
+                        fp_free_pkt(cblk->buf);
+                        cblk->buf = NULL;
+                        fp_cblk_free(cblk);
+#endif
+                        fp_packet_stat_count(COMM_MSG_FP_STAT_ERR_PROC);
+                        break;
+                }
+            }
         }
         else {
             /* 802.3 should be <= 1500 */
@@ -3521,7 +3374,7 @@ static uint32_t fp_fast_free_buff_chain(fp_fast_shadow *shadow)
 
         /* Block will be free in fp_cblk_free */
 #ifdef CONFIG_FP_DPDK_PORT
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
 #else
         /* free buffer */
@@ -3622,7 +3475,7 @@ uint32_t fp_fast_free(fp_fast_table *head, uint32_t index)
 
         /* Block will be free in fp_cblk_free */
 #ifdef CONFIG_FP_DPDK_PORT
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
 #else
         /* free buffer */
@@ -3696,7 +3549,7 @@ uint32_t fp_fast_clear(uint32_t type)
 
             /* Block will be free in fp_cblk_free */
 #ifdef CONFIG_FP_DPDK_PORT
-            cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+            cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
             fp_dpdk_add_cblk_buf(cblk);
 #else
             /* free buffer */
@@ -3725,30 +3578,6 @@ uint32_t fp_fast_clear(uint32_t type)
     }
 
     return ret;
-}
-
-void fp_get_action_str(uint8_t action_val, char *action_str)
-{
-    comm_msg_far_action_t action;
-
-    action_str[0] = 0;
-    action.value = action_val;
-
-    if (action.d.drop) {
-        strcat(action_str, "drop ");
-    }
-    if (action.d.forw) {
-        strcat(action_str, "forw ");
-    }
-    if (action.d.buff) {
-        strcat(action_str, "buff ");
-    }
-    if (action.d.nocp) {
-        strcat(action_str, "nocp ");
-    }
-    if (action.d.dupl) {
-        strcat(action_str, "dupl ");
-    }
 }
 
 static uint32_t fp_msg_inst_param_check(comm_msg_inst_config *inst_config)
@@ -3856,9 +3685,6 @@ static void fp_msg_inst_copy(comm_msg_inst_config *dst, comm_msg_inst_config *sr
                 ntohl(dst->user_info.ue_ipaddr[index].ipv4_addr);
         }
     }
-	dst->user_info.rat_type.enterprise_id = ntohs(dst->user_info.rat_type.enterprise_id);
-	dst->user_info.user_local_info.enterprise_id =
-        ntohs(dst->user_info.user_local_info.enterprise_id);
 	dst->collect_thres = ntohll(src->collect_thres);
 }
 
@@ -3875,7 +3701,7 @@ static void fp_msg_far_copy(comm_msg_far_config *dst, comm_msg_far_config *src)
 
     entry_far->far_id = htonl(input_far->far_id);
 
-    entry_far->action.value = input_far->action.value;
+    entry_far->action.value = htons(input_far->action.value);
     entry_far->forw_if      = input_far->forw_if;
     entry_far->choose.value = htons(input_far->choose.value);
 

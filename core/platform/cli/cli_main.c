@@ -118,7 +118,6 @@ int main(int argc,char *argv[])
         }
     }
 
-    printf("connect() to cli server %u \n",ntohs(server.sin_port));
     server.sin_addr.s_addr= htonl(INADDR_ANY);
     if(connect(sockfd, (struct sockaddr *)&server, sizeof(server))==-1)
     {

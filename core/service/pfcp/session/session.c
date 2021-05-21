@@ -26,10 +26,11 @@
 #include "session_report.h"
 #include "traffic_endpoint_mgmt.h"
 #include "pfd_mgmt.h"
-#include "predefine_rule_mgmt.h"
+#include "white_list.h"
 #include "tuple_table.h"
 #include "sp_dns_cache.h"
 #include "session_ethernet.h"
+#include "predefine_rule_mgmt.h"
 
 #ifdef SUPPORT_REST_API
 #include "ulfius.h"
@@ -567,18 +568,19 @@ int session_init(upc_config_info *upc_conf)
     }
     total_mem += ret;
 
-	ret = pf_rule_table_init(MAX_PF_RULE_TABLE);
+	ret = white_list_table_init(MAX_WHITE_LIST_TABLE);
 	if (ret < 0) {
-        LOG(SESSION, ERR, "pf_rule_table_init failed, pf_rule number: %u.",
-            MAX_PF_RULE_TABLE);
+        LOG(SESSION, ERR, "white_list_table_init failed, white_list number: %u.",
+            MAX_WHITE_LIST_TABLE);
         return -1;
     }
     total_mem += ret;
 
-	ret = white_list_table_init(MAX_WHITE_LIST_TABLE);
+    /* Init predefined rules */
+    ret = predef_rules_table_init(MAX_PREDEFINED_RULES_NUM);
 	if (ret < 0) {
-        LOG(SESSION, ERR, "white_list_table_init failed, white_list number: %u.",
-            MAX_PF_RULE_TABLE);
+        LOG(SESSION, ERR, "Predefined rules init failed, number: %u.",
+            MAX_PREDEFINED_RULES_NUM);
         return -1;
     }
     total_mem += ret;
@@ -615,6 +617,14 @@ int session_init(upc_config_info *upc_conf)
         return -1;
     }
     total_mem += ret;
+
+    {
+        extern CVMX_SHARED ST_RES_POOL    *gpstResPoolAssigner;
+
+        LOG(UPC, MUST, "Resource pool uiTotal: %u, uiSecNum: %u, uiAlloced: %u",
+            gpstResPoolAssigner->uiTotal, gpstResPoolAssigner->uiSecNum,
+            gpstResPoolAssigner->uiAlloced);
+    }
 
     ret = sdc_init(upc_conf->dns_num);
     if (0 > ret) {
@@ -697,17 +707,17 @@ int session_proc_qer_prss(comm_msg_ie_t *ie)
                 resp.msg_header.node_id_index = (uint8_t)qer_prss->node_index;
                 resp.msg_header.seq_num = qer_prss->seq_num;
 
-                resp.member_flag.d.pkt_rate_status_report_present = 1;
-                resp.pkt_rate_status_report.qer_id = ie->index;
+                resp.pkt_rate_status_report_num = 1;
+                resp.pkt_rate_status_report[0].qer_id = ie->index;
                 if (qer_prss->s.f_up) {
-                    resp.pkt_rate_status_report.packet_rate_status.flag.d.UL = 1;
-                    resp.pkt_rate_status_report.packet_rate_status.remain_ul_packets = qer_prss->ul_pkts;
+                    resp.pkt_rate_status_report[0].packet_rate_status.flag.d.UL = 1;
+                    resp.pkt_rate_status_report[0].packet_rate_status.remain_ul_packets = qer_prss->ul_pkts;
                 }
                 if (qer_prss->s.f_dp) {
-                    resp.pkt_rate_status_report.packet_rate_status.flag.d.DL = 1;
-                    resp.pkt_rate_status_report.packet_rate_status.remain_dl_packets = qer_prss->dl_pkts;
+                    resp.pkt_rate_status_report[0].packet_rate_status.flag.d.DL = 1;
+                    resp.pkt_rate_status_report[0].packet_rate_status.remain_dl_packets = qer_prss->dl_pkts;
                 }
-                resp.pkt_rate_status_report.packet_rate_status.rate_ctrl_status_time =
+                resp.pkt_rate_status_report[0].packet_rate_status.rate_ctrl_status_time =
                     (uint64_t)qer_prss->validity_time << 32;
 
                 LOG(SESSION, RUNNING, "res->local_seid\t\t0x%lx", resp.local_seid);
@@ -884,22 +894,6 @@ uint32_t session_send_simple_cmd_to_fp(uint16_t cmd, int fd)
     msg->total_len = htonl(buf_len);
 
     return session_msg_send_to_fp((char *)buf, buf_len, fd);
-}
-
-int session_pf_rule_create_proc(session_content_create *sess_content)
-{
-
-	LOG(SESSION, RUNNING, "session_pf_rule_create_proc:%d",sess_content->msg_header.spare);
-	//消息头保留字段用于预定义规则是增加还是删除
-	if(sess_content->msg_header.spare == 1)
-	{
-		session_predefine_rule_create(sess_content);
-	}
-	else
-	{
-		session_predefine_rule_delete((uint8_t *)(sess_content->pdr_arr[0].act_pre_arr[0].rules_name),0xffffffff);
-	}
-	return 0;
 }
 
 int session_sig_trace_proc(session_sig_trace *sess_st)

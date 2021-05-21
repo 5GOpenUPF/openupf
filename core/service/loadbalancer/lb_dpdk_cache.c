@@ -105,6 +105,7 @@ void lb_dpdk_tx_queue_append(lb_dpdk_cache_node *entry)
 
 void lb_dpdk_tx_queue_proc(uint32_t lcore_id)
 {
+#if (LB_NEIGHBOR_ENABLED == 1)
     lb_dpdk_cache_node *cache_node;
     struct dl_list *pos = NULL, *next = NULL;
 
@@ -150,6 +151,7 @@ void lb_dpdk_tx_queue_proc(uint32_t lcore_id)
         lb_dpdk_cache_free(cache_node);
     }
     ros_rwlock_write_unlock(&g_lb_dpdk_cache_mgmt.dpdk_tx_lock[lcore_id]); /* Unlock */
+#endif
 }
 
 void lb_dpdk_cache_init_prepare(void)

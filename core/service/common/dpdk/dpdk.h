@@ -51,22 +51,22 @@
 #define MEMPOOL_CACHE_SIZE          256
 
 #define DPDK_MAX_RX_PKT_BURST       32
-#define DPDK_MAX_TX_PKT_BURST       16
+#define DPDK_MAX_TX_PKT_BURST       32
 #define BURST_TX_DRAIN_US           100
 #define NB_SOCKETS                  8
 
 #define DPDK_NB_MBUF	RTE_MAX(\
-	(nb_ports * nb_rx_queue * RTE_TEST_RX_DESC_DEFAULT +	\
-	nb_ports * nb_lcores * DPDK_MAX_RX_PKT_BURST +			\
-	nb_ports * n_tx_queue * RTE_TEST_TX_DESC_DEFAULT +	\
-	nb_lcores * MEMPOOL_CACHE_SIZE),			\
-	(unsigned)16384)
+	(nb_ports * (nb_rx_queue * RTE_TEST_RX_DESC_DEFAULT +	\
+	nb_lcores * DPDK_MAX_RX_PKT_BURST +			\
+	nb_tx_queue * RTE_TEST_TX_DESC_DEFAULT +	\
+	nb_lcores * MEMPOOL_CACHE_SIZE)),			\
+	8192U)
 
-#define RTE_TEST_RX_DESC_DEFAULT    512
-#define RTE_TEST_TX_DESC_DEFAULT    512
+#define RTE_TEST_RX_DESC_DEFAULT    1024
+#define RTE_TEST_TX_DESC_DEFAULT    1024
 
 #define DPDK_CHECK_INTERVAL         100             /* 100ms */
-#define DPDK_MAX_CHECK_TIME         10              /* 1s (10 * 100ms) in total */
+#define DPDK_MAX_CHECK_TIME         60              /* 6s (60 * 100ms) in total */
 
 #define MAX_BOUND_DEV_ETHPORTS      8
 
@@ -111,11 +111,19 @@ typedef enum tag_EN_DPDK_INIT_STAT
 
 struct dpdk_config {
     char        dev[MAX_BOUND_DEV_ETHPORTS][32];
-    uint16_t    rx_queue;
-    uint16_t    tx_queue;
     uint8_t     cpus[ROS_MAX_CPUS_NUM]; /* CPU ID array that can be used */
     uint8_t     core_num;
     uint8_t     dev_num;
+};
+
+struct dpdk_vmdq_config {
+    uint16_t        num_pf_queues;
+    uint16_t        queues_per_pool;
+    uint16_t        num_vmdq_queues;
+    uint16_t        nb_queue_pools;     /* Number of queue pools set */
+    uint16_t        vmdq_queue_base;
+    uint16_t        vmdq_pool_base;
+    uint32_t        num_queues;
 };
 
 
@@ -158,16 +166,23 @@ enum {
     } while(0);
 
 void dpdk_send_packet(struct rte_mbuf *m, uint16_t port_id, const char *func, int line);
-struct rte_mbuf *__dpdk_alloc_mbuf(uint32_t line);
-void dpdk_free_mbuf(struct rte_mbuf *m);
+
 #if (defined(ENABLE_DPDK_DEBUG))
-#define dpdk_alloc_mbuf() __dpdk_alloc_mbuf(__LINE__)
+struct rte_mbuf *__dpdk_alloc_mbuf(uint32_t line);
+void __dpdk_free_mbuf(struct rte_mbuf *m, uint32_t line);
+
+#define dpdk_alloc_mbuf()   __dpdk_alloc_mbuf(__LINE__)
+#define dpdk_free_mbuf(m)   __dpdk_free_mbuf(m, __LINE__)
 #else
 struct rte_mbuf *dpdk_alloc_mbuf(void);
+void dpdk_free_mbuf(struct rte_mbuf *m);
 #endif
 
 void dpdk_dump_packet_1(uint8_t *buf, uint16_t buf_len, const char *func, uint32_t line);
 #define dpdk_dump_packet(buf, buf_len)  dpdk_dump_packet_1((uint8_t *)buf, buf_len, __FUNCTION__, __LINE__)
+
+uint8_t dpdk_get_port_num(void);
+int dpdk_port_linked(uint8_t port_id);
 
 uint8_t dpdk_get_first_core_id(void);
 uint8_t *dpdk_get_cpus(void);
@@ -181,6 +196,7 @@ uint32_t dpdk_get_mtu(void);
 void dpdk_set_mtu(uint32_t new_mtu);
 void dpdk_show_mempool_stat(struct cli_def *cli, int show_all);
 uint8_t *dpdk_get_mac(uint16_t portid);
+void dpdk_clear_stat(void);
 
 #endif /* __DPDK_H__ */
 

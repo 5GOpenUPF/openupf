@@ -54,22 +54,21 @@ typedef struct tag_mb_management_end_config {
 } upc_management_end_config;
 
 typedef struct tag_upc_backend_config {
-    struct rb_node      be_node;
-    uint64_t            be_key;
-    ros_rwlock_t        lock;
-    uint32_t            index;
-    int                 fd;     /* Currently valid connections */
-    ros_atomic16_t      be_timeout_times;
-    ros_atomic16_t      valid;
-    ros_atomic32_t      be_state;
-    struct FSM_t        fsm[EN_AUDIT_BUTT];
-    uint8_t             be_mac[EN_PORT_BUTT][ETH_ALEN];
+    struct rb_node          be_node;
+    ros_rwlock_t            lock;
+    uint32_t                index;
+    int                     fd;     /* Currently valid connections */
+    ros_atomic16_t          be_timeout_times;
+    ros_atomic16_t          valid;
+    ros_atomic32_t          be_state;
+    uint32_t                spare;
+    struct FSM_t            fsm[EN_AUDIT_BUTT];
+    comm_msg_backend_config be_config;
 }upc_backend_config;
 
 typedef struct tag_upc_sync_backend_config {
-    uint8_t             be_mac[EN_PORT_BUTT][ETH_ALEN];
-    uint64_t            be_key;
-    uint8_t             action; /* EN_UPC_HA_ACTION */
+    comm_msg_backend_config   be_config;
+    uint8_t                   action; /* EN_UPC_HA_ACTION */
 } upc_sync_backend_config;
 
 typedef struct tag_upc_backend_mgmt {
@@ -87,7 +86,7 @@ upc_backend_mgmt *upc_get_backend_mgmt_public(void);
 upc_management_end_config *upc_mb_config_get_public(void);
 
 void upc_mb_set_work_status(int16_t status);
-upc_backend_config *upc_backend_register(uint8_t *mac, uint64_t fp_key, int fd);
+upc_backend_config *upc_backend_register(comm_msg_backend_config *be_hb_config, int fd);
 upc_backend_config *upc_backend_search(uint64_t be_key);
 void upc_backend_heartbeat_reply(int fd);
 void upc_backend_activate(upc_backend_config *be_cfg);

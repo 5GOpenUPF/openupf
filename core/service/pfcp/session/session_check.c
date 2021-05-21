@@ -1073,7 +1073,7 @@ static int session_traffic_endpoint_cmp(session_tc_endpoint *exp, struct traffic
 
     if (exp->member_flag.d.redundant_transmission_present) {
         if (memcmp(&exp->redundant_transmission_param, &act->te.redundant_transmission_param,
-            sizeof(session_redundant_trans_param_in_pdi))) {
+            sizeof(session_redundant_transmission_detection_param))) {
             ++ret;
             LOG(SESSION, ERR, "redundant_transmission_param compare failed.");
         }

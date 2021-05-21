@@ -14,7 +14,6 @@
 #include "upc_temp_buffer.h"
 #include "pfcp_pfd_mgmt.h"
 #include "upc_session.h"
-#include "upc_prerule.h"
 #include "session_mgmt.h"
 
 extern user_Signaling_trace_t user_sig_trace;
@@ -1172,13 +1171,13 @@ static PFCP_CAUSE_TYPE upc_parse_ueip_addr_pool_id(session_ue_ip_address_pool_id
     uint8_t* buffer, uint16_t *buf_pos, int buf_max, uint16_t obj_len)
 {
     PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint16_t len_cnt = 0;
+    uint16_t len_cnt = 0, pool_id_len;
 
     if (obj_len && ((*buf_pos + obj_len) <= buf_max)) {
         /* length */
         len_cnt += sizeof(uint16_t);
         if (len_cnt <= obj_len) {
-            pool_id->pool_id_len = tlv_decode_uint16_t(buffer, buf_pos);
+            pool_id_len = tlv_decode_uint16_t(buffer, buf_pos);
         } else {
             LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
                 obj_len, len_cnt);
@@ -1187,11 +1186,11 @@ static PFCP_CAUSE_TYPE upc_parse_ueip_addr_pool_id(session_ue_ip_address_pool_id
         }
 
         /* pool id */
-        if (pool_id->pool_id_len < UE_IP_ADDRESS_POOL_LEN) {
-            len_cnt += pool_id->pool_id_len;
+        if (pool_id_len < UE_IP_ADDRESS_POOL_LEN) {
+            len_cnt += pool_id_len;
             if (len_cnt <= obj_len) {
-                tlv_decode_binary(buffer, buf_pos, pool_id->pool_id_len, (uint8_t *)pool_id->pool_identity);
-                pool_id->pool_identity[pool_id->pool_id_len] = '\0';
+                tlv_decode_binary(buffer, buf_pos, pool_id_len, (uint8_t *)pool_id->pool_identity);
+                pool_id->pool_identity[pool_id_len] = '\0';
             } else {
                 LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
                     obj_len, len_cnt);
@@ -1200,7 +1199,7 @@ static PFCP_CAUSE_TYPE upc_parse_ueip_addr_pool_id(session_ue_ip_address_pool_id
             }
         } else {
             LOG(UPC, ERR, "pool_id_length: %d abnormal, Should be Less than %d.",
-                pool_id->pool_id_len, UE_IP_ADDRESS_POOL_LEN);
+                pool_id_len, UE_IP_ADDRESS_POOL_LEN);
             res_cause = SESS_INVALID_LENGTH;
         }
     } else {
@@ -1236,7 +1235,7 @@ static PFCP_CAUSE_TYPE upc_parse_ip_mul_address(session_ip_multicast_address *ip
             return res_cause;
         }
 
-        if (ip_mul->flag.d.V4) {
+        if (ip_mul->flag.d.v4) {
             /* Start ipv4 address */
             len_cnt += sizeof(uint32_t);
             if (len_cnt <= obj_len) {
@@ -1249,7 +1248,7 @@ static PFCP_CAUSE_TYPE upc_parse_ip_mul_address(session_ip_multicast_address *ip
             }
         }
 
-        if (ip_mul->flag.d.V6) {
+        if (ip_mul->flag.d.v6) {
             /* Start ipv6 address */
             len_cnt += IPV6_ALEN;
             if (len_cnt <= obj_len) {
@@ -1263,8 +1262,8 @@ static PFCP_CAUSE_TYPE upc_parse_ip_mul_address(session_ip_multicast_address *ip
             }
         }
 
-        if (ip_mul->flag.d.R) {
-            if (ip_mul->flag.d.V4) {
+        if (ip_mul->flag.d.r) {
+            if (ip_mul->flag.d.v4) {
                 /* End ipv4 address */
                 len_cnt += sizeof(uint32_t);
                 if (len_cnt <= obj_len) {
@@ -1277,7 +1276,7 @@ static PFCP_CAUSE_TYPE upc_parse_ip_mul_address(session_ip_multicast_address *ip
                 }
             }
 
-            if (ip_mul->flag.d.V6) {
+            if (ip_mul->flag.d.v6) {
                 /* End ipv6 address */
                 len_cnt += IPV6_ALEN;
                 if (len_cnt <= obj_len) {
@@ -1306,7 +1305,7 @@ static PFCP_CAUSE_TYPE upc_parse_ip_mul_address(session_ip_multicast_address *ip
     return res_cause;
 }
 
-static PFCP_CAUSE_TYPE upc_parse_source_ip_address(session_source_ip_address *source_ip,
+PFCP_CAUSE_TYPE upc_parse_source_ip_address(session_source_ip_address *source_ip,
     uint8_t* buffer, uint16_t *buf_pos, int buf_max, uint16_t obj_len)
 {
     PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
@@ -1462,7 +1461,91 @@ static PFCP_CAUSE_TYPE upc_parse_ip_mul_addr_info(session_ip_multicast_addr_info
     return res_cause;
 }
 
-static PFCP_CAUSE_TYPE upc_parse_redundant_trans_para_in_pdi(session_redundant_trans_param_in_pdi *rtp,
+static PFCP_CAUSE_TYPE upc_parse_transport_delay_reporting(session_transport_delay_reporting *tdr,
+    uint8_t* buffer, uint16_t *buf_pos, int buf_max,
+    session_emd_response *sess_rep)
+{
+    uint16_t last_pos = 0;
+    uint16_t obj_type = 0, obj_len = 0;
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+    uint8_t m_opt = 0;
+
+    LOG(UPC, RUNNING, "Parse Transport Delay Reporting.");
+    /* Parse packet */
+    while (*buf_pos < buf_max) {
+        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
+            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
+            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
+        } else {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "buff len abnormal.");
+            break;
+        }
+
+        if ((obj_len + *buf_pos) > buf_max) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING,
+                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
+                obj_len, *buf_pos, buf_max);
+            break;
+        }
+
+        switch (obj_type) {
+            case UPF_REMOTE_GTP_U_PEER:
+                m_opt = 1;
+                res_cause = pfcp_parse_remote_gtpu_peer(&tdr->preceding_ul_gtpu_peer,
+                    buffer, buf_pos, buf_max, obj_len);
+                break;
+
+            case UPF_TRANSPORT_LEVEL_MARKING:
+                if (sizeof(uint16_t) == obj_len) {
+                    tdr->dscp_present = 1;
+                    tdr->dscp.value = tlv_decode_uint16_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint16_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                    return res_cause;
+                }
+                break;
+
+            default:
+                LOG(UPC, ERR, "type %d, not support.", obj_type);
+                res_cause = SESS_SERVICE_NOT_SUPPORTED;
+                /* By manual, these feature UP should not support */
+                break;
+        }
+
+        /* Must go ahead in each cycle */
+        if (last_pos == *buf_pos) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "empty ie.");
+            break;
+        } else {
+            last_pos = *buf_pos;
+        }
+
+        if (res_cause != SESS_REQUEST_ACCEPTED) {
+            LOG(UPC, RUNNING, "parse abnormal.");
+            if (0 == sess_rep->member_flag.d.offending_ie_present) {
+                sess_rep->member_flag.d.offending_ie_present = 1;
+                sess_rep->offending_ie = obj_type;
+            }
+            break;
+        }
+    }
+
+    /* Check mandaytory option */
+    if ((res_cause == SESS_REQUEST_ACCEPTED) && (m_opt == 0)) {
+        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
+
+        res_cause = SESS_MANDATORY_IE_MISSING;
+    }
+
+    return res_cause;
+}
+
+static PFCP_CAUSE_TYPE upc_parse_redundant_trans_para_in_pdi(session_redundant_transmission_detection_param *rtp,
     uint8_t* buffer, uint16_t *buf_pos, int buf_max,
     session_emd_response *sess_rep)
 {
@@ -2066,6 +2149,23 @@ static PFCP_CAUSE_TYPE upc_parse_create_pdr(session_pdr_create *pdr,
                 }
                 break;
 
+            case UPF_MPTCP_APPLICABLE_INDICATION:
+                if (sizeof(uint8_t) == obj_len) {
+                    pdr->member_flag.d.mptcp_app_indication_present = 1;
+                    pdr->mptcp_app_indication.value = tlv_decode_uint8_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            case UPF_TRANSPORT_DELAY_REPORTING:
+                pdr->member_flag.d.transport_delay_rep_present = 1;
+                res_cause = upc_parse_transport_delay_reporting(&pdr->transport_delay_rep, buffer,
+                    buf_pos, buf_max, sess_rep);
+                break;
+
             default:
                 LOG(UPC, ERR, "type %d, not support.", obj_type);
                 res_cause = SESS_SERVICE_NOT_SUPPORTED;
@@ -2084,10 +2184,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_pdr(session_pdr_create *pdr,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_PDR;
-            sess_rep->failed_rule_id.rule_id = pdr->pdr_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -2291,85 +2387,10 @@ static PFCP_CAUSE_TYPE upc_parse_update_pdr(session_pdr_update *pdr,
                 }
                 break;
 
-            default:
-                LOG(UPC, ERR, "type %d, not support.", obj_type);
-                res_cause = SESS_SERVICE_NOT_SUPPORTED;
-                /* By manual, these feature UP should not support */
-                break;
-        }
-
-        /* Must go ahead in each cycle */
-        if (last_pos == *buf_pos) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "empty ie.");
-            break;
-        } else {
-            last_pos = *buf_pos;
-        }
-
-        if (res_cause != SESS_REQUEST_ACCEPTED) {
-            LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_PDR;
-            sess_rep->failed_rule_id.rule_id = pdr->pdr_id;
-
-            if (0 == sess_rep->member_flag.d.offending_ie_present) {
-                sess_rep->member_flag.d.offending_ie_present = 1;
-                sess_rep->offending_ie = obj_type;
-            }
-            break;
-        }
-    }
-
-    /* Check mandaytory option */
-    if ((res_cause == SESS_REQUEST_ACCEPTED) && (m_opt == 0)) {
-        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
-
-        res_cause = SESS_MANDATORY_IE_MISSING;
-    }
-
-    return res_cause;
-}
-
-static PFCP_CAUSE_TYPE upc_parse_remove_pdr(uint16_t *pdr_id,
-    uint8_t* buffer, uint16_t *buf_pos, int buf_max,
-    session_emd_response *sess_rep)
-{
-    uint16_t last_pos = 0;
-    uint16_t obj_type = 0, obj_len = 0;
-    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint8_t m_opt = 0;
-
-    LOG(UPC, RUNNING, "Parse remove PDR.");
-    /* Parse packet */
-    while (*buf_pos < buf_max) {
-        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
-            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
-            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
-        } else {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "buff len abnormal.");
-            break;
-        }
-
-        if ((obj_len + *buf_pos) > buf_max) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING,
-                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
-                obj_len, *buf_pos, buf_max);
-            break;
-        }
-
-        switch (obj_type) {
-            case UPF_PDR_ID:
-                if (sizeof(uint16_t) == obj_len) {
-                    m_opt = 1;
-                    *pdr_id = tlv_decode_uint16_t(buffer, buf_pos);
-                } else {
-                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
-                        obj_len, sizeof(uint16_t));
-                    res_cause = SESS_INVALID_LENGTH;
-                }
+            case UPF_TRANSPORT_DELAY_REPORTING:
+                pdr->member_flag.d.transport_delay_rep_present = 1;
+                res_cause = upc_parse_transport_delay_reporting(&pdr->transport_delay_rep, buffer,
+                    buf_pos, buf_max, sess_rep);
                 break;
 
             default:
@@ -2390,10 +2411,6 @@ static PFCP_CAUSE_TYPE upc_parse_remove_pdr(uint16_t *pdr_id,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_PDR;
-            sess_rep->failed_rule_id.rule_id = *pdr_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -2462,8 +2479,8 @@ static PFCP_CAUSE_TYPE upc_parse_redirect_address(
             case 3:
                 if (obj_len <= REDIRECT_SERVER_ADDR_LEN) {
                         tlv_decode_binary(buffer, buf_pos,
-                            obj_len, (uint8_t *)redir_addr->sip_url);
-                        redir_addr->sip_url[obj_len] = '\0';
+                            obj_len, (uint8_t *)redir_addr->sip_uri);
+                        redir_addr->sip_uri[obj_len] = '\0';
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
                         obj_len, REDIRECT_SERVER_ADDR_LEN);
@@ -3377,10 +3394,10 @@ static PFCP_CAUSE_TYPE upc_parse_create_far(session_far_create *far_tbl,
                 break;
 
             case UPF_APPLY_ACTION:
-                if (sizeof(uint8_t) == obj_len) {
+                if (sizeof(uint16_t) == obj_len) {
                     m_opt.d.action = 1;
                     far_tbl->member_flag.d.action_present = 1;
-                    far_tbl->action.value = tlv_decode_uint8_t(buffer, buf_pos);
+                    far_tbl->action.value = tlv_decode_uint16_t(buffer, buf_pos);
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
                         obj_len, sizeof(uint8_t));
@@ -3442,10 +3459,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_far(session_far_create *far_tbl,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_FAR;
-            sess_rep->failed_rule_id.rule_id = far_tbl->far_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -3508,9 +3521,9 @@ static PFCP_CAUSE_TYPE upc_parse_update_far(session_far_update *far_tbl,
                 break;
 
             case UPF_APPLY_ACTION:
-                if (sizeof(uint8_t) == obj_len) {
+                if (sizeof(uint16_t) == obj_len) {
                     far_tbl->member_flag.d.action_present = 1;
-                    far_tbl->action.value = tlv_decode_uint8_t(buffer, buf_pos);
+                    far_tbl->action.value = tlv_decode_uint16_t(buffer, buf_pos);
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
                         obj_len, sizeof(uint8_t));
@@ -3572,91 +3585,6 @@ static PFCP_CAUSE_TYPE upc_parse_update_far(session_far_update *far_tbl,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_FAR;
-            sess_rep->failed_rule_id.rule_id = far_tbl->far_id;
-
-            if (0 == sess_rep->member_flag.d.offending_ie_present) {
-                sess_rep->member_flag.d.offending_ie_present = 1;
-                sess_rep->offending_ie = obj_type;
-            }
-            break;
-        }
-    }
-
-    /* Check mandaytory option */
-    if ((res_cause == SESS_REQUEST_ACCEPTED) && (m_opt == 0)) {
-        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
-
-        res_cause = SESS_MANDATORY_IE_MISSING;
-    }
-
-    return res_cause;
-}
-
-static PFCP_CAUSE_TYPE upc_parse_remove_far(uint32_t *far_id,
-    uint8_t* buffer, uint16_t *buf_pos, int buf_max,
-    session_emd_response *sess_rep)
-{
-    uint16_t last_pos = 0;
-    uint16_t obj_type = 0, obj_len = 0;
-    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint8_t m_opt = 0;
-
-    LOG(UPC, RUNNING, "Parse remove FAR.");
-    /* Parse packet */
-    while (*buf_pos < buf_max) {
-        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
-            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
-            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
-        } else {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "buff len abnormal.");
-            break;
-        }
-
-        if ((obj_len + *buf_pos) > buf_max) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING,
-                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
-                obj_len, *buf_pos, buf_max);
-            break;
-        }
-
-        switch (obj_type) {
-            case UPF_FAR_ID:
-                if (sizeof(uint32_t) == obj_len) {
-                    m_opt = 1;
-                    *far_id = tlv_decode_uint32_t(buffer, buf_pos);
-                } else {
-                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
-                        obj_len, sizeof(uint32_t));
-                    res_cause = SESS_INVALID_LENGTH;
-                }
-                break;
-
-            default:
-                LOG(UPC, ERR, "type %d, not support.", obj_type);
-                res_cause = SESS_SERVICE_NOT_SUPPORTED;
-                /* By manual, these feature UP should not support */
-                break;
-        }
-
-        /* Must go ahead in each cycle */
-        if (last_pos == *buf_pos) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "empty ie.");
-            break;
-        } else {
-            last_pos = *buf_pos;
-        }
-
-        if (res_cause != SESS_REQUEST_ACCEPTED) {
-            LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_FAR;
-            sess_rep->failed_rule_id.rule_id = *far_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -3935,7 +3863,7 @@ static PFCP_CAUSE_TYPE upc_parse_added_monitor_time(
     return res_cause;
 }
 
-static PFCP_CAUSE_TYPE upc_parse_create_urr(session_usage_report_rule *urr,
+static PFCP_CAUSE_TYPE upc_parse_create_or_update_urr(session_usage_report_rule *urr,
     uint8_t* buffer, uint16_t *buf_pos, int buf_max,
     session_emd_response *sess_rep, uint8_t update_mode)
 {
@@ -3988,10 +3916,10 @@ static PFCP_CAUSE_TYPE upc_parse_create_urr(session_usage_report_rule *urr,
                 break;
 
             case UPF_REPORTING_TRIGGERS:
-                if (sizeof(uint16_t) == obj_len) {
+                if (3 == obj_len) {
                     m_opt.d.triggers = 1;
                     urr->member_flag.d.trigger_present = 1;
-                    urr->trigger.value = tlv_decode_uint16_t(buffer, buf_pos);
+                    urr->trigger.value = tlv_decode_int_3b(buffer, buf_pos);
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
                         obj_len, sizeof(uint16_t));
@@ -4249,6 +4177,39 @@ static PFCP_CAUSE_TYPE upc_parse_create_urr(session_usage_report_rule *urr,
                 }
                 break;
 
+            case UPF_APPLICATION_ID:
+                if (urr->exempted_app_id_num < EXEMPTED_APPLICATION_ID_NUM) {
+                    if (obj_len && (MAX_APP_ID_LEN > obj_len)) {
+                        tlv_decode_binary(buffer, buf_pos, obj_len,
+                            (uint8_t *)urr->exempted_app_id[urr->exempted_app_id_num]);
+                        urr->exempted_app_id[urr->exempted_app_id_num][obj_len] = '\0';
+                        ++urr->exempted_app_id_num;
+                    } else {
+                        LOG(UPC, ERR,
+                            "obj_len: %d abnormal, Should be Less than %d.",
+                            obj_len, MAX_APP_ID_LEN);
+                        res_cause = SESS_INVALID_LENGTH;
+                    }
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of Exempted Application ID for Quota Action reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_SDF_FILTER:
+                if (urr->exempted_sdf_filter_num < EXEMPTED_SDF_FILTER_NUM) {
+                    res_cause = upc_parse_sdf_filter(
+                        &urr->exempted_sdf_filter[urr->exempted_sdf_filter_num], buffer,
+                        buf_pos, buf_max, obj_len);
+                    ++urr->exempted_sdf_filter_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of Exempted SDF Filter for Quota Action reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
             default:
                 LOG(UPC, ERR, "type %d, not support.", obj_type);
                 res_cause = SESS_SERVICE_NOT_SUPPORTED;
@@ -4267,10 +4228,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_urr(session_usage_report_rule *urr,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_URR;
-            sess_rep->failed_rule_id.rule_id = urr->urr_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -4318,88 +4275,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_urr(session_usage_report_rule *urr,
                 res_cause = SESS_CONDITIONAL_IE_MISSING;
             }
         }
-    }
-
-    return res_cause;
-}
-
-static PFCP_CAUSE_TYPE upc_parse_remove_urr(uint32_t *urr_id,
-    uint8_t* buffer, uint16_t *buf_pos, int buf_max,
-    session_emd_response *sess_rep)
-{
-    uint16_t last_pos = 0;
-    uint16_t obj_type = 0, obj_len = 0;
-    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint8_t m_opt = 0;
-
-    LOG(UPC, RUNNING, "Parse remove URR.");
-    /* Parse packet */
-    while (*buf_pos < buf_max) {
-        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
-            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
-            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
-        } else {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "buff len abnormal.");
-            break;
-        }
-
-        if ((obj_len + *buf_pos) > buf_max) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING,
-                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
-                obj_len, *buf_pos, buf_max);
-            break;
-        }
-
-        switch (obj_type) {
-            case UPF_URR_ID:
-                if (sizeof(uint32_t) == obj_len) {
-                    m_opt  = 1;
-                    *urr_id = tlv_decode_uint32_t(buffer, buf_pos);
-                } else {
-                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
-                        obj_len, sizeof(uint32_t));
-                    res_cause = SESS_INVALID_LENGTH;
-                }
-                break;
-
-            default:
-                LOG(UPC, ERR, "type %d, not support.", obj_type);
-                res_cause = SESS_SERVICE_NOT_SUPPORTED;
-                /* By manual, these feature UP should not support */
-                break;
-        }
-
-        /* Must go ahead in each cycle */
-        if (last_pos == *buf_pos) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "empty ie.");
-            break;
-        } else {
-            last_pos = *buf_pos;
-        }
-
-        if (res_cause != SESS_REQUEST_ACCEPTED) {
-            LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_URR;
-            sess_rep->failed_rule_id.rule_id = *urr_id;
-
-            if (0 == sess_rep->member_flag.d.offending_ie_present) {
-                sess_rep->member_flag.d.offending_ie_present = 1;
-                sess_rep->offending_ie = obj_type;
-            }
-            break;
-        }
-    }
-
-    /* Check mandaytory option */
-    if ((res_cause == SESS_REQUEST_ACCEPTED) &&
-        (m_opt == 0)) {
-        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
-
-        res_cause = SESS_MANDATORY_IE_MISSING;
     }
 
     return res_cause;
@@ -4580,10 +4455,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_qer(session_qos_enforcement_rule *qer,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_QER;
-            sess_rep->failed_rule_id.rule_id = qer->qer_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -4597,88 +4468,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_qer(session_qos_enforcement_rule *qer,
         (m_opt.value ^ UPC_CREATE_QER_M_OPT_MASK)) {
         LOG(UPC, ERR,
             "mandatory IE missing, value: %d.", m_opt.value);
-
-        res_cause = SESS_MANDATORY_IE_MISSING;
-    }
-
-    return res_cause;
-}
-
-static PFCP_CAUSE_TYPE upc_parse_remove_qer(uint32_t *qer_id,
-    uint8_t *buffer, uint16_t *buf_pos, int buf_max,
-    session_emd_response *sess_rep)
-{
-    uint16_t last_pos = 0;
-    uint16_t obj_type = 0, obj_len = 0;
-    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint8_t m_opt = 0;
-
-    LOG(UPC, RUNNING, "Parse remove QER.");
-    /* Parse packet */
-    while (*buf_pos < buf_max) {
-        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
-            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
-            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
-        } else {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "buff len abnormal.");
-            break;
-        }
-
-        if ((obj_len + *buf_pos) > buf_max) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING,
-                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
-                obj_len, *buf_pos, buf_max);
-            break;
-        }
-
-        switch (obj_type) {
-            case UPF_QER_ID:
-                if (sizeof(uint32_t) == obj_len) {
-                    m_opt  = 1;
-                    *qer_id = tlv_decode_uint32_t(buffer, buf_pos);
-                } else {
-                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
-                        obj_len, sizeof(uint32_t));
-                    res_cause = SESS_INVALID_LENGTH;
-                }
-                break;
-
-            default:
-                LOG(UPC, ERR, "type %d, not support.", obj_type);
-                res_cause = SESS_SERVICE_NOT_SUPPORTED;
-                /* By manual, these feature UP should not support */
-                break;
-        }
-
-        /* Must go ahead in each cycle */
-        if (last_pos == *buf_pos) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "empty ie.");
-            break;
-        } else {
-            last_pos = *buf_pos;
-        }
-
-        if (res_cause != SESS_REQUEST_ACCEPTED) {
-            LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_QER;
-            sess_rep->failed_rule_id.rule_id = *qer_id;
-
-            if (0 == sess_rep->member_flag.d.offending_ie_present) {
-                sess_rep->member_flag.d.offending_ie_present = 1;
-                sess_rep->offending_ie = obj_type;
-            }
-            break;
-        }
-    }
-
-    /* Check mandaytory option */
-    if ((res_cause == SESS_REQUEST_ACCEPTED) &&
-        (m_opt == 0)) {
-        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
 
         res_cause = SESS_MANDATORY_IE_MISSING;
     }
@@ -4767,93 +4556,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_bar(session_buffer_action_rule *bar,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_BAR;
-            sess_rep->failed_rule_id.rule_id = bar->bar_id;
-
-            if (0 == sess_rep->member_flag.d.offending_ie_present) {
-                sess_rep->member_flag.d.offending_ie_present = 1;
-                sess_rep->offending_ie = obj_type;
-            }
-            break;
-        }
-    }
-
-    /* Check mandaytory option */
-    if ((res_cause == SESS_REQUEST_ACCEPTED) &&
-        (m_opt == 0)) {
-        LOG(UPC, ERR,
-            "mandatory IE missing, value: %d.", m_opt);
-
-        res_cause = SESS_MANDATORY_IE_MISSING;
-    }
-
-    return res_cause;
-}
-
-static PFCP_CAUSE_TYPE upc_parse_remove_bar(uint8_t *bar_id,
-    uint8_t *buffer, uint16_t *buf_pos, int buf_max,
-    session_emd_response *sess_rep)
-{
-    uint16_t last_pos = 0;
-    uint16_t obj_type = 0, obj_len = 0;
-    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint8_t m_opt = 0;
-
-    LOG(UPC, RUNNING, "Parse create BAR.");
-    /* Parse packet */
-    while (*buf_pos < buf_max) {
-        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
-            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
-            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
-        } else {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "buff len abnormal.");
-            break;
-        }
-
-        if ((obj_len + *buf_pos) > buf_max) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING,
-                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
-                obj_len, *buf_pos, buf_max);
-            break;
-        }
-
-        switch (obj_type) {
-            case UPF_BAR_ID:
-                if (sizeof(uint8_t) == obj_len) {
-                    m_opt = 1;
-                    *bar_id = tlv_decode_uint8_t(buffer, buf_pos);
-                } else {
-                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
-                        obj_len, sizeof(uint8_t));
-                    res_cause = SESS_INVALID_LENGTH;
-                }
-                break;
-
-            default:
-                LOG(UPC, ERR, "type %d, not support.", obj_type);
-                res_cause = SESS_SERVICE_NOT_SUPPORTED;
-                /* By manual, these feature UP should not support */
-                break;
-        }
-
-        /* Must go ahead in each cycle */
-        if (last_pos == *buf_pos) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "empty ie.");
-            break;
-        } else {
-            last_pos = *buf_pos;
-        }
-
-        if (res_cause != SESS_REQUEST_ACCEPTED) {
-            LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_BAR;
-            sess_rep->failed_rule_id.rule_id = *bar_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -5144,75 +4846,10 @@ static PFCP_CAUSE_TYPE upc_parse_create_traffic_endpoint(
                 }
                 break;
 
-            default:
-                LOG(UPC, ERR, "type %d, not support.", obj_type);
-                res_cause = SESS_SERVICE_NOT_SUPPORTED;
-                /* By manual, these feature UP should not support */
-                break;
-        }
-
-        /* Must go ahead in each cycle */
-        if (last_pos == *buf_pos) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "empty ie.");
-            break;
-        } else {
-            last_pos = *buf_pos;
-        }
-
-        if (res_cause != SESS_REQUEST_ACCEPTED) {
-            LOG(UPC, RUNNING, "parse abnormal.");
-            if (0 == sess_rep->member_flag.d.offending_ie_present) {
-                sess_rep->member_flag.d.offending_ie_present = 1;
-                sess_rep->offending_ie = obj_type;
-            }
-            break;
-        }
-    }
-
-    /* Check mandaytory option */
-    if ((res_cause == SESS_REQUEST_ACCEPTED) && (m_opt == 0)) {
-        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
-
-        res_cause = SESS_MANDATORY_IE_MISSING;
-    }
-
-    return res_cause;
-}
-
-static PFCP_CAUSE_TYPE upc_parse_remove_traffic_endpoint(uint8_t *tc_id, uint8_t *buffer,
-    uint16_t *buf_pos, int buf_max, session_emd_response *sess_rep)
-{
-    uint16_t last_pos = 0;
-    uint16_t obj_type = 0, obj_len = 0;
-    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
-    uint8_t m_opt = 0;
-
-    LOG(UPC, RUNNING, "Parse remove traffic endpoint.");
-    /* Parse packet */
-    while (*buf_pos < buf_max) {
-        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
-            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
-            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
-        } else {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING, "buff len abnormal.");
-            break;
-        }
-
-        if ((obj_len + *buf_pos) > buf_max) {
-            res_cause = SESS_INVALID_LENGTH;
-            LOG(UPC, RUNNING,
-                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
-                obj_len, *buf_pos, buf_max);
-            break;
-        }
-
-        switch (obj_type) {
-            case UPF_TRAFFIC_ENDPOINT_ID:
+            case UPF_3GPP_INTERFACE_TYPE:
                 if (sizeof(uint8_t) == obj_len) {
-                    m_opt = 1;
-                    *tc_id = tlv_decode_uint8_t(buffer, buf_pos);
+                    tc->member_flag.d.source_if_type_present = 1;
+                    tc->source_if_type.value = tlv_decode_uint8_t(buffer, buf_pos);
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
                         obj_len, sizeof(uint8_t));
@@ -5727,10 +5364,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_mar(session_mar_create *mar_tbl,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_MAR;
-            sess_rep->failed_rule_id.rule_id = mar_tbl->mar_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -5870,10 +5503,6 @@ static PFCP_CAUSE_TYPE upc_parse_update_mar(session_mar_update *mar_tbl,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_MAR;
-            sess_rep->failed_rule_id.rule_id = mar_tbl->mar_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -5964,6 +5593,105 @@ static PFCP_CAUSE_TYPE upc_parse_access_avail_ctrl_info(session_access_avail_con
         LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
 
         res_cause = SESS_MANDATORY_IE_MISSING;
+    }
+
+    return res_cause;
+}
+
+static PFCP_CAUSE_TYPE upc_parse_tsc_management_information(session_tsc_management_info *tsc_info,
+    uint8_t *buffer, uint16_t *buf_pos, int buf_max,
+    session_emd_response *sess_rep)
+{
+    uint16_t last_pos = 0;
+    uint16_t obj_type = 0, obj_len = 0;
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+
+    LOG(UPC, RUNNING, "Parse TSC Management Information IE within PFCP Session Modification Request.");
+    /* Parse packet */
+    while (*buf_pos < buf_max) {
+        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
+            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
+            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
+        } else {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "buff len abnormal.");
+            break;
+        }
+
+        if ((obj_len + *buf_pos) > buf_max) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING,
+                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
+                obj_len, *buf_pos, buf_max);
+            break;
+        }
+
+        switch (obj_type) {
+            case UPF_PORT_MANAGEMENT_INFORMATION_CONTAINER:
+                if (sizeof(tsc_info->port_mgmt_info_container) > obj_len) {
+                    tsc_info->pmic_present = 1;
+                    tlv_decode_binary(buffer, buf_pos, obj_len,
+                        (uint8_t *)tsc_info->port_mgmt_info_container);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be less than %lu.",
+                        obj_len, sizeof(tsc_info->port_mgmt_info_container));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            case UPF_BRIDGE_MANAGEMENT_INFORMATION_CONTAINER:
+                if (sizeof(tsc_info->bridge_mgmt_info_container) > obj_len) {
+                    tsc_info->bmic_present = 1;
+                    tlv_decode_binary(buffer, buf_pos, obj_len,
+                        (uint8_t *)tsc_info->bridge_mgmt_info_container);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be less than %lu.",
+                        obj_len, sizeof(tsc_info->bridge_mgmt_info_container));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            case UPF_NW_TT_PORT_NUMBER:
+                if (sizeof(uint32_t) == obj_len) {
+                    tsc_info->ntpn_present = 1;
+                    tsc_info->nw_tt_port_number = tlv_decode_uint32_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint32_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            default:
+                LOG(UPC, ERR, "type %d, not support.", obj_type);
+                res_cause = SESS_SERVICE_NOT_SUPPORTED;
+                /* By manual, these feature UP should not support */
+                break;
+        }
+
+        /* Must go ahead in each cycle */
+        if (last_pos == *buf_pos) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "empty ie.");
+            break;
+        } else {
+            last_pos = *buf_pos;
+        }
+
+        if (res_cause != SESS_REQUEST_ACCEPTED) {
+            LOG(UPC, RUNNING, "parse abnormal.");
+            break;
+        }
+    }
+
+    if (res_cause == SESS_REQUEST_ACCEPTED &&
+        (tsc_info->pmic_present ^ tsc_info->ntpn_present)) {
+        LOG(UPC, RUNNING, "Parse abnormal, Missing conditional IE.");
+        if (0 == sess_rep->member_flag.d.offending_ie_present) {
+            sess_rep->member_flag.d.offending_ie_present = 1;
+            sess_rep->offending_ie = obj_type;
+        }
+        res_cause = SESS_CONDITIONAL_IE_MISSING;
     }
 
     return res_cause;
@@ -6253,10 +5981,6 @@ static PFCP_CAUSE_TYPE upc_parse_create_srr(session_srr_create *srr,
 
         if (res_cause != SESS_REQUEST_ACCEPTED) {
             LOG(UPC, RUNNING, "parse abnormal.");
-            sess_rep->member_flag.d.failed_rule_id_present = 1;
-            sess_rep->failed_rule_id.rule_type = SESS_FAILED_SRR;
-            sess_rep->failed_rule_id.rule_id = srr->ssr_id;
-
             if (0 == sess_rep->member_flag.d.offending_ie_present) {
                 sess_rep->member_flag.d.offending_ie_present = 1;
                 sess_rep->offending_ie = obj_type;
@@ -6277,6 +6001,214 @@ static PFCP_CAUSE_TYPE upc_parse_create_srr(session_srr_create *srr,
     return res_cause;
 }
 
+static PFCP_CAUSE_TYPE upc_parse_update_srr(session_srr_update *srr,
+    uint8_t *buffer, uint16_t *buf_pos, int buf_max,
+    session_emd_response *sess_rep)
+{
+    uint16_t last_pos = 0;
+    uint16_t obj_type = 0, obj_len = 0;
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+    uint8_t m_opt = 0;
+
+    LOG(UPC, RUNNING, "Parse update SRR.");
+    /* Parse packet */
+    while (*buf_pos < buf_max) {
+        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
+            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
+            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
+        } else {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "buff len abnormal.");
+            break;
+        }
+
+        if ((obj_len + *buf_pos) > buf_max) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING,
+                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
+                obj_len, *buf_pos, buf_max);
+            break;
+        }
+
+        switch (obj_type) {
+            case UPF_SRR_ID:
+                if (sizeof(uint8_t) == obj_len) {
+                    m_opt = 1;
+                    srr->ssr_id = tlv_decode_uint8_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            case UPF_ACCESS_AVAILABILITY_CONTROL_INFORMATION:
+                srr->access_avail_control_info_present = 1;
+                res_cause = upc_parse_access_avail_ctrl_info(&srr->access_avail_control_info,
+                    buffer, buf_pos, *buf_pos + obj_len, sess_rep);
+                break;
+
+            case UPF_QOS_MONITORING_PER_QOS_FLOW_CONTROL_INFORMATION:
+                if (srr->monitor_per_qf_ctrl_info_num < QOS_MONITOR_NUM) {
+                    res_cause = upc_parse_qos_monitor_per_qfci(
+                        &srr->monitor_per_qf_ctrl_info[srr->monitor_per_qf_ctrl_info_num], buffer,
+                        buf_pos, *buf_pos + obj_len, sess_rep);
+                    ++srr->monitor_per_qf_ctrl_info_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of QoS Monitoring per QoS flow Control Information reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            default:
+                LOG(UPC, ERR, "type %d, not support.", obj_type);
+                res_cause = SESS_SERVICE_NOT_SUPPORTED;
+                /* By manual, these feature UP should not support */
+                break;
+        }
+
+        /* Must go ahead in each cycle */
+        if (last_pos == *buf_pos) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "empty ie.");
+            break;
+        } else {
+            last_pos = *buf_pos;
+        }
+
+        if (res_cause != SESS_REQUEST_ACCEPTED) {
+            LOG(UPC, RUNNING, "parse abnormal.");
+            if (0 == sess_rep->member_flag.d.offending_ie_present) {
+                sess_rep->member_flag.d.offending_ie_present = 1;
+                sess_rep->offending_ie = obj_type;
+            }
+            break;
+        }
+    }
+
+    /* Check mandaytory option */
+    if ((res_cause == SESS_REQUEST_ACCEPTED) &&
+        (m_opt == 0)) {
+        LOG(UPC, ERR,
+            "mandatory IE missing, value: %d.", m_opt);
+
+        res_cause = SESS_MANDATORY_IE_MISSING;
+    }
+
+    return res_cause;
+}
+
+static PFCP_CAUSE_TYPE upc_parse_remove_rule_group_ie(void *rule_id,
+    uint8_t* buffer, uint16_t *buf_pos, int buf_max,
+    session_emd_response *sess_rep)
+{
+    uint16_t last_pos = 0;
+    uint16_t obj_type = 0, obj_len = 0;
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+    uint8_t m_opt = 0;
+
+    LOG(UPC, RUNNING, "Parse remove group IE.");
+    /* Parse packet */
+    while (*buf_pos < buf_max) {
+        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
+            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
+            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
+        } else {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "buff len abnormal.");
+            break;
+        }
+
+        if ((obj_len + *buf_pos) > buf_max) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING,
+                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
+                obj_len, *buf_pos, buf_max);
+            break;
+        }
+
+        switch (obj_type) {
+            case UPF_FAR_ID:
+            case UPF_QER_ID:
+            case UPF_URR_ID:
+                if (sizeof(uint32_t) == obj_len) {
+                    uint32_t *u32_id = (uint32_t *)rule_id;
+
+                    m_opt = 1;
+                    *u32_id = tlv_decode_uint32_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint32_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            case UPF_PDR_ID:
+            case UPF_MAR_ID:
+                if (sizeof(uint16_t) == obj_len) {
+                    uint16_t *u16_id = (uint16_t *)rule_id;
+
+                    m_opt = 1;
+                    *u16_id = tlv_decode_uint16_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint16_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            case UPF_BAR_ID:
+            case UPF_SRR_ID:
+            case UPF_TRAFFIC_ENDPOINT_ID:
+                if (sizeof(uint8_t) == obj_len) {
+                    uint8_t *u8_id = (uint8_t *)rule_id;
+
+                    m_opt = 1;
+                    *u8_id = tlv_decode_uint8_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            default:
+                LOG(UPC, ERR, "type %d, not support.", obj_type);
+                res_cause = SESS_SERVICE_NOT_SUPPORTED;
+                /* By manual, these feature UP should not support */
+                break;
+        }
+
+        /* Must go ahead in each cycle */
+        if (last_pos == *buf_pos) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "empty ie.");
+            break;
+        } else {
+            last_pos = *buf_pos;
+        }
+
+        if (res_cause != SESS_REQUEST_ACCEPTED) {
+            LOG(UPC, RUNNING, "parse abnormal.");
+            break;
+        }
+    }
+
+    /* Check mandaytory option */
+    if ((res_cause == SESS_REQUEST_ACCEPTED) && (m_opt == 0)) {
+        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
+        if (0 == sess_rep->member_flag.d.offending_ie_present) {
+            sess_rep->member_flag.d.offending_ie_present = 1;
+            sess_rep->offending_ie = obj_type;
+        }
+
+        res_cause = SESS_MANDATORY_IE_MISSING;
+    }
+
+    return res_cause;
+}
+
 static PFCP_CAUSE_TYPE upc_parse_provid_atsss_ctrl_info(session_provide_atsss_ctrl_info *paci,
     uint8_t *buffer, uint16_t *buf_pos, int buf_max,
     session_emd_response *sess_rep)
@@ -6285,7 +6217,7 @@ static PFCP_CAUSE_TYPE upc_parse_provid_atsss_ctrl_info(session_provide_atsss_ct
     uint16_t obj_type = 0, obj_len = 0;
     PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
 
-    LOG(UPC, RUNNING, "Parse create SRR.");
+    LOG(UPC, RUNNING, "Parse provid atsss control information.");
     /* Parse packet */
     while (*buf_pos < buf_max) {
         if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
@@ -6365,6 +6297,313 @@ static PFCP_CAUSE_TYPE upc_parse_provid_atsss_ctrl_info(session_provide_atsss_ct
     return res_cause;
 }
 
+static PFCP_CAUSE_TYPE upc_parse_provid_rds_config_info(session_provide_rds_config_info *rds_cfg,
+    uint8_t *buffer, uint16_t *buf_pos, int buf_max,
+    session_emd_response *sess_rep)
+{
+    uint16_t last_pos = 0;
+    uint16_t obj_type = 0, obj_len = 0;
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+
+    LOG(UPC, RUNNING, "Parse provid RDS configuration information.");
+    while (*buf_pos < buf_max) {
+        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
+            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
+            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
+        } else {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "buff len abnormal.");
+            break;
+        }
+
+        if ((obj_len + *buf_pos) > buf_max) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING,
+                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
+                obj_len, *buf_pos, buf_max);
+            break;
+        }
+
+        switch (obj_type) {
+            case UPF_RDS_CONFIGURATION_INFORMATION:
+                if (sizeof(uint8_t) == obj_len) {
+                    rds_cfg->rds_config_info.value = tlv_decode_uint8_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            default:
+                LOG(UPC, ERR, "type %d, not support.", obj_type);
+                res_cause = SESS_SERVICE_NOT_SUPPORTED;
+                /* By manual, these feature UP should not support */
+                break;
+        }
+
+        /* Must go ahead in each cycle */
+        if (last_pos == *buf_pos) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "empty ie.");
+            break;
+        } else {
+            last_pos = *buf_pos;
+        }
+
+        if (res_cause != SESS_REQUEST_ACCEPTED) {
+            LOG(UPC, RUNNING, "parse abnormal.");
+            if (0 == sess_rep->member_flag.d.offending_ie_present) {
+                sess_rep->member_flag.d.offending_ie_present = 1;
+                sess_rep->offending_ie = obj_type;
+            }
+            break;
+        }
+    }
+
+    return res_cause;
+}
+
+static PFCP_CAUSE_TYPE upc_parse_mac_addresses_detected(session_mac_address_detected *mac_detected,
+    uint8_t* buffer, uint16_t *buf_pos, int buf_max, uint16_t obj_len)
+{
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+    uint16_t len_cnt = 0;
+    uint8_t cnt;
+
+    if (obj_len && ((*buf_pos + obj_len) <= buf_max)) {
+        /* Number of MAC addresses */
+        len_cnt += sizeof(uint8_t);
+        if (len_cnt <= obj_len) {
+            mac_detected->mac_num = tlv_decode_uint8_t(buffer, buf_pos);
+        } else {
+            LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
+                obj_len, len_cnt);
+            res_cause = SESS_INVALID_LENGTH;
+            return res_cause;
+        }
+
+        /* MAC address value */
+        for (cnt = 0; cnt < mac_detected->mac_num; ++cnt) {
+            len_cnt += ETH_ALEN;
+            if (len_cnt <= obj_len) {
+                tlv_decode_binary(buffer, buf_pos, ETH_ALEN, mac_detected->mac_addr[cnt]);
+            } else {
+                LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
+                    obj_len, len_cnt);
+                res_cause = SESS_INVALID_LENGTH;
+                return res_cause;
+            }
+        }
+
+        /* Length of C-TAG field */
+        len_cnt += sizeof(uint8_t);
+        if (len_cnt <= obj_len) {
+            mac_detected->c_tag_len = tlv_decode_uint8_t(buffer, buf_pos);
+        } else {
+            LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
+                obj_len, len_cnt);
+            res_cause = SESS_INVALID_LENGTH;
+            return res_cause;
+        }
+        /* C-TAG */
+        if (mac_detected->c_tag_len) {
+            len_cnt += 3;
+            if (len_cnt <= obj_len) {
+                mac_detected->c_tag.flags.value = tlv_decode_uint8_t(buffer, buf_pos);
+                mac_detected->c_tag.value.value = tlv_decode_uint16_t(buffer, buf_pos);
+            } else {
+                LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
+                    obj_len, len_cnt);
+                res_cause = SESS_INVALID_LENGTH;
+                return res_cause;
+            }
+        }
+
+        /* Length of S-TAG field */
+        len_cnt += sizeof(uint8_t);
+        if (len_cnt <= obj_len) {
+            mac_detected->s_tag_len = tlv_decode_uint8_t(buffer, buf_pos);
+        } else {
+            LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
+                obj_len, len_cnt);
+            res_cause = SESS_INVALID_LENGTH;
+            return res_cause;
+        }
+        /* S-TAG */
+        if (mac_detected->s_tag_len) {
+            len_cnt += 3;
+            if (len_cnt <= obj_len) {
+                mac_detected->s_tag.flags.value = tlv_decode_uint8_t(buffer, buf_pos);
+                mac_detected->s_tag.value.value = tlv_decode_uint16_t(buffer, buf_pos);
+            } else {
+                LOG(UPC, ERR, "obj_len: %d abnormal, Should be %d.",
+                    obj_len, len_cnt);
+                res_cause = SESS_INVALID_LENGTH;
+                return res_cause;
+            }
+        }
+
+    } else {
+        res_cause = SESS_INVALID_LENGTH;
+        LOG(UPC, RUNNING, "IE length error.");
+    }
+
+    if (len_cnt != obj_len) {
+        res_cause = SESS_INVALID_LENGTH;
+        LOG(UPC, RUNNING, "IE parse length: %d != obj_len: %d.",
+            len_cnt, obj_len);
+    }
+
+    return res_cause;
+}
+
+static PFCP_CAUSE_TYPE upc_parse_ethernet_context_info(session_ethernet_context_information *eth_info,
+    uint8_t *buffer, uint16_t *buf_pos, int buf_max, session_emd_response *sess_rep)
+{
+    uint16_t last_pos = 0;
+    uint16_t obj_type = 0, obj_len = 0;
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+
+    LOG(UPC, RUNNING, "Parse Ethernet Context Information.");
+    while (*buf_pos < buf_max) {
+        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
+            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
+            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
+        } else {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "buff len abnormal.");
+            break;
+        }
+
+        if ((obj_len + *buf_pos) > buf_max) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING,
+                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
+                obj_len, *buf_pos, buf_max);
+            break;
+        }
+
+        switch (obj_type) {
+            case UPF_MAC_ADDRESSES_DETECTED:
+                if (eth_info->mac_addr_detected_num < MAC_ADDRESS_DETECTED_NUM) {
+                    res_cause = upc_parse_mac_addresses_detected(
+                        &eth_info->mac_addr_detected[eth_info->mac_addr_detected_num], buffer,
+                        buf_pos, buf_max, obj_len);
+                    ++eth_info->mac_addr_detected_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of MAC addresses detected reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            default:
+                LOG(UPC, ERR, "type %d, not support.", obj_type);
+                res_cause = SESS_SERVICE_NOT_SUPPORTED;
+                /* By manual, these feature UP should not support */
+                break;
+        }
+
+        /* Must go ahead in each cycle */
+        if (last_pos == *buf_pos) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "empty ie.");
+            break;
+        } else {
+            last_pos = *buf_pos;
+        }
+
+        if (res_cause != SESS_REQUEST_ACCEPTED) {
+            LOG(UPC, RUNNING, "parse abnormal.");
+            if (0 == sess_rep->member_flag.d.offending_ie_present) {
+                sess_rep->member_flag.d.offending_ie_present = 1;
+                sess_rep->offending_ie = obj_type;
+            }
+            break;
+        }
+    }
+
+    return res_cause;
+}
+
+static PFCP_CAUSE_TYPE upc_parse_query_packet_rate_status(session_query_packet_rate_status *qprs,
+    uint8_t* buffer, uint16_t *buf_pos, int buf_max,
+    session_emd_response *sess_rep)
+{
+    uint16_t last_pos = 0;
+    uint16_t obj_type = 0, obj_len = 0;
+    PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+    uint8_t m_opt = 0;
+
+    LOG(UPC, RUNNING, "Parse Query Packet Rate Status.");
+    /* Parse packet */
+    while (*buf_pos < buf_max) {
+        if (((TLV_TYPE_LEN + TLV_LENGTH_LEN) + *buf_pos) <= buf_max) {
+            obj_type = tlv_decode_type(buffer, buf_pos, buf_max);
+            obj_len  = tlv_decode_length(buffer, buf_pos, buf_max);
+        } else {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "buff len abnormal.");
+            break;
+        }
+
+        if ((obj_len + *buf_pos) > buf_max) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING,
+                "IE value length error, obj_len: %d, buf_pos: %d, buf_max: %d.",
+                obj_len, *buf_pos, buf_max);
+            break;
+        }
+
+        switch (obj_type) {
+            case UPF_QER_ID:
+                if (sizeof(uint32_t) == obj_len) {
+                    m_opt = 1;
+                    qprs->qer_id = tlv_decode_uint32_t(buffer, buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint32_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
+                break;
+
+            default:
+                LOG(UPC, ERR, "type %d, not support.", obj_type);
+                res_cause = SESS_SERVICE_NOT_SUPPORTED;
+                /* By manual, these feature UP should not support */
+                break;
+        }
+
+        /* Must go ahead in each cycle */
+        if (last_pos == *buf_pos) {
+            res_cause = SESS_INVALID_LENGTH;
+            LOG(UPC, RUNNING, "empty ie.");
+            break;
+        } else {
+            last_pos = *buf_pos;
+        }
+
+        if (res_cause != SESS_REQUEST_ACCEPTED) {
+            LOG(UPC, RUNNING, "parse abnormal.");
+            break;
+        }
+    }
+
+    /* Check mandaytory option */
+    if ((res_cause == SESS_REQUEST_ACCEPTED) && (m_opt == 0)) {
+        LOG(UPC, ERR, "mandatory IE missing, value: %d.", m_opt);
+        if (0 == sess_rep->member_flag.d.offending_ie_present) {
+            sess_rep->member_flag.d.offending_ie_present = 1;
+            sess_rep->offending_ie = obj_type;
+        }
+
+        res_cause = SESS_MANDATORY_IE_MISSING;
+    }
+
+    return res_cause;
+}
+
 static int upc_build_f_teid(session_f_teid *fteid,
     uint8_t *resp_buffer, uint16_t *resp_pos)
 {
@@ -6437,7 +6676,7 @@ static int upc_build_ue_ip(session_ue_ip *ue_ip,
     return ie_len;
 }
 
-static int upc_build_volume(session_urr_volume *vol,
+static int upc_build_volume_measurement(session_volume_measurement *vol,
     uint8_t *resp_buffer, uint16_t *resp_pos)
 {
     uint16_t ie_pos = 0, ie_len = 0;
@@ -6459,6 +6698,18 @@ static int upc_build_volume(session_urr_volume *vol,
 
     if (vol->flag.d.dlvol) {
         tlv_encode_uint64_t(resp_buffer, resp_pos, vol->downlink);
+    }
+
+    if (vol->flag.d.tonop) {
+        tlv_encode_uint64_t(resp_buffer, resp_pos, vol->to_pkts);
+    }
+
+    if (vol->flag.d.ulnop) {
+        tlv_encode_uint64_t(resp_buffer, resp_pos, vol->ul_pkts);
+    }
+
+    if (vol->flag.d.dlnop) {
+        tlv_encode_uint64_t(resp_buffer, resp_pos, vol->dl_pkts);
     }
 
     ie_len = *resp_pos - ie_len;
@@ -6494,6 +6745,17 @@ static int upc_build_eth_traffic_info(session_eth_traffic_info *traffic,
             tlv_encode_binary(resp_buffer, resp_pos, ETH_ALEN,
                 detectd->mac_addr[cnt_l2]);
         }
+
+        tlv_encode_uint8_t(resp_buffer, resp_pos, detectd->c_tag_len);
+        if (detectd->c_tag_len) {
+            tlv_encode_uint8_t(resp_buffer, resp_pos, detectd->c_tag.flags.value);
+            tlv_encode_uint16_t(resp_buffer, resp_pos, detectd->c_tag.value.value);
+        }
+        tlv_encode_uint8_t(resp_buffer, resp_pos, detectd->s_tag_len);
+        if (detectd->s_tag_len) {
+            tlv_encode_uint8_t(resp_buffer, resp_pos, detectd->s_tag.flags.value);
+            tlv_encode_uint16_t(resp_buffer, resp_pos, detectd->s_tag.value.value);
+        }
     }
 
     /* MAC Addresses Removed */
@@ -6508,6 +6770,17 @@ static int upc_build_eth_traffic_info(session_eth_traffic_info *traffic,
             tlv_encode_binary(resp_buffer, resp_pos, ETH_ALEN,
                 removed->mac_addr[cnt_l2]);
         }
+
+        tlv_encode_uint8_t(resp_buffer, resp_pos, removed->c_tag_len);
+        if (removed->c_tag_len) {
+            tlv_encode_uint8_t(resp_buffer, resp_pos, removed->c_tag.flags.value);
+            tlv_encode_uint16_t(resp_buffer, resp_pos, removed->c_tag.value.value);
+        }
+        tlv_encode_uint8_t(resp_buffer, resp_pos, removed->s_tag_len);
+        if (removed->s_tag_len) {
+            tlv_encode_uint8_t(resp_buffer, resp_pos, removed->s_tag.flags.value);
+            tlv_encode_uint16_t(resp_buffer, resp_pos, removed->s_tag.value.value);
+        }
     }
 
     ie_len = *resp_pos - ie_len;
@@ -6517,100 +6790,98 @@ static int upc_build_eth_traffic_info(session_eth_traffic_info *traffic,
     return ie_len;
 }
 
-static int upc_build_created_pdr(session_created_pdr *cp_arr, uint8_t cp_num,
-    uint8_t *resp_buffer, uint16_t *resp_pos)
+static int upc_build_created_pdr(session_created_pdr *cp, uint8_t *resp_buffer, uint16_t *resp_pos)
 {
-    uint8_t cnt = 0, cnt_l2 = 0;
-    int ret = 0;
+    uint8_t cnt = 0;
     uint16_t cp_len = 0, cp_len_pos = 0;
-    session_created_pdr *cp;
 
-    for (cnt = 0; cnt < cp_num; ++cnt) {
-        cp = &cp_arr[cnt];
+    tlv_encode_type(resp_buffer, resp_pos, UPF_CREATED_PDR);
+    /* Record the current position */
+    cp_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    cp_len = *resp_pos;
 
-        tlv_encode_type(resp_buffer, resp_pos, UPF_CREATED_PDR);
-        /* Record the current position */
-        cp_len_pos = *resp_pos;
-        tlv_encode_length(resp_buffer, resp_pos, 0);
-        cp_len = *resp_pos;
+    /* PDR ID */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_PDR_ID);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint16_t));
+    tlv_encode_uint16_t(resp_buffer, resp_pos, cp->pdr_id);
 
-        /* pdr id */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_PDR_ID);
-        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint16_t));
-        tlv_encode_uint16_t(resp_buffer, resp_pos, cp->pdr_id);
-
-        /* local f-teid */
-        if (cp->local_fteid_present) {
-            ret = upc_build_f_teid(&cp->local_fteid, resp_buffer, resp_pos);
-            if (0 > ret) {
-                LOG(UPC, ERR, "build f-teid failed.\n");
-                return -1;
-            }
+    /* local f-teid */
+    if (cp->local_fteid_present) {
+        if (0 > upc_build_f_teid(&cp->local_fteid, resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build f-teid failed.\n");
+            return -1;
         }
-
-        /* Local F-TEID for Redundant Transmission */
-        if (cp->rt_local_fteid_present) {
-            ret = upc_build_f_teid(&cp->rt_local_fteid, resp_buffer, resp_pos);
-            if (0 > ret) {
-                LOG(UPC, ERR, "build Redundant Transmission f-teid failed.\n");
-                return -1;
-            }
-        }
-
-        /* UE_IP */
-        for (cnt_l2 = 0; cnt_l2 < cp->ueip_addr_num; ++cnt_l2) {
-            ret = upc_build_ue_ip(&cp->ueip_addr[cnt_l2], resp_buffer, resp_pos);
-            if (0 > ret) {
-                LOG(UPC, ERR, "build ue ip failed.\n");
-                return -1;
-            }
-        }
-
-        /* filling created pdr length */
-        cp_len = *resp_pos - cp_len;
-        tlv_encode_length(resp_buffer, &cp_len_pos, cp_len);
-        LOG(UPC, RUNNING, "encode traffic endpoint info.");
     }
+
+    /* Local F-TEID for Redundant Transmission */
+    if (cp->rt_local_fteid_present) {
+        if (0 > upc_build_f_teid(&cp->rt_local_fteid, resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build Redundant Transmission f-teid failed.\n");
+            return -1;
+        }
+    }
+
+    /* UE IP Address */
+    for (cnt = 0; cnt < cp->ueip_addr_num; ++cnt) {
+        if (0 > upc_build_ue_ip(&cp->ueip_addr[cnt], resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "build UE IP address failed.\n");
+            return -1;
+        }
+    }
+
+    /* filling created pdr length */
+    cp_len = *resp_pos - cp_len;
+    tlv_encode_length(resp_buffer, &cp_len_pos, cp_len);
+    LOG(UPC, RUNNING, "Encode traffic endpoint info.");
 
     return 0;
 }
 
-static int upc_build_updated_pdr(session_updated_pdr *cp_arr, uint8_t cp_num,
-    uint8_t *resp_buffer, uint16_t *resp_pos)
+static int upc_build_updated_pdr(session_updated_pdr *updated_pdr, uint8_t *resp_buffer, uint16_t *resp_pos)
 {
-    uint8_t cnt = 0;
-    int ret = 0;
     uint16_t cp_len = 0, cp_len_pos = 0;
-    session_updated_pdr *cp;
+    uint8_t cnt;
 
-    for (cnt = 0; cnt < cp_num; ++cnt) {
-        cp = &cp_arr[cnt];
+    tlv_encode_type(resp_buffer, resp_pos, UPF_UPDATED_PDR);
+    /* Record the current position */
+    cp_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    cp_len = *resp_pos;
 
-        tlv_encode_type(resp_buffer, resp_pos, UPF_UPDATED_PDR);
-        /* Record the current position */
-        cp_len_pos = *resp_pos;
-        tlv_encode_length(resp_buffer, resp_pos, 0);
-        cp_len = *resp_pos;
+    /* PDR ID */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_PDR_ID);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint16_t));
+    tlv_encode_uint16_t(resp_buffer, resp_pos, updated_pdr->pdr_id);
 
-        /* pdr id */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_PDR_ID);
-        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint16_t));
-        tlv_encode_uint16_t(resp_buffer, resp_pos, cp->pdr_id);
-
-        /* Local F-TEID for Redundant Transmission */
-        if (cp->rt_local_fteid_present) {
-            ret = upc_build_f_teid(&cp->rt_local_fteid, resp_buffer, resp_pos);
-            if (0 > ret) {
-                LOG(UPC, ERR, "build Redundant Transmission f-teid failed.\n");
-                return -1;
-            }
+    /* Local F-TEID for Redundant Transmission */
+    if (updated_pdr->rt_local_fteid_present) {
+        if (0 > upc_build_f_teid(&updated_pdr->rt_local_fteid, resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build Redundant Transmission f-teid failed.\n");
+            return -1;
         }
-
-        /* filling created pdr length */
-        cp_len = *resp_pos - cp_len;
-        tlv_encode_length(resp_buffer, &cp_len_pos, cp_len);
-        LOG(UPC, RUNNING, "encode traffic endpoint info.");
     }
+
+    /* Local F-TEID */
+    if (updated_pdr->local_fteid_present) {
+        if (0 > upc_build_f_teid(&updated_pdr->local_fteid, resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build Redundant Transmission f-teid failed.\n");
+            return -1;
+        }
+    }
+
+    /* UE IP Address */
+    for (cnt = 0; cnt < updated_pdr->ueip_addr_num; ++cnt) {
+        if (0 > upc_build_ue_ip(&updated_pdr->ueip_addr[cnt], resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build UE IP address failed.\n");
+            return -1;
+        }
+    }
+
+    /* filling created pdr length */
+    cp_len = *resp_pos - cp_len;
+    tlv_encode_length(resp_buffer, &cp_len_pos, cp_len);
+    LOG(UPC, RUNNING, "Encode traffic endpoint info.");
 
     return 0;
 }
@@ -6699,20 +6970,13 @@ static int upc_build_created_bridge_info(
         tlv_encode_uint32_t(resp_buffer, resp_pos, info->ds_tt_port_number);
     }
 
-    /* NW-TT Port Number */
-    if (info->nw_tt_port_number_present) {
-        tlv_encode_type(resp_buffer, resp_pos, UPF_NW_TT_PORT_NUMBER);
-        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-        tlv_encode_uint32_t(resp_buffer, resp_pos, info->nw_tt_port_number);
-    }
-
     /* TSN Bridge ID */
     if (info->tsn_brige_id_present) {
         tlv_encode_type(resp_buffer, resp_pos, UPF_TSN_BRIDGE_ID);
-        if (info->tsn_brige_id.flag.d.MAC) {
-            tlv_encode_length(resp_buffer, resp_pos, 7);
+        if (info->tsn_brige_id.flag.d.bid) {
+            tlv_encode_length(resp_buffer, resp_pos, 9);
             tlv_encode_uint8_t(resp_buffer, resp_pos, info->tsn_brige_id.flag.value);
-            tlv_encode_binary(resp_buffer, resp_pos, ETH_ALEN, info->tsn_brige_id.mac_addr);
+            tlv_encode_uint64_t(resp_buffer, resp_pos, info->tsn_brige_id.bridge_id.value);
         } else {
             tlv_encode_length(resp_buffer, resp_pos, 1);
             tlv_encode_uint8_t(resp_buffer, resp_pos, info->tsn_brige_id.flag.value);
@@ -6875,176 +7139,162 @@ static int upc_build_atsss_control_para(session_atsss_control_param *info,
     return ie_len;
 }
 
-static int upc_build_md_usage_report(session_md_usage_report *ur_arr,
-    uint8_t ur_num, uint8_t *resp_buffer, uint16_t *resp_pos, uint32_t type, int trace_flag)
+static int upc_build_md_usage_report(session_md_usage_report *report,
+    uint8_t *resp_buffer, uint16_t *resp_pos, uint32_t type, int trace_flag)
 {
-    uint8_t cnt = 0;
     uint16_t ie_pos = 0, ie_len = 0;
 
-    for(cnt = 0; cnt < ur_num; ++cnt) {
-        session_md_usage_report *report = &ur_arr[cnt];
+    tlv_encode_type(resp_buffer, resp_pos, type);
+    ie_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
 
-        tlv_encode_type(resp_buffer, resp_pos, type);
-        ie_pos = *resp_pos;
-        tlv_encode_length(resp_buffer, resp_pos, 0);
-        ie_len = *resp_pos;
+    /* urr id */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_URR_ID);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+    tlv_encode_uint32_t(resp_buffer, resp_pos, report->urr_id);
+    LOG_TRACE(UPC, DEBUG, trace_flag, "urr id %u.", report->urr_id);
 
-        /* urr id */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_URR_ID);
+    /* ur seqn */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_UR_SEQN);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+    tlv_encode_uint32_t(resp_buffer, resp_pos, report->ur_seqn);
+    LOG_TRACE(UPC, DEBUG, trace_flag, "ur seqn %u.", report->ur_seqn);
+
+    /* usage report trigger */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_USAGE_REPORT_TRIGGER);
+    tlv_encode_length(resp_buffer, resp_pos, 3);
+    tlv_encode_int_3b(resp_buffer, resp_pos, report->trigger.value);
+    LOG_TRACE(UPC, DEBUG, trace_flag, "trigger %u.", report->trigger.value);
+
+    /* start time */
+    if (report->member_flag.d.start_time_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_START_TIME);
         tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-        tlv_encode_uint32_t(resp_buffer, resp_pos, report->urr_id);
-        LOG_TRACE(UPC, DEBUG, trace_flag, "urr id %u.", report->urr_id);
-
-        /* ur seqn */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_UR_SEQN);
-        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-        tlv_encode_uint32_t(resp_buffer, resp_pos, report->ur_seqn);
-        LOG_TRACE(UPC, DEBUG, trace_flag, "ur seqn %u.", report->ur_seqn);
-
-        /* usage report trigger */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_USAGE_REPORT_TRIGGER);
-        tlv_encode_length(resp_buffer, resp_pos, 3);
-        tlv_encode_int_3b(resp_buffer, resp_pos, report->trigger.value);
-        LOG_TRACE(UPC, DEBUG, trace_flag, "trigger %u.", report->trigger.value);
-
-        /* start time */
-        if (report->member_flag.d.start_time_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_START_TIME);
-            tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-            tlv_encode_uint32_t(resp_buffer, resp_pos, report->start_time);
-            LOG_TRACE(UPC, RUNNING, trace_flag, "start time %u.", report->start_time);
-        }
-
-        /* end time */
-        if (report->member_flag.d.end_time_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_END_TIME);
-            tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-            tlv_encode_uint32_t(resp_buffer, resp_pos, report->end_time);
-            LOG_TRACE(UPC, RUNNING, trace_flag, "end time %u.", report->end_time);
-        }
-
-        /* Volume Measurement */
-        if (report->member_flag.d.vol_meas_present) {
-            if (0 > upc_build_volume(&report->vol_meas,
-                resp_buffer, resp_pos)) {
-                LOG(UPC, ERR, "build volume measurement failed.");
-                return -1;
-            }
-        }
-
-        /* Duration Measurement */
-        if (report->member_flag.d.duration_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_DURATION_MEASUREMENT);
-            tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-            tlv_encode_uint32_t(resp_buffer, resp_pos, report->duration);
-            LOG_TRACE(UPC, RUNNING, trace_flag, "duration %u.", report->duration);
-        }
-
-        /* Time of First Packet */
-        if (report->member_flag.d.first_pkt_time_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_OF_FIRST_PACKET);
-            tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-            tlv_encode_uint32_t(resp_buffer, resp_pos, report->first_pkt_time);
-            LOG_TRACE(UPC, RUNNING, trace_flag, "time of first packet %u.",
-                report->first_pkt_time);
-        }
-
-        /* Time of Last Packet */
-        if (report->member_flag.d.last_pkt_time_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_OF_LAST_PACKET);
-            tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-            tlv_encode_uint32_t(resp_buffer, resp_pos, report->last_pkt_time);
-            LOG_TRACE(UPC, RUNNING, trace_flag, "time of last packet %u.",
-                report->first_pkt_time);
-        }
-
-        /* Usage Information */
-        if (report->member_flag.d.usage_info_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_USAGE_INFORMATION);
-            tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
-            tlv_encode_uint8_t(resp_buffer, resp_pos, report->usage_info.value);
-            LOG_TRACE(UPC, RUNNING, trace_flag, "usage info %d.", report->usage_info.value);
-        }
-
-        /* Query URR Reference */
-        if (report->member_flag.d.query_urr_ref_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_QUERY_URR_REFERENCE);
-            tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
-            tlv_encode_uint32_t(resp_buffer, resp_pos, report->query_urr_ref);
-            LOG_TRACE(UPC, RUNNING, trace_flag, "Query URR Reference %u.",
-                report->query_urr_ref);
-        }
-
-        /* Ethernet Traffic Information */
-        if (report->member_flag.d.eth_fraffic_present) {
-            if (0 > upc_build_eth_traffic_info(&report->eth_traffic,
-                resp_buffer, resp_pos)) {
-                LOG(UPC, ERR, "build eth traffic info failed.");
-                return -1;
-            }
-        }
-
-        ie_len = *resp_pos - ie_len;
-        tlv_encode_length(resp_buffer, &ie_pos, ie_len);
+        tlv_encode_uint32_t(resp_buffer, resp_pos, report->start_time);
+        LOG_TRACE(UPC, RUNNING, trace_flag, "start time %u.", report->start_time);
     }
+
+    /* end time */
+    if (report->member_flag.d.end_time_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_END_TIME);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+        tlv_encode_uint32_t(resp_buffer, resp_pos, report->end_time);
+        LOG_TRACE(UPC, RUNNING, trace_flag, "end time %u.", report->end_time);
+    }
+
+    /* Volume Measurement */
+    if (report->member_flag.d.vol_meas_present) {
+        if (0 > upc_build_volume_measurement(&report->vol_meas,
+            resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "build volume measurement failed.");
+            return -1;
+        }
+    }
+
+    /* Duration Measurement */
+    if (report->member_flag.d.duration_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_DURATION_MEASUREMENT);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+        tlv_encode_uint32_t(resp_buffer, resp_pos, report->duration);
+        LOG_TRACE(UPC, RUNNING, trace_flag, "duration %u.", report->duration);
+    }
+
+    /* Time of First Packet */
+    if (report->member_flag.d.first_pkt_time_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_OF_FIRST_PACKET);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+        tlv_encode_uint32_t(resp_buffer, resp_pos, report->first_pkt_time);
+        LOG_TRACE(UPC, RUNNING, trace_flag, "time of first packet %u.",
+            report->first_pkt_time);
+    }
+
+    /* Time of Last Packet */
+    if (report->member_flag.d.last_pkt_time_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_OF_LAST_PACKET);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+        tlv_encode_uint32_t(resp_buffer, resp_pos, report->last_pkt_time);
+        LOG_TRACE(UPC, RUNNING, trace_flag, "time of last packet %u.",
+            report->first_pkt_time);
+    }
+
+    /* Usage Information */
+    if (report->member_flag.d.usage_info_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_USAGE_INFORMATION);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
+        tlv_encode_uint8_t(resp_buffer, resp_pos, report->usage_info.value);
+        LOG_TRACE(UPC, RUNNING, trace_flag, "usage info %d.", report->usage_info.value);
+    }
+
+    /* Query URR Reference */
+    if (report->member_flag.d.query_urr_ref_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_QUERY_URR_REFERENCE);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+        tlv_encode_uint32_t(resp_buffer, resp_pos, report->query_urr_ref);
+        LOG_TRACE(UPC, RUNNING, trace_flag, "Query URR Reference %u.",
+            report->query_urr_ref);
+    }
+
+    /* Ethernet Traffic Information */
+    if (report->member_flag.d.eth_fraffic_present) {
+        if (0 > upc_build_eth_traffic_info(&report->eth_traffic,
+            resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "build eth traffic info failed.");
+            return -1;
+        }
+    }
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_pos, ie_len);
 
     return 0;
 }
 
-static int upc_build_created_traffic_endpoint(
-    session_created_tc_endpoint *tc_arr,
-    uint8_t tc_num, uint8_t *resp_buffer, uint16_t *resp_pos)
+static int upc_build_created_traffic_endpoint(session_created_tc_endpoint *tc,
+    uint8_t *resp_buffer, uint16_t *resp_pos)
 {
-    uint8_t cnt = 0, cnt_l2 = 0;
-    int ret = 0;
+    uint8_t cnt = 0;
+    uint16_t tc_len = 0, tc_len_pos = 0;
 
-    for (cnt = 0; cnt < tc_num; ++cnt) {
-        session_created_tc_endpoint *tc = &tc_arr[cnt];
-        uint16_t tc_len = 0, tc_len_pos = 0;
+    tlv_encode_type(resp_buffer, resp_pos, UPF_CREATED_TRAFFIC_ENDPOINT);
+    /* Record the current position */
+    tc_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    tc_len = *resp_pos;
 
-        tlv_encode_type(resp_buffer, resp_pos, UPF_CREATED_TRAFFIC_ENDPOINT);
-        /* Record the current position */
-        tc_len_pos = *resp_pos;
-        tlv_encode_length(resp_buffer, resp_pos, 0);
-        tc_len = *resp_pos;
+    /* traffic endpoint id */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_TRAFFIC_ENDPOINT_ID);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
+    tlv_encode_uint8_t(resp_buffer, resp_pos, tc->tc_endpoint_id);
 
-        /* traffic endpoint id */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_TRAFFIC_ENDPOINT_ID);
-        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
-        tlv_encode_uint8_t(resp_buffer, resp_pos, tc->tc_endpoint_id);
-
-        /* local f-teid */
-        if (tc->local_fteid_present) {
-            ret = upc_build_f_teid(&tc->local_fteid, resp_buffer, resp_pos);
-            if (0 > ret) {
-                LOG(UPC, ERR, "build f-teid failed.\n");
-                return -1;
-            }
+    /* local f-teid */
+    if (tc->local_fteid_present) {
+        if (0 > upc_build_f_teid(&tc->local_fteid, resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build f-teid failed.\n");
+            return -1;
         }
-
-        /* Local F-TEID for Redundant Transmission */
-        if (tc->rt_local_fteid_present) {
-            ret = upc_build_f_teid(&tc->rt_local_fteid, resp_buffer, resp_pos);
-            if (0 > ret) {
-                LOG(UPC, ERR, "build Redundant Transmission f-teid failed.\n");
-                return -1;
-            }
-        }
-
-        /* UE_IP */
-        for (cnt_l2 = 0; cnt_l2 < tc_num; ++cnt_l2) {
-            ret = upc_build_ue_ip(&tc->ueip_addr[cnt_l2], resp_buffer, resp_pos);
-            if (0 > ret) {
-                LOG(UPC, ERR, "build ue ip failed.\n");
-                return -1;
-            }
-        }
-
-        /* filling traffic endpoint length */
-        tc_len = *resp_pos - tc_len;
-        tlv_encode_length(resp_buffer, &tc_len_pos, tc_len);
-        LOG(UPC, RUNNING, "encode traffic endpoint info.");
     }
+
+    /* Local F-TEID for Redundant Transmission */
+    if (tc->rt_local_fteid_present) {
+        if (0 > upc_build_f_teid(&tc->rt_local_fteid, resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build Redundant Transmission f-teid failed.\n");
+            return -1;
+        }
+    }
+
+    /* UE_IP */
+    for (cnt = 0; cnt < tc->ueip_addr_num; ++cnt) {
+        if (0 > upc_build_ue_ip(&tc->ueip_addr[cnt], resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "Build UE IP address failed.\n");
+            return -1;
+        }
+    }
+
+    /* filling traffic endpoint length */
+    tc_len = *resp_pos - tc_len;
+    tlv_encode_length(resp_buffer, &tc_len_pos, tc_len);
+    LOG(UPC, RUNNING, "Encode traffic endpoint info.");
 
     return 0;
 }
@@ -7095,14 +7345,13 @@ static int upc_build_report_dldr(session_dl_data_report *dd_report,
     uint8_t cnt = 0, max_num = dd_report->pdr_id_num;
     uint16_t ie_pos = 0, ie_len = 0;
 
-    for (cnt = 0; cnt < max_num; ++cnt) {
-        session_dl_data_service_info *dd_service =
-            &dd_report->dl_data_service[cnt];
+    tlv_encode_type(resp_buffer, resp_pos, UPF_DOWNLINK_DATA_REPORT);
+    ie_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
 
-        tlv_encode_type(resp_buffer, resp_pos, UPF_DOWNLINK_DATA_REPORT);
-        ie_pos = *resp_pos;
-        tlv_encode_length(resp_buffer, resp_pos, 0);
-        ie_len = *resp_pos;
+    for (cnt = 0; cnt < max_num; ++cnt) {
+        session_dl_data_service_info *dd_service = &dd_report->dl_data_service[cnt];
 
         /* PDR ID */
         tlv_encode_type(resp_buffer, resp_pos, UPF_PDR_ID);
@@ -7146,12 +7395,17 @@ static int upc_build_report_dldr(session_dl_data_report *dd_report,
                     break;
             }
         }
-        LOG(UPC, RUNNING, "encode DLDR[%d] flag: %d.",
-            cnt, dd_service->ddsi_flag.value);
 
-        ie_len = *resp_pos - ie_len;
-        tlv_encode_length(resp_buffer, &ie_pos, ie_len);
+        LOG(UPC, RUNNING, "encode DLDR[%d] flag: %d.", cnt, dd_service->ddsi_flag.value);
     }
+
+    /* DL Data Status */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_DATA_STATUS);
+    tlv_encode_length(resp_buffer, resp_pos, 1);
+    tlv_encode_uint8_t(resp_buffer, resp_pos, dd_report->dl_data_status.value);
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_pos, ie_len);
 
     return 0;
 }
@@ -7288,10 +7542,145 @@ static int upc_build_app_detect_info(session_app_detection_info *app_detect,
     return ie_len;
 }
 
+static int upc_build_ip_multicast_address(session_ip_multicast_address *ip_mul_addr,
+    uint8_t *resp_buffer, uint16_t *resp_pos)
+{
+    uint16_t ie_len_pos = 0, ie_len = 0;
+
+    tlv_encode_type(resp_buffer, resp_pos, UPF_IP_MULTICAST_ADDRESS);
+    ie_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
+
+    /* FLAG */
+    tlv_encode_uint8_t(resp_buffer, resp_pos, ip_mul_addr->flag.value);
+
+    /* (start) IPv4 address */
+    if (ip_mul_addr->flag.d.v4) {
+        tlv_encode_uint32_t(resp_buffer, resp_pos, ip_mul_addr->start_ip.ipv4);
+    }
+
+    /* (start) IPv6 address */
+    if (ip_mul_addr->flag.d.v6) {
+        tlv_encode_binary(resp_buffer, resp_pos, IPV6_ALEN, ip_mul_addr->start_ip.ipv6);
+    }
+
+    /* (end) IPv4 address */
+    if (ip_mul_addr->flag.d.v4 && ip_mul_addr->flag.d.r) {
+        tlv_encode_uint32_t(resp_buffer, resp_pos, ip_mul_addr->end_ip.ipv4);
+    }
+
+    /* (end) IPv6 address */
+    if (ip_mul_addr->flag.d.v6 && ip_mul_addr->flag.d.r) {
+        tlv_encode_binary(resp_buffer, resp_pos, IPV6_ALEN, ip_mul_addr->end_ip.ipv6);
+    }
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_len_pos, ie_len);
+
+    return ie_len;
+}
+
+int upc_build_source_ip_address(session_source_ip_address *src_ip_addr,
+    uint8_t *resp_buffer, uint16_t *resp_pos)
+{
+    uint16_t ie_len_pos = 0, ie_len = 0;
+
+    tlv_encode_type(resp_buffer, resp_pos, UPF_SOURCE_IP_ADDRESS);
+    ie_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
+
+    /* FLAG */
+    tlv_encode_uint8_t(resp_buffer, resp_pos, src_ip_addr->flag.value);
+
+    /* IPv4 address */
+    if (src_ip_addr->flag.d.v4) {
+        tlv_encode_uint32_t(resp_buffer, resp_pos, src_ip_addr->ipv4);
+    }
+
+    /* IPv6 address */
+    if (src_ip_addr->flag.d.v6) {
+        tlv_encode_binary(resp_buffer, resp_pos, IPV6_ALEN, src_ip_addr->ipv6);
+    }
+
+    /* mask/prefix length */
+    if (src_ip_addr->flag.d.mpl && src_ip_addr->prefix_len) {
+        tlv_encode_uint8_t(resp_buffer, resp_pos, src_ip_addr->prefix_len);
+    }
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_len_pos, ie_len);
+
+    return ie_len;
+}
+
+static int upc_build_join_ip_multicast_info(session_join_ip_multicast_info *jimi,
+    uint8_t *resp_buffer, uint16_t *resp_pos)
+{
+    uint16_t ie_len_pos = 0, ie_len = 0;
+    uint8_t cnt;
+
+    tlv_encode_type(resp_buffer, resp_pos, UPF_JOIN_IP_MULTICAST_INFORMATION_IE_WITHIN_USAGE_REPORT);
+    ie_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
+
+    /* IP Multicast Address */
+    if (0 > upc_build_ip_multicast_address(&jimi->ip_mul_addr, resp_buffer, resp_pos)) {
+        LOG(UPC, ERR, "build IP Multicast Address failed.");
+        return -1;
+    }
+
+    /* Source IP Address */
+    for (cnt = 0; cnt < jimi->source_ip_addr_num; ++cnt) {
+        if (0 > upc_build_source_ip_address(&jimi->source_ip_addr[cnt], resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "build source IP address failed.");
+            return -1;
+        }
+    }
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_len_pos, ie_len);
+
+    return ie_len;
+}
+
+static int upc_build_leave_ip_multicast_info(session_leave_ip_multicast_info *limi,
+    uint8_t *resp_buffer, uint16_t *resp_pos)
+{
+    uint16_t ie_len_pos = 0, ie_len = 0;
+    uint8_t cnt;
+
+    tlv_encode_type(resp_buffer, resp_pos, UPF_LEAVE_IP_MULTICAST_INFORMATION_IE_WITHIN_USAGE_REPORT);
+    ie_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
+
+    /* IP Multicast Address */
+    if (0 > upc_build_ip_multicast_address(&limi->ip_mul_addr, resp_buffer, resp_pos)) {
+        LOG(UPC, ERR, "build IP Multicast Address failed.");
+        return -1;
+    }
+
+    /* Source IP Address */
+    for (cnt = 0; cnt < limi->source_ip_addr_num; ++cnt) {
+        if (0 > upc_build_source_ip_address(&limi->source_ip_addr[cnt], resp_buffer, resp_pos)) {
+            LOG(UPC, ERR, "build source IP address failed.");
+            return -1;
+        }
+    }
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_len_pos, ie_len);
+
+    return ie_len;
+}
+
 static int upc_build_report_ur(session_report_request_ur *ur_arr,
     uint8_t ur_num, uint8_t* resp_buffer, uint16_t *resp_pos)
 {
-    uint8_t cnt = 0;
+    uint8_t cnt = 0, cnt_l2;
     int ret = 0;
     uint16_t ie_pos = 0, ie_len = 0;
 
@@ -7340,7 +7729,7 @@ static int upc_build_report_ur(session_report_request_ur *ur_arr,
 
         /* Volume Measurement */
         if (ur->member_flag.d.vol_meas_present) {
-            if (0 > upc_build_volume(&ur->vol_meas, resp_buffer, resp_pos)) {
+            if (0 > upc_build_volume_measurement(&ur->vol_meas, resp_buffer, resp_pos)) {
                 LOG(UPC, ERR, "build volume measurement failed.");
                 return -1;
             }
@@ -7421,7 +7810,7 @@ static int upc_build_report_ur(session_report_request_ur *ur_arr,
 
         /* Event Time Stamp */
         if (ur->member_flag.d.eve_stamp_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_EVENT_TIME_STAMP_);
+            tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_STAMP);
             tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
             tlv_encode_uint32_t(resp_buffer, resp_pos, ur->eve_stamp);
             LOG(UPC, RUNNING, "eve stamp %d.", ur->eve_stamp);
@@ -7432,6 +7821,24 @@ static int upc_build_report_ur(session_report_request_ur *ur_arr,
             if (0 > upc_build_eth_traffic_info(&ur->eth_traffic,
                 resp_buffer, resp_pos)) {
                 LOG(UPC, ERR, "build eth traffic info failed.");
+                return -1;
+            }
+        }
+
+        /* Join IP Muticast Information */
+        for (cnt_l2 = 0; cnt_l2 < ur->join_ip_mul_info_num; ++cnt_l2) {
+            if (0 > upc_build_join_ip_multicast_info(&ur->join_ip_mul_info[cnt_l2],
+                resp_buffer, resp_pos)) {
+                LOG(UPC, ERR, "build Join IP Muticast Information failed.");
+                return -1;
+            }
+        }
+
+        /* Leave IP Muticast Information */
+        for (cnt_l2 = 0; cnt_l2 < ur->leave_ip_mul_info_num; ++cnt_l2) {
+            if (0 > upc_build_leave_ip_multicast_info(&ur->leave_ip_mul_info[cnt_l2],
+                resp_buffer, resp_pos)) {
+                LOG(UPC, ERR, "build Leave IP Muticast Information failed.");
                 return -1;
             }
         }
@@ -7470,7 +7877,7 @@ static int upc_build_eir(session_error_indication_report *err,
     return ie_len;
 }
 
-static int upc_build_f_seid(uint64_t seid,
+static int upc_build_up_f_seid(uint64_t seid,
     uint8_t *resp_buffer, uint16_t *resp_pos, uint8_t node_type)
 {
     uint16_t ie_pos = 0, ie_len = 0;
@@ -7500,6 +7907,31 @@ static int upc_build_f_seid(uint64_t seid,
             tlv_encode_uint64_t(resp_buffer, resp_pos, seid);
             tlv_encode_uint32_t(resp_buffer, resp_pos, local_ip->ipv4);
             break;
+    }
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_pos, ie_len);
+
+    return ie_len;
+}
+
+static int upc_build_cp_f_seid(session_f_seid *fseid,
+    uint8_t *resp_buffer, uint16_t *resp_pos)
+{
+    uint16_t ie_pos = 0, ie_len = 0;
+
+    tlv_encode_type(resp_buffer, resp_pos, UPF_F_SEID);
+    ie_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
+
+    tlv_encode_uint8_t(resp_buffer, resp_pos, fseid->ip_version.value);
+    tlv_encode_uint64_t(resp_buffer, resp_pos, fseid->seid);
+    if (fseid->ip_version.d.v4) {
+        tlv_encode_uint32_t(resp_buffer, resp_pos, fseid->ipv4_addr);
+    }
+    if (fseid->ip_version.d.v6) {
+        tlv_encode_binary(resp_buffer, resp_pos, IPV6_ALEN, fseid->ipv6_addr);
     }
 
     ie_len = *resp_pos - ie_len;
@@ -7542,8 +7974,7 @@ static int upc_build_clock_drift_report(session_clock_drift_report *cd_report,
         tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_STAMP);
         tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
         tlv_encode_uint32_t(resp_buffer, resp_pos, cd_report->time_tamp);
-    }
-*/
+    }*/
 
     ie_len = *resp_pos - ie_len;
     tlv_encode_length(resp_buffer, &ie_pos, ie_len);
@@ -7621,7 +8052,7 @@ static int upc_build_gtpu_path_qos_report(session_gtpu_path_qos_report *gpq_repo
     tlv_encode_uint8_t(resp_buffer, resp_pos, gpq_report->qos_report_trigger.value);
 
     /* Time Stamp */
-    tlv_encode_type(resp_buffer, resp_pos, UPF_EVENT_TIME_STAMP_);
+    tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_STAMP);
     tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
     tlv_encode_uint32_t(resp_buffer, resp_pos, gpq_report->time_stamp);
 
@@ -7643,22 +8074,36 @@ static int upc_build_gtpu_path_qos_report(session_gtpu_path_qos_report *gpq_repo
     return ie_len;
 }
 
-static int upc_build_port_mgmt_info_for_tsc(session_port_management_info *info,
-    uint8_t *resp_buffer, uint16_t *resp_pos)
+static int upc_build_tsc_mgmt_info(session_tsc_management_info *info,
+    uint8_t *resp_buffer, uint16_t *resp_pos, uint16_t ie_type)
 {
     uint16_t ie_pos = 0, ie_len = 0;
 
-    tlv_encode_type(resp_buffer, resp_pos,
-        UPF_PORT_MGMT_INFO_FOR_TSC_IE_WITHIN_PFCP_SESSION_MODIFICATION_RESPONSE);
+    tlv_encode_type(resp_buffer, resp_pos, ie_type);
     ie_pos = *resp_pos;
     tlv_encode_length(resp_buffer, resp_pos, 0);
     ie_len = *resp_pos;
 
     /* Port Management Information Container */
-    tlv_encode_type(resp_buffer, resp_pos, UPF_PORT_MANAGEMENT_INFORMATION_CONTAINER);
-    tlv_encode_length(resp_buffer, resp_pos, strlen(info->port_mgmt_info_container));
-    tlv_encode_binary(resp_buffer, resp_pos, strlen(info->port_mgmt_info_container),
-        (uint8_t *)info->port_mgmt_info_container);
+    if (info->pmic_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_PORT_MANAGEMENT_INFORMATION_CONTAINER);
+        tlv_encode_length(resp_buffer, resp_pos, strlen(info->port_mgmt_info_container));
+        tlv_encode_binary(resp_buffer, resp_pos, strlen(info->port_mgmt_info_container),
+            (uint8_t *)info->port_mgmt_info_container);
+    }
+
+    if (info->bmic_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_BRIDGE_MANAGEMENT_INFORMATION_CONTAINER);
+        tlv_encode_length(resp_buffer, resp_pos, strlen(info->bridge_mgmt_info_container));
+        tlv_encode_binary(resp_buffer, resp_pos, strlen(info->bridge_mgmt_info_container),
+            (uint8_t *)info->bridge_mgmt_info_container);
+    }
+
+    if (info->ntpn_present) {
+        tlv_encode_type(resp_buffer, resp_pos, UPF_NW_TT_PORT_NUMBER);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+        tlv_encode_uint32_t(resp_buffer, resp_pos, info->nw_tt_port_number);
+    }
 
     ie_len = *resp_pos - ie_len;
     tlv_encode_length(resp_buffer, &ie_pos, ie_len);
@@ -7726,7 +8171,7 @@ static int upc_build_qoo_monitor_report(session_qos_monitor_report *info_arr, ui
         upc_build_qos_monitor_measurement(&qmr->qos_monitor_measurement, resp_buffer, resp_pos);
 
         /* Time Stamp */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_EVENT_TIME_STAMP_);
+        tlv_encode_type(resp_buffer, resp_pos, UPF_TIME_STAMP);
         tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
         tlv_encode_uint32_t(resp_buffer, resp_pos, qmr->time_stamp);
 
@@ -7744,48 +8189,45 @@ static int upc_build_qoo_monitor_report(session_qos_monitor_report *info_arr, ui
     return 0;
 }
 
-static int upc_build_session_report(session_report *info_arr, uint8_t info_num,
+static int upc_build_session_report(session_report *sr,
     uint8_t *resp_buffer, uint16_t *resp_pos, int trace_flag)
 {
-    uint8_t cnt = 0;
+    uint16_t sr_len = 0, sr_len_pos = 0;
 
-    for (cnt = 0; cnt < info_num; ++cnt) {
-        int cnt = 0;
-        uint16_t sr_len = 0, sr_len_pos = 0;
-        session_report *sr = &info_arr[cnt];
+    tlv_encode_type(resp_buffer, resp_pos, UPF_SESSION_REPORT);
+    /* Record the current position */
+    sr_len_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    sr_len = *resp_pos;
 
-        tlv_encode_type(resp_buffer, resp_pos, UPF_SESSION_REPORT);
-        /* Record the current position */
-        sr_len_pos = *resp_pos;
-        tlv_encode_length(resp_buffer, resp_pos, 0);
-        sr_len = *resp_pos;
+    /* SRR id */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_SRR_ID);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
+    tlv_encode_uint8_t(resp_buffer, resp_pos, sr->srr_id);
 
-        /* SRR id */
-        tlv_encode_type(resp_buffer, resp_pos, UPF_SRR_ID);
-        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
-        tlv_encode_uint8_t(resp_buffer, resp_pos, sr->srr_id);
+    /* Access Availability Report */
+    if (sr->access_avail_report_present) {
+        uint8_t aai_cnt;
+        tlv_encode_type(resp_buffer, resp_pos, UPF_ACCESS_AVAILABILITY_REPORT);
+        tlv_encode_length(resp_buffer, resp_pos, 5);
 
-        /* Access Availability Report */
-        if (sr->access_avail_report_present) {
-            tlv_encode_type(resp_buffer, resp_pos, UPF_ACCESS_AVAILABILITY_REPORT);
-            tlv_encode_length(resp_buffer, resp_pos, 5);
-
+        for (aai_cnt = 0; aai_cnt < sr->access_avail_report.access_avail_info_num; ++aai_cnt) {
             tlv_encode_type(resp_buffer, resp_pos, UPF_ACCESS_AVAILABILITY_INFORMATION);
             tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
-            tlv_encode_uint8_t(resp_buffer, resp_pos, sr->access_avail_report.access_avail_info.value);
+            tlv_encode_uint8_t(resp_buffer, resp_pos, sr->access_avail_report.access_avail_info[aai_cnt].value);
         }
-
-        /* QoS Monitoring Report */
-        if (0 > upc_build_qoo_monitor_report(sr->qos_monitor_report,
-            sr->qos_monitor_report_num, resp_buffer, resp_pos)) {
-            LOG(UPC, ERR, "build QoS Monitoring Report failed.");
-        }
-
-        /* filling created pdr length */
-        sr_len = *resp_pos - sr_len;
-        tlv_encode_length(resp_buffer, &sr_len_pos, sr_len);
-        LOG_TRACE(UPC, RUNNING, trace_flag, "encode session report.");
     }
+
+    /* QoS Monitoring Report */
+    if (0 > upc_build_qoo_monitor_report(sr->qos_monitor_report,
+        sr->qos_monitor_report_num, resp_buffer, resp_pos)) {
+        LOG(UPC, ERR, "build QoS Monitoring Report failed.");
+    }
+
+    /* filling created pdr length */
+    sr_len = *resp_pos - sr_len;
+    tlv_encode_length(resp_buffer, &sr_len_pos, sr_len);
+    LOG_TRACE(UPC, RUNNING, trace_flag, "encode session report.");
 
     return 0;
 }
@@ -7828,7 +8270,7 @@ static int upc_build_packet_rate_status(session_packet_rate_status *prs,
     return ie_len;
 }
 
-static int upc_build_packet_rate_status_report(session_packet_rate_status_report *info,
+static int upc_build_packet_rate_status_report_for_sess_del(session_packet_rate_status_report *info,
     uint8_t* resp_buffer, uint16_t *resp_pos)
 {
     uint16_t ie_pos = 0, ie_len = 0;
@@ -7853,7 +8295,66 @@ static int upc_build_packet_rate_status_report(session_packet_rate_status_report
     return ie_len;
 }
 
-/* 暂时不考虑UP分配的f-teid和ueip会出现修改的情况 */
+static int upc_build_packet_rate_status_report_for_sess_mod(session_packet_rate_status_report *info,
+    uint8_t* resp_buffer, uint16_t *resp_pos)
+{
+    uint16_t ie_pos = 0, ie_len = 0;
+
+    tlv_encode_type(resp_buffer, resp_pos, UPF_PACKET_RATE_STATUS_REPORT_IE_WITHIN_PFCP_SESSION_MODIFICATION_RESPONSE);
+    ie_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
+
+    /* QER ID */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_QER_ID);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint32_t));
+    tlv_encode_uint32_t(resp_buffer, resp_pos, info->qer_id);
+
+    /* load metric */
+    upc_build_packet_rate_status(&info->packet_rate_status, resp_buffer, resp_pos);
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_pos, ie_len);
+    LOG(UPC, RUNNING, "encode Packet Rate Status Report.");
+
+    return ie_len;
+}
+
+static int upc_build_partial_failure_information(session_partial_failure_information *info,
+    uint8_t* resp_buffer, uint16_t *resp_pos, uint16_t ie_type)
+{
+    uint16_t ie_pos = 0, ie_len = 0;
+    uint8_t cnt;
+
+    tlv_encode_type(resp_buffer, resp_pos, ie_type);
+    ie_pos = *resp_pos;
+    tlv_encode_length(resp_buffer, resp_pos, 0);
+    ie_len = *resp_pos;
+
+    /* Failed Rule ID */
+    (void)upc_build_failed_rule_id(&info->fail_rule_id, resp_buffer, resp_pos);
+
+    /* Failure Cause */
+    tlv_encode_type(resp_buffer, resp_pos, UPF_CAUSE);
+    tlv_encode_length(resp_buffer, resp_pos, sizeof(uint8_t));
+    tlv_encode_uint8_t(resp_buffer, resp_pos, info->cause);
+
+    /* Offending IE Information */
+    for (cnt = 0; cnt < info->offending_ie_info_num; ++cnt) {
+        /*tlv_encode_type(resp_buffer, resp_pos, UPF_OFFENDING_IE_INFORMATION);
+        tlv_encode_length(resp_buffer, resp_pos, sizeof(uint16_t) + IE_VALUE_LEN);
+        tlv_encode_uint16_t(resp_buffer, resp_pos, IE_TYPE);
+        tlv_encode_binary(resp_buffer, resp_pos, IE_VALUE);*/
+    }
+
+    ie_len = *resp_pos - ie_len;
+    tlv_encode_length(resp_buffer, &ie_pos, ie_len);
+    LOG(UPC, RUNNING, "encode Packet Rate Status Report.");
+
+    return ie_len;
+}
+
+/* For the time being, the f-teid and ueip assigned by UPF are not considered to be modified */
 static void upc_change_pdr(session_pdr_create *est_pdr,
     session_pdr_update *mdf_pdr)
 {
@@ -8792,11 +9293,10 @@ static int upc_assign_ueip(session_pdr_create *pdr)
     */
     if (uf.d.UEIP && pdr->pdi_content.ue_ipaddr_num) {
         if (pdr->ueip_addr_pool_identity_num &&
-            pdr->ueip_addr_pool_identity[0].pool_id_len) {
+            pdr->ueip_addr_pool_identity[0].pool_identity[0] != '\0') {
             uint32_t pool_index = 0;
 
-            if (0 == ueip_pool_index_get(&pool_index,
-                pdr->ueip_addr_pool_identity[0].pool_identity)) {
+            if (0 == ueip_pool_index_get(&pool_index, pdr->ueip_addr_pool_identity[0].pool_identity)) {
                 for (cnt = 0; cnt < pdr->pdi_content.ue_ipaddr_num; ++cnt) {
                     if (0 > ueip_addr_alloc(pool_index, &pdr->pdi_content.ue_ipaddr[cnt])) {
                         LOG(UPC, ERR, "Alloc UEIP address failed.");
@@ -8865,7 +9365,7 @@ static int upc_collect_ueip(session_pdr_create *pdr)
     */
     if (uf.d.UEIP && pdr->pdi_content.ue_ipaddr_num) {
         if (pdr->ueip_addr_pool_identity_num &&
-            pdr->ueip_addr_pool_identity[0].pool_id_len) {
+            pdr->ueip_addr_pool_identity[0].pool_identity[0] != '\0') {
             uint32_t pool_index = 0;
 
             if (0 == ueip_pool_index_get(&pool_index,
@@ -9455,6 +9955,7 @@ void upc_build_session_establishment_response(
 {
     uint16_t msg_hdr_pos = *resp_pos;
     uint16_t buf_pos = *resp_pos;
+    uint8_t cnt;
 
     if (NULL == sess_rep || NULL == resp_buffer || NULL == resp_pos) {
         LOG(UPC, ERR,
@@ -9487,23 +9988,24 @@ void upc_build_session_establishment_response(
 
     /* Encode UP F-SEID */
     if (SESS_REQUEST_ACCEPTED == sess_rep->cause) {
-        if (0 > upc_build_f_seid(sess_rep->local_seid, resp_buffer, &buf_pos, node_type)) {
-            LOG(UPC, ERR, "encode f-seid failed.");
+        if (0 > upc_build_up_f_seid(sess_rep->local_seid, resp_buffer, &buf_pos, node_type)) {
+            LOG(UPC, ERR, "Encode f-seid failed.");
         }
-        LOG_TRACE(UPC, RUNNING, trace_flag, "encode f-seid.");
+        LOG_TRACE(UPC, RUNNING, trace_flag, "Encode f-seid.");
     }
 
     /* Encode Created PDR */
-    if (0 > upc_build_created_pdr(sess_rep->created_pdr,
-        sess_rep->created_pdr_num, resp_buffer, &buf_pos)) {
-        LOG(UPC, ERR, "build created pdr failed.");
+    for (cnt = 0; cnt < sess_rep->created_pdr_num; ++cnt) {
+        if (0 > upc_build_created_pdr(&sess_rep->created_pdr[cnt], resp_buffer, &buf_pos)) {
+            LOG(UPC, ERR, "Build created pdr failed.");
+        }
     }
 
     /* Load Control Information */
     if (sess_rep->member_flag.d.load_ctl_info_present) {
         if (0 > upc_build_load_control_info(&sess_rep->load_ctl_info,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build load control info failed.");
+            LOG(UPC, ERR, "Build load control info failed.");
         }
     }
 
@@ -9511,7 +10013,7 @@ void upc_build_session_establishment_response(
     if (sess_rep->member_flag.d.overload_ctl_info_present) {
         if (0 > upc_build_overload_control_info(&sess_rep->overload_ctl_info,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build overload control info failed.");
+            LOG(UPC, ERR, "Build overload control info failed.");
         }
     }
 
@@ -9519,21 +10021,23 @@ void upc_build_session_establishment_response(
     if (sess_rep->member_flag.d.failed_rule_id_present) {
         if (0 > upc_build_failed_rule_id(&sess_rep->failed_rule_id, resp_buffer,
             &buf_pos)) {
-            LOG(UPC, ERR, "build failed rule id failed.");
+            LOG(UPC, ERR, "Build failed rule id failed.");
         }
     }
 
     /* Encode Created Traffic Endpoint */
-    if (0 > upc_build_created_traffic_endpoint(sess_rep->created_tc_endpoint,
-        sess_rep->created_tc_endpoint_num, resp_buffer, &buf_pos)) {
-        LOG(UPC, ERR, "build created traffic endpoint failed.");
+    for (cnt = 0; cnt < sess_rep->created_tc_endpoint_num; ++cnt) {
+        if (0 > upc_build_created_traffic_endpoint(&sess_rep->created_tc_endpoint[cnt],
+            resp_buffer, &buf_pos)) {
+            LOG(UPC, ERR, "Build created traffic endpoint failed.");
+        }
     }
 
     /* Created Bridge Info for TSC */
     if (sess_rep->member_flag.d.created_bg_info_present) {
         if (0 > upc_build_created_bridge_info(&sess_rep->created_bg_info,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build Created Bridge Info for TSC failed.");
+            LOG(UPC, ERR, "Build Created Bridge Info for TSC failed.");
         }
     }
 
@@ -9541,7 +10045,22 @@ void upc_build_session_establishment_response(
     if (sess_rep->member_flag.d.atsss_ctrl_para_present) {
         if (0 > upc_build_atsss_control_para(&sess_rep->atsss_ctrl_para,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build ATSSS Control Parameters failed.");
+            LOG(UPC, ERR, "Build ATSSS Control Parameters failed.");
+        }
+    }
+
+    /* RDS configuration information */
+    if (sess_rep->member_flag.d.rds_config_info_present) {
+        tlv_encode_type(resp_buffer, &buf_pos, UPF_RDS_CONFIGURATION_INFORMATION);
+        tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint8_t));
+        tlv_encode_uint8_t(resp_buffer, &buf_pos, sess_rep->rds_config_info.value);
+    }
+
+    /* Encode Partial Failure Information */
+    for (cnt = 0; cnt < sess_rep->partial_failure_info_num; ++cnt) {
+        if (0 > upc_build_partial_failure_information(&sess_rep->partial_failure_info[cnt],
+            resp_buffer, &buf_pos, UPF_PARTIAL_FAILURE_INFORMATION_FOR_SESS_EST_RESP)) {
+            LOG(UPC, ERR, "Build Partial Failure Information failed.");
         }
     }
 
@@ -9652,7 +10171,7 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
 
             case UPF_CREATE_URR:
                 if (sess_content.urr_num < MAX_URR_NUM) {
-                    res_cause = upc_parse_create_urr(
+                    res_cause = upc_parse_create_or_update_urr(
                         &sess_content.urr_arr[sess_content.urr_num], buffer,
                         &buf_pos, buf_pos + obj_len, &sess_rep, 0);
                     ++sess_content.urr_num;
@@ -9796,7 +10315,7 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
                 }
                 break;
 
-            case UPF_CREATED_BRIDGE_INFO_FOR_TSC:
+            case UPF_CREATE_BRIDGE_INFO_FOR_TSC:
                 if (sizeof(uint8_t) == obj_len) {
                     sess_content.create_bridge.value = tlv_decode_uint8_t(buffer, &buf_pos);
                 } else {
@@ -9828,6 +10347,7 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
 
             case UPF_RECOVERY_TIME_STAMP:
                 if (sizeof(uint32_t) == obj_len) {
+                    sess_content.member_flag.d.recovery_time_stamp_present = 1;
                     sess_content.recovery_time_stamp = tlv_decode_uint32_t(buffer, &buf_pos);
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
@@ -9836,32 +10356,31 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
                 }
                 break;
 
-            case UPF_RAT_TYPE:
-                if ((sizeof(uint8_t) + sizeof(uint16_t)) == obj_len) {
-                    sess_content.rat_type.enterprise_id = tlv_decode_uint16_t(buffer, &buf_pos);
-                    sess_content.rat_type.rat_type = tlv_decode_uint8_t(buffer, &buf_pos);
+            case UPF_S_NSSAI:
+                if (sizeof(session_s_nssai) == obj_len) {
+                    sess_content.member_flag.d.s_nssai_present = 1;
+                    sess_content.s_nssai.sst = tlv_decode_uint8_t(buffer, &buf_pos);
+                    sess_content.s_nssai.sd = tlv_decode_int_3b(buffer, &buf_pos);
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
-                        obj_len, (sizeof(uint8_t) + sizeof(uint16_t)));
+                        obj_len, sizeof(session_s_nssai));
                     res_cause = SESS_INVALID_LENGTH;
                 }
                 break;
 
-            case UPF_USER_LOCATION_INFO:
-                if (3 <= obj_len) {
-                    sess_content.user_local_info.enterprise_id = tlv_decode_uint16_t(buffer, &buf_pos);
-                    sess_content.user_local_info.geographic_location_type = tlv_decode_uint8_t(buffer, &buf_pos);
+            case UPF_PROVIDE_RDS_CONFIGURATION_INFORMATION:
+                sess_content.member_flag.d.provide_rds_config_info_present = 1;
+                res_cause = upc_parse_provid_rds_config_info(
+                    &sess_content.provide_rds_config_info, buffer,
+                    &buf_pos, buf_pos + obj_len, &sess_rep);
+                break;
 
-                    if ((obj_len - 3) < GEOGRAPHIC_LOCAL_LEN) {
-                        tlv_decode_binary(buffer, &buf_pos, obj_len - 3,
-                            sess_content.user_local_info.geographic_location);
-                    } else {
-                        PFCP_MOVE_FORWORD(buf_pos, (obj_len - 3));
-                        LOG(UPC, ERR, "UPF_USER_LOCATION_INFO length too long, skip this.");
-                    }
+            case UPF_RAT_TYPE:
+                if (sizeof(uint8_t) == obj_len) {
+                    sess_content.rat_type = tlv_decode_uint8_t(buffer, &buf_pos);
                 } else {
-                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be greater than or equal to %u.",
-                        obj_len, 3);
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
                     res_cause = SESS_INVALID_LENGTH;
                 }
                 break;
@@ -10021,7 +10540,7 @@ void upc_parse_session_establishment_request(uint8_t* buffer,
 
         res_cause = sess_rep.cause;
 
-        LOG(UPC, ERR, "publish content to sp failed, sequence number: %u.", pkt_seq);
+        LOG(UPC, ERR, "Session establish failed, sequence number: %u.", pkt_seq);
         if (0 > upc_free_teid_from_create(&sess_content, trace_flag)) {
             LOG(UPC, ERR, "Free TEID failed.");
         }
@@ -10106,6 +10625,7 @@ void upc_build_session_modification_response(
 {
     uint16_t msg_hdr_pos = *resp_pos;
     uint16_t buf_pos = *resp_pos;
+    uint8_t cnt;
 
     if (NULL == sess_rep || NULL == resp_buffer || NULL == resp_pos) {
         LOG(UPC, ERR,
@@ -10122,28 +10642,29 @@ void upc_build_session_modification_response(
     tlv_encode_type(resp_buffer, &buf_pos, UPF_CAUSE);
     tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint8_t));
     tlv_encode_uint8_t(resp_buffer, &buf_pos, sess_rep->cause);
-    LOG_TRACE(UPC, RUNNING, trace_flag, "encode cause %d.", sess_rep->cause);
+    LOG_TRACE(UPC, RUNNING, trace_flag, "Encode cause %d.", sess_rep->cause);
 
     /* Encode offending ie */
     if (sess_rep->member_flag.d.offending_ie_present) {
         tlv_encode_type(resp_buffer, &buf_pos, UPF_OFFENDING_IE);
         tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint16_t));
         tlv_encode_uint16_t(resp_buffer, &buf_pos, sess_rep->offending_ie);
-        LOG_TRACE(UPC, RUNNING, trace_flag, "encode offending ie %d.",
+        LOG_TRACE(UPC, RUNNING, trace_flag, "Encode offending ie %d.",
             sess_rep->offending_ie);
     }
 
     /* Encode Created PDR */
-    if (0 > upc_build_created_pdr(sess_rep->created_pdr,
-        sess_rep->created_pdr_num, resp_buffer, &buf_pos)) {
-        LOG(UPC, ERR, "build created pdr failed.");
+    for (cnt = 0; cnt < sess_rep->created_pdr_num; ++cnt) {
+        if (0 > upc_build_created_pdr(&sess_rep->created_pdr[cnt], resp_buffer, &buf_pos)) {
+            LOG(UPC, ERR, "Build created pdr failed.");
+        }
     }
 
     /* Load Control Information */
     if (sess_rep->member_flag.d.load_ctl_info_present) {
         if (0 > upc_build_load_control_info(&sess_rep->load_ctl_info,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build load control info failed.");
+            LOG(UPC, ERR, "Build load control info failed.");
         }
     }
 
@@ -10151,22 +10672,23 @@ void upc_build_session_modification_response(
     if (sess_rep->member_flag.d.overload_ctl_info_present) {
         if (0 > upc_build_overload_control_info(&sess_rep->overload_ctl_info,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build overload control info failed.");
+            LOG(UPC, ERR, "Build overload control info failed.");
         }
     }
 
     /* Encode usage report */
-    if (0 > upc_build_md_usage_report(sess_rep->usage_report,
-        sess_rep->usage_report_num, resp_buffer, &buf_pos,
-        UPF_USAGE_REPORT_SESSION_MODIFICATION_RESPONSE, trace_flag)) {
-        LOG(UPC, ERR, "build usage report failed.");
+    for (cnt = 0; cnt < sess_rep->usage_report_num; ++cnt) {
+        if (0 > upc_build_md_usage_report(&sess_rep->usage_report[cnt], resp_buffer, &buf_pos,
+            UPF_USAGE_REPORT_SESSION_MODIFICATION_RESPONSE, trace_flag)) {
+            LOG(UPC, ERR, "Build usage report failed.");
+        }
     }
 
     /* Encode failed rule id */
     if (sess_rep->member_flag.d.failed_rule_id_present) {
         if (0 > upc_build_failed_rule_id(&sess_rep->failed_rule_id,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build failed rule id failed.");
+            LOG(UPC, ERR, "Build failed rule id failed.");
         }
     }
 
@@ -10177,21 +10699,23 @@ void upc_build_session_modification_response(
         tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint16_t));
         tlv_encode_uint16_t(resp_buffer, &buf_pos,
             sess_rep->added_usage_report.value);
-        LOG_TRACE(UPC, RUNNING, trace_flag, "encode Additional Usage Reports info %d.",
+        LOG_TRACE(UPC, RUNNING, trace_flag, "Encode Additional Usage Reports info %d.",
             sess_rep->added_usage_report.value);
     }
 
     /* Encode Created Traffic Endpoint */
-    if (0 > upc_build_created_traffic_endpoint(sess_rep->created_tc_endpoint,
-        sess_rep->created_tc_endpoint_num, resp_buffer, &buf_pos)) {
-        LOG(UPC, ERR, "build created traffic endpoint failed.");
+    for (cnt = 0; cnt < sess_rep->created_tc_endpoint_num; ++cnt) {
+        if (0 > upc_build_created_traffic_endpoint(&sess_rep->created_tc_endpoint[cnt],
+            resp_buffer, &buf_pos)) {
+            LOG(UPC, ERR, "Build created traffic endpoint failed.");
+        }
     }
 
-    /* Encode Port Management Information for TSC */
-    if (sess_rep->member_flag.d.port_mgmt_info_present) {
-        if (0 > upc_build_port_mgmt_info_for_tsc(&sess_rep->port_mgmt_info,
-            resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build Port Management Information for TSC failed.");
+    /* Encode TSC Management Information */
+    for (cnt = 0; cnt < sess_rep->tsc_mgmt_info_num; ++cnt) {
+        if (0 > upc_build_tsc_mgmt_info(&sess_rep->tsc_mgmt_info[cnt],
+            resp_buffer, &buf_pos, UPF_TSC_MGMT_INFO_IE_WITHIN_PFCP_SESSION_MODIFICATION_RESPONSE)) {
+            LOG(UPC, ERR, "Build TSC Management Information failed.");
         }
     }
 
@@ -10199,14 +10723,31 @@ void upc_build_session_modification_response(
     if (sess_rep->member_flag.d.atsss_ctrl_para_present) {
         if (0 > upc_build_atsss_control_para(&sess_rep->atsss_ctrl_para,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build ATSSS Control Parameters failed.");
+            LOG(UPC, ERR, "Build ATSSS Control Parameters failed.");
         }
     }
 
     /* Encode Updated PDR */
-    if (0 > upc_build_updated_pdr(sess_rep->updated_pdr,
-        sess_rep->updated_pdr_num, resp_buffer, &buf_pos)) {
-        LOG(UPC, ERR, "build updated pdr failed.");
+    for (cnt = 0; cnt < sess_rep->updated_pdr_num; ++cnt) {
+        if (0 > upc_build_updated_pdr(&sess_rep->updated_pdr[cnt], resp_buffer, &buf_pos)) {
+            LOG(UPC, ERR, "Build updated pdr failed.");
+        }
+    }
+
+    /* Encode Packet Rate Status Report */
+    for (cnt = 0; cnt < sess_rep->pkt_rate_status_report_num; ++cnt) {
+        if (0 > upc_build_packet_rate_status_report_for_sess_mod(&sess_rep->pkt_rate_status_report[cnt],
+            resp_buffer, &buf_pos)) {
+            LOG(UPC, ERR, "Build Packet Rate Status Report failed.");
+        }
+    }
+
+    /* Encode Partial Failure Information */
+    for (cnt = 0; cnt < sess_rep->partial_failure_info_num; ++cnt) {
+        if (0 > upc_build_partial_failure_information(&sess_rep->partial_failure_info[cnt],
+            resp_buffer, &buf_pos, UPF_PARTIAL_FAILURE_INFORMATION_FOR_SESS_MOD_RESP)) {
+            LOG(UPC, ERR, "Build Partial Failure Information failed.");
+        }
     }
 
     /* Filling msg header length */
@@ -10322,7 +10863,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
 
             case UPF_UPDATE_URR:
                 if (sess_content.update_urr_num < MAX_URR_NUM) {
-                    res_cause = upc_parse_create_urr(
+                    res_cause = upc_parse_create_or_update_urr(
                         &sess_content.update_urr_arr[sess_content.update_urr_num
                         ], buffer, &buf_pos, buf_pos + obj_len, &sess_rep, 1);
                     ++sess_content.update_urr_num;
@@ -10395,7 +10936,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
 
             case UPF_CREATE_URR:
                 if (sess_content.create_urr_num < MAX_URR_NUM) {
-                    res_cause = upc_parse_create_urr(
+                    res_cause = upc_parse_create_or_update_urr(
                         &sess_content.create_urr_arr[sess_content.create_urr_num
                         ], buffer, &buf_pos, buf_pos + obj_len, &sess_rep, 0);
                     ++sess_content.create_urr_num;
@@ -10442,7 +10983,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
 
             case UPF_REMOVE_PDR:
                 if (sess_content.remove_pdr_num < MAX_PDR_NUM) {
-                    res_cause = upc_parse_remove_pdr(
+                    res_cause = upc_parse_remove_rule_group_ie(
                         &sess_content.remove_pdr_arr[sess_content.remove_pdr_num],
                         buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
                     ++sess_content.remove_pdr_num;
@@ -10455,7 +10996,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
 
             case UPF_REMOVE_FAR:
                 if (sess_content.remove_far_num < MAX_FAR_NUM) {
-                    res_cause = upc_parse_remove_far(
+                    res_cause = upc_parse_remove_rule_group_ie(
                         &sess_content.remove_far_arr[sess_content.remove_far_num],
                         buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
                     ++sess_content.remove_far_num;
@@ -10468,7 +11009,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
 
             case UPF_REMOVE_URR:
                 if (sess_content.remove_urr_num < MAX_URR_NUM) {
-                    res_cause = upc_parse_remove_urr(
+                    res_cause = upc_parse_remove_rule_group_ie(
                         &sess_content.remove_urr_arr[sess_content.remove_urr_num],
                         buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
                     ++sess_content.remove_urr_num;
@@ -10481,7 +11022,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
 
             case UPF_REMOVE_QER:
                 if (sess_content.remove_qer_num < MAX_QER_NUM) {
-                    res_cause = upc_parse_remove_qer(
+                    res_cause = upc_parse_remove_rule_group_ie(
                         &sess_content.remove_qer_arr[sess_content.remove_qer_num],
                         buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
                     ++sess_content.remove_qer_num;
@@ -10493,14 +11034,14 @@ void upc_parse_session_modification_request(uint8_t* buffer,
                 break;
 
             case UPF_REMOVE_BAR:
-                res_cause = upc_parse_remove_bar(&sess_content.remove_bar,
+                res_cause = upc_parse_remove_rule_group_ie(&sess_content.remove_bar,
                     buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
                 sess_content.member_flag.d.remove_bar_present = 1;
                 break;
 
             case UPF_REMOVE_TRAFFIC_ENDPOINT:
                 if (sess_content.remove_tc_endpoint_num < MAX_TC_ENDPOINT_NUM) {
-                    res_cause = upc_parse_remove_traffic_endpoint(
+                    res_cause = upc_parse_remove_rule_group_ie(
                         &sess_content.remove_tc_endpoint_arr[sess_content.remove_tc_endpoint_num],
                         buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
                     ++sess_content.remove_tc_endpoint_num;
@@ -10652,32 +11193,122 @@ void upc_parse_session_modification_request(uint8_t* buffer,
                 sess_content.change_node_index = node_cb->index;
                 break;
 
-            case UPF_RAT_TYPE:
-                if ((sizeof(uint8_t) + sizeof(uint16_t)) == obj_len) {
-                    sess_content.rat_type.enterprise_id = tlv_decode_uint16_t(buffer, &buf_pos);
-                    sess_content.rat_type.rat_type = tlv_decode_uint8_t(buffer, &buf_pos);
+            case UPF_TSC_MGMT_INFO_IE_WITHIN_PFCP_SESSION_MODIFICATION_REQUEST:
+                if (sess_content.tsc_mgmt_info_num < TSC_MGMT_INFO_NUM) {
+                    res_cause = upc_parse_tsc_management_information(
+                        &sess_content.tsc_mgmt_info[sess_content.tsc_mgmt_info_num],
+                        buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
+                    ++sess_content.tsc_mgmt_info_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of TSC Management Information reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_REMOVE_SRR:
+                if (sess_content.remove_srr_num < MAX_SRR_NUM) {
+                    res_cause = upc_parse_remove_rule_group_ie(
+                        &sess_content.remove_srr_arr[sess_content.remove_srr_num],
+                        buffer, &buf_pos, buf_pos + obj_len, &sess_rep);
+                    ++sess_content.remove_srr_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of FAR reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_CREATE_SRR:
+                if (sess_content.create_srr_num < MAX_SRR_NUM) {
+                    res_cause = upc_parse_create_srr(
+                        &sess_content.create_srr_arr[sess_content.create_srr_num], buffer,
+                        &buf_pos, buf_pos + obj_len, &sess_rep);
+                    ++sess_content.create_srr_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of SRR reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_UPDATE_SRR:
+                if (sess_content.update_srr_num < MAX_SRR_NUM) {
+                    res_cause = upc_parse_update_srr(
+                        &sess_content.update_srr_arr[sess_content.update_srr_num], buffer,
+                        &buf_pos, buf_pos + obj_len, &sess_rep);
+                    ++sess_content.update_srr_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of SRR reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_PROVIDE_ATSSS_CONTROL_INFORMATION:
+                sess_content.member_flag.d.provide_atsss_ctrl_info_present = 1;
+                res_cause = upc_parse_provid_atsss_ctrl_info(
+                    &sess_content.provide_atsss_ctrl_info, buffer,
+                    &buf_pos, buf_pos + obj_len, &sess_rep);
+                break;
+
+            case UPF_ETHERNET_CONTEXT_INFORMATION:
+                sess_content.member_flag.d.eth_context_info_present = 1;
+                res_cause = upc_parse_ethernet_context_info(
+                    &sess_content.eth_context_info, buffer,
+                    &buf_pos, buf_pos + obj_len, &sess_rep);
+                break;
+
+            case UPF_ACCESS_AVAILABILITY_INFORMATION:
+                if (sess_content.access_avail_info_num < 2) {
+                    if (sizeof(uint8_t) == obj_len) {
+                        sess_content.access_avail_info[sess_content.access_avail_info_num].value
+                            = tlv_decode_uint8_t(buffer, &buf_pos);
+                        ++sess_content.access_avail_info_num;
+                    } else {
+                        LOG(UPC, ERR,
+                            "obj_len: %d abnormal, Should be %lu.",
+                            obj_len, sizeof(uint8_t));
+                        res_cause = SESS_INVALID_LENGTH;
+                    }
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of Access Availability Information reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_QUERY_PACKET_RATE_STATUS_IE_WITHIN_PFCP_SESSION_MODIFICATION_REQUEST:
+                if (sess_content.query_pkt_rate_status_num < MAX_QER_NUM) {
+                    res_cause = upc_parse_query_packet_rate_status(
+                        &sess_content.query_pkt_rate_status[sess_content.query_pkt_rate_status_num], buffer,
+                        &buf_pos, buf_pos + obj_len, &sess_rep);
+                    ++sess_content.query_pkt_rate_status_num;
+                } else {
+                    LOG(UPC, ERR,
+                        "The number of Query Packet Rate Status reaches the upper limit.");
+                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_S_NSSAI:
+                if (sizeof(session_s_nssai) == obj_len) {
+                    sess_content.member_flag.d.s_nssai_present = 1;
+                    sess_content.s_nssai.sst = tlv_decode_uint8_t(buffer, &buf_pos);
+                    sess_content.s_nssai.sd = tlv_decode_int_3b(buffer, &buf_pos);
                 } else {
                     LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
-                        obj_len, (sizeof(uint8_t) + sizeof(uint16_t)));
+                        obj_len, sizeof(session_s_nssai));
                     res_cause = SESS_INVALID_LENGTH;
                 }
                 break;
 
-            case UPF_USER_LOCATION_INFO:
-                if (3 <= obj_len) {
-                    sess_content.user_local_info.enterprise_id = tlv_decode_uint16_t(buffer, &buf_pos);
-                    sess_content.user_local_info.geographic_location_type = tlv_decode_uint8_t(buffer, &buf_pos);
-
-                    if ((obj_len - 3) < GEOGRAPHIC_LOCAL_LEN) {
-                        tlv_decode_binary(buffer, &buf_pos, obj_len - 3,
-                            sess_content.user_local_info.geographic_location);
-                    } else {
-                        PFCP_MOVE_FORWORD(buf_pos, (obj_len - 3));
-                        LOG(UPC, ERR, "UPF_USER_LOCATION_INFO length too long, skip this.");
-                    }
+            case UPF_RAT_TYPE:
+                if (sizeof(uint8_t) == obj_len) {
+                    sess_content.rat_type = tlv_decode_uint8_t(buffer, &buf_pos);
                 } else {
-                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be greater than or equal to %u.",
-                        obj_len, 3);
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
                     res_cause = SESS_INVALID_LENGTH;
                 }
                 break;
@@ -10795,7 +11426,7 @@ void upc_parse_session_modification_request(uint8_t* buffer,
 
         res_cause = sess_rep.cause;
 
-        LOG(UPC, ERR, "publish content to sp failed, sequence number: %u.", pkt_seq);
+        LOG(UPC, ERR, "Session modify failed, sequence number: %u.", pkt_seq);
 
         if (0 > upc_free_teid_from_modify(&sess_content)) {
             LOG(UPC, ERR, "Free TEID failed.");
@@ -10893,6 +11524,7 @@ void upc_build_session_deletion_response(
 {
     uint16_t msg_hdr_pos = *resp_pos;
     uint16_t buf_pos = *resp_pos;
+    uint8_t cnt;
 
     if (NULL == sess_rep || NULL == resp_buffer || NULL == resp_pos) {
         LOG(UPC, ERR,
@@ -10909,14 +11541,14 @@ void upc_build_session_deletion_response(
     tlv_encode_type(resp_buffer, &buf_pos, UPF_CAUSE);
     tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint8_t));
     tlv_encode_uint8_t(resp_buffer, &buf_pos, sess_rep->cause);
-    LOG_TRACE(UPC, RUNNING, trace_flag, "encode cause %d.", sess_rep->cause);
+    LOG_TRACE(UPC, RUNNING, trace_flag, "Encode cause %d.", sess_rep->cause);
 
     /* Encode offending ie */
     if (sess_rep->member_flag.d.offending_ie_present) {
         tlv_encode_type(resp_buffer, &buf_pos, UPF_OFFENDING_IE);
         tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint16_t));
         tlv_encode_uint16_t(resp_buffer, &buf_pos, sess_rep->offending_ie);
-        LOG_TRACE(UPC, RUNNING, trace_flag, "encode offending ie %d.",
+        LOG_TRACE(UPC, RUNNING, trace_flag, "Encode offending ie %d.",
             sess_rep->offending_ie);
     }
 
@@ -10924,7 +11556,7 @@ void upc_build_session_deletion_response(
     if (sess_rep->member_flag.d.load_ctl_info_present) {
         if (0 > upc_build_load_control_info(&sess_rep->load_ctl_info,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build load control info failed.");
+            LOG(UPC, ERR, "Build load control info failed.");
         }
     }
 
@@ -10932,15 +11564,16 @@ void upc_build_session_deletion_response(
     if (sess_rep->member_flag.d.overload_ctl_info_present) {
         if (0 > upc_build_overload_control_info(&sess_rep->overload_ctl_info,
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build overload control info failed.");
+            LOG(UPC, ERR, "Build overload control info failed.");
         }
     }
 
     /* Encode usage report */
-    if (0 > upc_build_md_usage_report(sess_rep->usage_report,
-        sess_rep->usage_report_num, resp_buffer, &buf_pos,
-        UPF_USAGE_REPORT_SESSION_DELETION_RESPONSE, trace_flag)) {
-        LOG(UPC, ERR, "build usage report failed.");
+    for (cnt = 0; cnt < sess_rep->usage_report_num; ++cnt) {
+        if (0 > upc_build_md_usage_report(&sess_rep->usage_report[cnt], resp_buffer, &buf_pos,
+            UPF_USAGE_REPORT_SESSION_DELETION_RESPONSE, trace_flag)) {
+            LOG(UPC, ERR, "Build usage report failed.");
+        }
     }
 
     /* Encode Additional Usage Reports Information */
@@ -10950,22 +11583,24 @@ void upc_build_session_deletion_response(
         tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint16_t));
         tlv_encode_uint16_t(resp_buffer, &buf_pos,
             sess_rep->added_usage_report.value);
-        LOG_TRACE(UPC, RUNNING, trace_flag, "encode Additional Usage Reports info %d.",
+        LOG_TRACE(UPC, RUNNING, trace_flag, "Encode Additional Usage Reports info %d.",
             sess_rep->added_usage_report.value);
     }
 
     /* Packet Rate Status Report */
-    if (sess_rep->member_flag.d.pkt_rate_status_report_present) {
-        if (0 > upc_build_packet_rate_status_report(&sess_rep->pkt_rate_status_report,
+    for (cnt = 0; cnt < sess_rep->pkt_rate_status_report_num; ++cnt) {
+        if (0 > upc_build_packet_rate_status_report_for_sess_del(&sess_rep->pkt_rate_status_report[cnt],
             resp_buffer, &buf_pos)) {
-            LOG(UPC, ERR, "build Packet Rate Status Report failed.");
+            LOG(UPC, ERR, "Build Packet Rate Status Report failed.");
         }
     }
 
     /* Encode Session Report */
-    if (0 > upc_build_session_report(sess_rep->sess_report,
-        sess_rep->sess_report_num, resp_buffer, &buf_pos, trace_flag)) {
-        LOG(UPC, ERR, "build Session Report failed.");
+    for (cnt = 0; cnt < sess_rep->sess_report_num; ++cnt) {
+        if (0 > upc_build_session_report(&sess_rep->sess_report[cnt],
+            resp_buffer, &buf_pos, trace_flag)) {
+            LOG(UPC, ERR, "Build Session Report failed.");
+        }
     }
 
     /* Filling msg header length */
@@ -11161,6 +11796,7 @@ static int upc_build_session_report_request(
 {
     uint16_t msg_hdr_pos = *resp_pos;
     uint16_t buf_pos = *resp_pos;
+    uint8_t cnt;
 
     /* Encode msg header */
     pfcp_client_encode_header(resp_buffer, &buf_pos, 1, cp_seid,
@@ -11228,6 +11864,35 @@ static int upc_build_session_report_request(
         tlv_encode_length(resp_buffer, &buf_pos, sizeof(uint8_t));
         tlv_encode_uint16_t(resp_buffer, &buf_pos,
             report_req->pfcpsr_flag.value);
+    }
+
+    /* Old CP F-SEID */
+    if (report_req->old_cp_fseid_present) {
+        upc_build_cp_f_seid(&report_req->old_cp_fseid, resp_buffer, &buf_pos);
+    }
+
+    /* Packet Rate Status Report */
+    if (report_req->packet_rate_status_report_present) {
+        if (0 > upc_build_packet_rate_status_report_for_sess_del(&report_req->packet_rate_status_report,
+            resp_buffer, &buf_pos)) {
+            LOG(UPC, ERR, "build Packet Rate Status Report failed.");
+        }
+    }
+
+    /* Encode TSC Management Information */
+    for (cnt = 0; cnt < report_req->tsc_mgmt_info_num; ++cnt) {
+        if (0 > upc_build_tsc_mgmt_info(&report_req->tsc_mgmt_info[cnt],
+            resp_buffer, &buf_pos, UPF_TSC_MGMT_INFO_IE_WITHIN_PFCP_SESSION_REPORT_REQUEST)) {
+            LOG(UPC, ERR, "build TSC Management Information failed.");
+        }
+    }
+
+    /* Encode Session Report */
+    for (cnt = 0; cnt < report_req->sess_report_num; ++cnt) {
+        if (0 > upc_build_session_report(&report_req->sess_report[cnt],
+            resp_buffer, &buf_pos, trace_flag)) {
+            LOG(UPC, ERR, "build Session Report failed.");
+        }
     }
 
     /* Filling msg header length */
@@ -11639,12 +12304,12 @@ int upc_write_wireshark(char *buf, int len, uint32_t remote_ip, int flag)
         remote_mac[3], remote_mac[4], remote_mac[5]);
     }
 
-    /*如果文件不存在，先填充pcap文件头*/
+    /* If the file does not exist, fill in the pcap file header first */
     if (access(COMM_SIGNALING_TRACE_FILE_NAME, F_OK) != 0) {
         write_wireshark_head(COMM_SIGNALING_TRACE_FILE_NAME);
     }
 
-    /*pcap 数据包头使用主机字节序*/
+    /* Packet header uses host byte order */
     gettimeofday(&tv,NULL);
     pcap = (struct pcap_pkthdr *)(send_buf + buf_pos);
     buf_pos += sizeof(struct pcap_pkthdr);
@@ -11689,10 +12354,10 @@ int upc_write_wireshark(char *buf, int len, uint32_t remote_ip, int flag)
     ip_hdr->tot_len = htons(len + sizeof(struct pro_ipv4_hdr) + sizeof(struct pro_udp_hdr));
 
     /* Encode ID */
-    ip_hdr->id = (uint16_t)ros_get_tsc_hz();
+    ip_hdr->id = (uint16_t)ros_rdtsc();
 
     /* Encode fragment */
-    ip_hdr->frag_off = 0x0040;
+    ip_hdr->frag_off = 0;
 
     /* Encode TTL */
     ip_hdr->ttl = 0x40;
@@ -11863,51 +12528,5 @@ void upc_report_proc(void *report, size_t buf_len)
     }
 
     return;
-}
-
-int upc_node_create_pf_rule(char *act, char *pf_rule_name)
-{
-    session_content_create sess_content = {{0}};
-    struct pcf_file *file_value;
-    char file_name[128]={0};
-
-    if (!pf_rule_name)
-    {
-        LOG(UPC, ERR, "pf_rule_name is null.");
-        return -1;
-    }
-    if (!strcmp(act,"add"))
-    {
-        sprintf(file_name, "%s%s", pf_rule_name, ".ini");
-        file_value=pcf_conf_read_from_given_path(PREDEFINE_RULE_PATH, file_name);
-        if (!file_value)
-        {
-            LOG(UPC, ERR, "file_value is null[%s].", pf_rule_name);
-            return -1;
-        }
-        else
-        {
-            if(upc_parse_session_content(&sess_content,file_value)<0)
-            {
-                LOG(UPC, ERR, "upc_parse_session_content failed[%s].",pf_rule_name);
-                return -1;
-            }
-        }
-        sess_content.msg_header.spare = 1;//创建
-    }
-    else
-    {
-        sess_content.msg_header.spare = 0;//删除
-    }
-
-    strcpy(sess_content.pdr_arr[0].act_pre_arr[0].rules_name,(char *)pf_rule_name);
-    sess_content.msg_header.msg_type = SESS_LOCAL_PREDEFINE_RULE;
-
-    LOG(SESSION, RUNNING, "upc_node_create_pf_rule:%d rules_name:%s",
-        sess_content.msg_header.spare,sess_content.pdr_arr[0].act_pre_arr[0].rules_name);
-
-    session_pf_rule_create_proc(&sess_content);
-
-    return 0;
 }
 

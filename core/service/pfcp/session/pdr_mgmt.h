@@ -142,7 +142,7 @@ struct pdr_local_fteid {
 };
 
 struct pkt_detection_info {
-    struct pdr_local_fteid          local_fteid[2]; /* 当支持PDIU才有可能存在两个local f-teid */
+    struct pdr_local_fteid          local_fteid[2]; /* Only when PDIU is supported can there be two local f-teid */
     char                            network_instance[NETWORK_INSTANCE_LEN];
     struct pdr_ue_ipaddress         ue_ipaddr[MAX_UE_IP_NUM];
     struct dl_list                  filter_list;
@@ -165,9 +165,10 @@ struct pkt_detection_info {
 
     uint8_t                         local_fteid_num;
     uint8_t                         application_id_present;
-    uint8_t                         spare[2];
+    uint8_t                         src_if_type_present;
+    uint8_t                         spare;
     uint32_t                        framed_routing;
-	uint32_t                		head_enrich_flag;
+    uint32_t                		head_enrich_flag;
 };
 
 struct pkt_detection_rule {
@@ -199,6 +200,7 @@ struct pdr_table {
     struct pkt_detection_rule   pdr;
     struct pdr_private          pdr_pri;
     struct dl_list              eth_dl_node; /* Only use downlink PDR of ethernet PDN */
+    struct rb_root              predef_root; /* Predefined root node of binary tree */
     uint32_t                    index;      /* also instance index */
     ros_rwlock_t                lock;
     struct session_t            *session_link;  /* PDR associated session */
@@ -238,8 +240,12 @@ struct pdr_table *pdr_get_table_public(uint32_t index);
 uint16_t pdr_get_pool_id(void);
 int64_t pdr_table_init(uint32_t session_num);
 struct pdr_table *pdr_table_create(struct session_t *sess, uint16_t id);
+/* Create a predefined PDR rule group associated with a PDR table */
+struct pdr_table *pdr_table_create_to_pdr_table(struct session_t *sess,
+    struct pdr_table *root_pdr, char *predef_name);
 int pdr_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num,
-    uint32_t *rm_pdr_index_arr, uint32_t *rm_pdr_num);
+    uint32_t *rm_pdr_index_arr, uint32_t *rm_pdr_num, uint32_t *fail_id);
+int pdr_remove_predefined_pdr(struct session_t *sess, struct pdr_table *root_pdr, char *predef_name);
 struct pdr_table *pdr_table_search(struct session_t *sess, uint16_t id);
 struct pdr_table *pdr_map_lookup(struct filter_key *key);
 int pdr_fraud_identify(struct filter_key *key, struct pdr_table *pdr_tbl);
@@ -257,10 +263,8 @@ int sdf_filter_create(struct dl_list *sdf_list_head,
 struct eth_filter_entry *eth_filter_create(struct dl_list *eth_list_head,
     void *eth_cfg);
 int pdr_show_activate_table(struct cli_def *cli, int argc, char **argv);
-struct pdr_table *pdr_table_create_local(uint16_t id);
-uint8_t pdr_table_delete_local(uint32_t *arr, uint8_t num);
 int pdr_arp_match_ueip(struct pdr_key *rb_key, uint8_t is_v4);
 struct pdr_table *pdr_ueip_match(struct pdr_key *rb_key, uint8_t is_v4);
 
-
 #endif
+

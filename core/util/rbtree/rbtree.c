@@ -262,6 +262,7 @@ void rbtree_erase(struct rb_node *node, struct rb_root *root)
 
         if (color == RB_BLACK)
             __rbtree_erase(child, parent, root);
+        return;
     }
 
     parent = RB_GET_PARENT(node);

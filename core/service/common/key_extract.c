@@ -552,9 +552,13 @@ static inline int layer5_gtpu_extract(struct packet_desc *desc, struct filter_ke
 
             /* parse extension type */
             nextHdr = *(uint8_t *)(desc->buf + desc->offset);
-            desc->offset++;
+            ++desc->offset;
             while (nextHdr && desc->offset < desc->len) {
                 extHeaderLen = *(uint8_t *)(desc->buf + desc->offset);
+                if (unlikely(!extHeaderLen)) {
+                    LOG(SERVER, DEBUG, "Illegal extension header, type:0x%02x, length:%d.", nextHdr, extHeaderLen);
+                    return -1;
+                }
                 desc->offset++;
 
                 /* do next header parse, then calcuate head offset */
@@ -569,7 +573,7 @@ static inline int layer5_gtpu_extract(struct packet_desc *desc, struct filter_ke
                 desc->offset - key->field_offset[FLOW_FIELD_GTP_U] - GTP_HDR_LEN_MIN;
         }
         else {
-            desc->offset++;
+            ++desc->offset;
         }
     }
 

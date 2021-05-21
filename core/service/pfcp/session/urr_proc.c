@@ -25,127 +25,153 @@ static inline int urr_change_inst_thres(struct urr_table *entry);
 
 int urr_get_link_report(comm_msg_urr_report_t *report, struct urr_table *urr_entry, uint32_t start_num)
 {
-	urr_container           *cont = NULL;
-	struct pfcp_session 	*sess = NULL;
-	struct urr_table		*urr_tbl = NULL;
-	uint32_t cnt, urr_link_num, report_num = start_num;
+    urr_container           *cont = NULL;
+    struct pfcp_session     *sess = NULL;
+    struct urr_table        *urr_tbl = NULL;
+    uint32_t cnt, urr_link_num, report_num = start_num;
 
-	if(start_num > MAX_URR_NUM) {
-		LOG(SESSION, ERR, "parameters error , start_num %d out of range.", start_num);
-		return -1;
-	}
+    if(start_num > MAX_URR_NUM) {
+        LOG(SESSION, ERR, "parameters error , start_num %d out of range.", start_num);
+        return -1;
+    }
 
-	if(NULL == report) {
-		LOG(SESSION, ERR, "parameters error , report NULL.");
-		return -1;
-	}
+    if(NULL == report) {
+        LOG(SESSION, ERR, "parameters error , report NULL.");
+        return -1;
+    }
 
-	if(NULL == urr_entry) {
-		LOG(SESSION, ERR, "parameters error , urr_entry NULL.");
-		return -1;
-	}
+    if(NULL == urr_entry) {
+        LOG(SESSION, ERR, "parameters error , urr_entry NULL.");
+        return -1;
+    }
 
-	sess = &urr_entry->sess->session;
-	urr_tbl = (struct urr_table *)rbtree_first(&sess->urr_root);
+    sess = &urr_entry->sess->session;
+    urr_tbl = (struct urr_table *)rbtree_first(&sess->urr_root);
 
     while (NULL != urr_tbl) {
-		urr_link_num = urr_tbl->urr.linked_urr_number;
-		cont = &urr_tbl->container;
-		if((0 != urr_link_num)) {
+        urr_link_num = urr_tbl->urr.linked_urr_number;
+        cont = &urr_tbl->container;
+        if((0 != urr_link_num)) {
 
-			if(!urr_tbl->urr.trigger.d.liusa) {
-				LOG(SESSION, ERR, "urr %d, linked_urr_number is %d, but liusa is not set.",
-					urr_tbl->urr.urr_id, urr_link_num);
+            if(!urr_tbl->urr.trigger.d.liusa) {
+                LOG(SESSION, ERR, "urr %d, linked_urr_number is %d, but liusa is not set.",
+                    urr_tbl->urr.urr_id, urr_link_num);
 
-				urr_tbl = (struct urr_table *)rbtree_next(&urr_tbl->urr_node);
-				continue;
-			}
-			for(cnt=0; cnt<urr_link_num; cnt++) {
-				if(urr_tbl->urr.linked_urr[cnt] == urr_entry->urr.urr_id) {
-					break;
-				}
-			}
+                urr_tbl = (struct urr_table *)rbtree_next(&urr_tbl->urr_node);
+                continue;
+            }
+            for(cnt=0; cnt<urr_link_num; cnt++) {
+                if(urr_tbl->urr.linked_urr[cnt] == urr_entry->urr.urr_id) {
+                    break;
+                }
+            }
 
-			if(cnt < urr_link_num) {
-				/*避免重复上报*/
-				for(cnt=0; cnt<report_num; cnt++) {
-					if(report[cnt].urr_id == urr_tbl->urr.urr_id) {
-						break;
-					}
-				}
-				if(cnt >= report_num) {
-					report[report_num].start_time      = cont->start_time.cnt;
-		            report[report_num].end_time        = ros_getime();
-		            report[report_num].first_pkt_time  = cont->first_pkt.cnt;
-		            report[report_num].last_pkt_time   = ros_getime();
-					if (urr_tbl->urr.method.d.durat) {
-						report[report_num].last_pkt_time   = cont->last_pkt.cnt;
-					}
-					report[report_num].urr_id  		   = urr_tbl->urr.urr_id;
-					report[report_num].urr_index  	   = urr_tbl->index;
-					//简单处理下，为了跑移动的测试用例能带上收包时间和末包时间
-					if (!report[report_num].start_time) {
-						report[report_num].start_time = report[0].start_time;
-					}
-					if (!report[report_num].first_pkt_time) {
-						report[report_num].first_pkt_time = report[0].first_pkt_time;
-					}
-					if (!report[report_num].last_pkt_time) {
-						report[report_num].last_pkt_time = report[0].last_pkt_time;
-					}
+            if(cnt < urr_link_num) {
+                /*避免重复上报*/
+                for(cnt=0; cnt<report_num; cnt++) {
+                    if (report[cnt].urr_id == urr_tbl->urr.urr_id) {
+                        break;
+                    }
+                }
+                if(cnt >= report_num) {
+                    report[report_num].start_time      = cont->start_time.cnt;
+                    report[report_num].end_time        = ros_getime();
+                    report[report_num].first_pkt_time  = cont->first_pkt.cnt;
+                    report[report_num].last_pkt_time   = ros_getime();
+                    if (urr_tbl->urr.method.d.durat) {
+                        report[report_num].last_pkt_time = (uint32_t)ros_atomic32_read(&cont->last_pkt);
+                    }
+                    report[report_num].urr_id          = urr_tbl->urr.urr_id;
+                    report[report_num].urr_index       = urr_tbl->index;
+                    //简单处理下，为了跑移动的测试用例能带上收包时间和末包时间
+                    if (!report[report_num].start_time) {
+                        report[report_num].start_time = report[0].start_time;
+                    }
+                    if (!report[report_num].first_pkt_time) {
+                        report[report_num].first_pkt_time = report[0].first_pkt_time;
+                    }
+                    if (!report[report_num].last_pkt_time) {
+                        report[report_num].last_pkt_time = report[0].last_pkt_time;
+                    }
 
-					report[report_num].trigger.d.liusa = G_TRUE;
-					urr_fill_value(urr_tbl, &report[report_num]);
-					report[report_num].ur_seqn = urr_tbl->urr.ur_seqn++;
+                    report[report_num].trigger.d.liusa = G_TRUE;
+                    urr_fill_value(urr_tbl, &report[report_num]);
+                    report[report_num].ur_seqn = urr_tbl->urr.ur_seqn++;
 
-					report_num++;
-					if(report_num >= MAX_URR_NUM) {
-						LOG(SESSION, ERR, "report_num(%d) MAX.", report_num);
-						break;
-					}
-				}
-			}
-		}
+                    report_num++;
+                    if(report_num >= MAX_URR_NUM) {
+                        LOG(SESSION, ERR, "report_num(%d) MAX.", report_num);
+                        break;
+                    }
+                }
+            }
+        }
         urr_tbl = (struct urr_table *)rbtree_next(&urr_tbl->urr_node);
     }
 
-	return report_num;
+    return report_num;
 }
 
-void urr_send_report(struct urr_table *urr_entry, uint16_t trigger)
+void urr_send_report(struct urr_table *urr_entry, uint32_t trigger)
 {
     comm_msg_urr_report_t   report[MAX_URR_NUM];
     urr_container           *cont = NULL;          /* resource container */
-	uint32_t				report_num;
+    uint32_t                report_num;
     /*char *mac_buf = NULL;*/
 
-	//带了门限或配额但是触发条件没有带的话，不上报
-	if (URR_TRIGGER_VOLTH == trigger || URR_TRIGGER_VOLQU == trigger) {
-		if (!urr_entry->urr.trigger.d.volth && !urr_entry->urr.trigger.d.volqu) {
-			LOG(SESSION, RUNNING,
-                "not send report, trigger(%d), but report trigger not set!", trigger);
-			return;
-		}
-	}
-	else if (URR_TRIGGER_TIMTH == trigger || URR_TRIGGER_TIMQU == trigger) {
-		if (!urr_entry->urr.trigger.d.timth && !urr_entry->urr.trigger.d.timqu) {
-			LOG(SESSION, RUNNING,
-                "not send report, trigger(%d), but report trigger not set!", trigger);
-			return;
-		}
-	}
+    //带了门限或配额但是触发条件没有带的话，不上报
+    if (URR_TRIGGER_VOLTH == trigger || URR_TRIGGER_VOLQU == trigger) {
+        if (!urr_entry->urr.trigger.d.volth && !urr_entry->urr.trigger.d.volqu) {
+            LOG(SESSION, RUNNING,
+                "not send report, trigger(%u), but report trigger not set!", trigger);
+            return;
+        }
+    }
+    else if (URR_TRIGGER_TIMTH == trigger || URR_TRIGGER_TIMQU == trigger) {
+        if (!urr_entry->urr.trigger.d.timth && !urr_entry->urr.trigger.d.timqu) {
+            LOG(SESSION, RUNNING,
+                "not send report, trigger(%u), but report trigger not set!", trigger);
+            return;
+        }
+    }
 
-	memset(report, 0, sizeof(report));
+    memset(report, 0, sizeof(report));
     cont = &urr_entry->container;
 
     report[0].urr_index  = urr_entry->index;
     report[0].ur_seqn = urr_entry->urr.ur_seqn++;
 
-	/*针对fp第一次给sp上报urr统计信息就触发上报导致缺少
-	Time of First Packet和Time of Last Packet两个IE的情况，作特殊处理*/
-	if(0 == cont->last_pkt.cnt) {
-		cont->last_pkt.cnt = cont->first_pkt.cnt;
-	}
+    /*针对fp第一次给sp上报urr统计信息就触发上报导致缺少
+    Time of First Packet和Time of Last Packet两个IE的情况，作特殊处理*/
+    if (0 == ros_atomic32_read(&cont->last_pkt)) {
+        cont->last_pkt.cnt = cont->first_pkt.cnt;
+    }
+
+    switch (trigger) {
+        case URR_TRIGGER_IMMER:
+        case URR_TRIGGER_PERIO:
+        case URR_TRIGGER_MONIT:
+        case URR_TRIGGER_TERMR:
+        case URR_TRIGGER_ENVCL:
+        case URR_TRIGGER_DROTH:
+        case URR_TRIGGER_STOPT:
+        case URR_TRIGGER_QUHTI:
+        case URR_TRIGGER_TIMTH:
+        case URR_TRIGGER_TIMQU:
+        case URR_TRIGGER_VOLTH:
+        case URR_TRIGGER_VOLQU:
+        case URR_TRIGGER_EVETH:
+        case URR_TRIGGER_EVEQU:
+        case URR_TRIGGER_MACAR:
+            report[0].start_time      = (uint32_t)ros_atomic32_read(&cont->start_time);
+            report[0].end_time        = ros_getime();
+            report[0].first_pkt_time  = (uint32_t)ros_atomic32_read(&cont->first_pkt);
+            report[0].last_pkt_time   = (uint32_t)ros_atomic32_read(&cont->last_pkt);
+            break;
+
+        default:
+            break;
+    }
 
     switch (trigger) {
         case URR_TRIGGER_IMMER:
@@ -168,38 +194,22 @@ void urr_send_report(struct urr_table *urr_entry, uint16_t trigger)
             else {
                 report[0].trigger.d.monit = G_TRUE;
             }
-            report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = cont->last_pkt.cnt;
 
             urr_fill_value(urr_entry, &report[0]);
             break;
         case URR_TRIGGER_DROTH:
             report[0].trigger.d.droth = G_TRUE;
-            report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = ros_getime();
             break;
         case URR_TRIGGER_STOPT:
-			report[0].trigger.d.stopt = G_TRUE;
-			report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = cont->last_pkt.cnt;
+            report[0].trigger.d.stopt = G_TRUE;
 
             urr_fill_value(urr_entry, &report[0]);
             break;
         case URR_TRIGGER_START:
-			report[0].trigger.d.start = G_TRUE;
+            report[0].trigger.d.start = G_TRUE;
             break;
         case URR_TRIGGER_QUHTI:
             report[0].trigger.d.quhti = G_TRUE;
-            report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = cont->last_pkt.cnt;
             break;
         case URR_TRIGGER_TIMTH:
         case URR_TRIGGER_TIMQU:
@@ -209,10 +219,6 @@ void urr_send_report(struct urr_table *urr_entry, uint16_t trigger)
             else {
                 report[0].trigger.d.timqu = G_TRUE;
             }
-            report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = cont->last_pkt.cnt;
 
             /* Get time */
             urr_fill_value(urr_entry, &report[0]);
@@ -225,10 +231,6 @@ void urr_send_report(struct urr_table *urr_entry, uint16_t trigger)
             else {
                 report[0].trigger.d.volqu = G_TRUE;
             }
-            report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = ros_getime();
 
             /* Get volume */
             urr_fill_value(urr_entry, &report[0]);
@@ -241,21 +243,12 @@ void urr_send_report(struct urr_table *urr_entry, uint16_t trigger)
             else {
                 report[0].trigger.d.evequ = G_TRUE;
             }
-            report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = cont->last_pkt.cnt;
 
             /* Get events */
             report[0].eve_stamp = ros_getime();
             break;
         case URR_TRIGGER_MACAR:
             report[0].trigger.d.macar = G_TRUE;
-
-            report[0].start_time      = cont->start_time.cnt;
-            report[0].end_time        = ros_getime();
-            report[0].first_pkt_time  = cont->first_pkt.cnt;
-            report[0].last_pkt_time   = cont->last_pkt.cnt;
 
             /* Copy mac list from buffer */
             /*mac_buf = (char *)(report + 1);
@@ -266,20 +259,21 @@ void urr_send_report(struct urr_table *urr_entry, uint16_t trigger)
             break;
         default:
             LOG(SESSION, RUNNING,
-                "unknown trigger type(%d)!", trigger);
+                "unknown trigger type(%u)!", trigger);
             break;
     }
-	report_num = urr_get_link_report(&report[0], urr_entry, 1);
-	if(-1 == report_num) {
-		LOG(SESSION, ERR, "urr_get_link_report error.");
-		return;
-	}
+
+    report_num = urr_get_link_report(&report[0], urr_entry, 1);
+    if(-1 == report_num) {
+        LOG(SESSION, ERR, "urr_get_link_report error.");
+        return;
+    }
 
     if (0 > session_report_local_urr(&report[0], report_num, trigger)) {
         LOG(SESSION, ERR, "Report URR failed.");
     }
 
-    LOG(SESSION, RUNNING, "send report, trigger %d!", trigger);
+    LOG(SESSION, RUNNING, "send report, trigger %u", trigger);
 }
 
 void urr_fill_value(struct urr_table *urr_entry, comm_msg_urr_report_t *report)
@@ -290,47 +284,47 @@ void urr_fill_value(struct urr_table *urr_entry, comm_msg_urr_report_t *report)
     cont = &urr_entry->container;
     monitor = &urr_entry->container.mon_cfg;
 
-	ros_atomic32_set(&cont->first_pkt, ros_getime());
-	ros_atomic32_set(&cont->last_pkt, ros_getime());
-	ros_atomic32_set(&cont->start_time, ros_getime());
+    ros_atomic32_set(&cont->first_pkt, ros_getime());
+    ros_atomic32_set(&cont->last_pkt, ros_getime());
+    ros_atomic32_set(&cont->start_time, ros_getime());
 
     if (urr_entry->urr.method.d.volum) {
         report->vol_meas.flag.value = urr_entry->container.flag.value;
 
-		report->vol_meas.uplink = cont->vol_ulink.cnt;
-		report->vol_meas.downlink = cont->vol_dlink.cnt;
-		report->vol_meas.total = cont->vol_total.cnt;
+        report->vol_meas.uplink = cont->vol_ulink.cnt;
+        report->vol_meas.downlink = cont->vol_dlink.cnt;
+        report->vol_meas.total = cont->vol_total.cnt;
 
-		ros_atomic64_init(&cont->vol_dlink);
-		ros_atomic64_init(&cont->vol_ulink);
-		ros_atomic64_init(&cont->vol_total);
+        ros_atomic64_init(&cont->vol_dlink);
+        ros_atomic64_init(&cont->vol_ulink);
+        ros_atomic64_init(&cont->vol_total);
     }
 
     if (urr_entry->urr.method.d.durat) {
-		report->tim_meas_present = 1;
+        report->tim_meas_present = 1;
         if (urr_entry->container.tim_status & URR_STATUS_NORMAL) {
-			if (monitor->sub_tim_thres) {
-            	report->tim_meas = (monitor->sub_tim_thres_fixed - cont->time.cnt);
-			}
-			else {
-				report->tim_meas = (monitor->sub_tim_quota - cont->time.cnt);
-			}
+            if (monitor->sub_tim_thres) {
+                report->tim_meas = (monitor->sub_tim_thres_fixed - cont->time.cnt);
+            }
+            else {
+                report->tim_meas = (monitor->sub_tim_quota - cont->time.cnt);
+            }
         }
         else {
-			if (!monitor->sub_tim_quota) {
-				report->tim_meas = monitor->sub_tim_thres;
-			}
-			else {
-				report->tim_meas = (monitor->sub_tim_quota - cont->time.cnt);
-			}
-		}
+            if (!monitor->sub_tim_quota) {
+                report->tim_meas = monitor->sub_tim_thres;
+            }
+            else {
+                report->tim_meas = (monitor->sub_tim_quota - cont->time.cnt);
+            }
+        }
 
-		//只收到一次用量统计导致链接上去的时间为0
-		if (report->trigger.d.liusa ) {
-			if (!urr_entry->urr.measu_info.d.inam) {
-				report->tim_meas = ros_getime() - report->start_time;
-			}
-		}
+        //只收到一次用量统计导致链接上去的时间为0
+        if (report->trigger.d.liusa ) {
+            if (!urr_entry->urr.measu_info.d.inam) {
+                report->tim_meas = ros_getime() - report->start_time;
+            }
+        }
     }
 
     if (urr_entry->urr.mon_time) {
@@ -434,11 +428,11 @@ static inline void
 urr_add_volume(ros_atomic64_t *volume, ros_atomic64_t *vol_total, int64_t pkt_len,
     uint64_t vol_thres, uint64_t vol_quota, uint8_t *vol_status)
 {
-	int64_t	tmp_value, total_value;
-	ros_atomic64_add(volume, pkt_len);
-	ros_atomic64_add(vol_total, pkt_len);
-	tmp_value = ros_atomic64_read(volume);
-	total_value = ros_atomic64_read(vol_total);
+    int64_t tmp_value, total_value;
+    ros_atomic64_add(volume, pkt_len);
+    ros_atomic64_add(vol_total, pkt_len);
+    tmp_value = ros_atomic64_read(volume);
+    total_value = ros_atomic64_read(vol_total);
 
     LOG(SESSION, RUNNING,
         "volume %ld, vol_total %ld, packet len %ld.",
@@ -451,25 +445,25 @@ urr_add_volume(ros_atomic64_t *volume, ros_atomic64_t *vol_total, int64_t pkt_le
             /* If not configure threshold */
             if (!vol_thres) {
                 /* Stop to forward more packets */
-				if (total_value >= vol_quota) {
-                	*vol_status = (URR_STATUS_STOPED|URR_STATUS_REPORTED);
-				}
+                if (total_value >= vol_quota) {
+                    *vol_status = (URR_STATUS_STOPED|URR_STATUS_REPORTED);
+                }
             }
             else {
                 /* Keep the remainder bytes in pool */
                 if (vol_quota) {
                     if (total_value >= vol_quota) {
-						*vol_status = URR_STATUS_STOPED;
-					}
-					if (tmp_value >= vol_thres) {
-						*vol_status |= URR_STATUS_REPORTED;
-					}
+                        *vol_status = URR_STATUS_STOPED;
+                    }
+                    if (tmp_value >= vol_thres) {
+                        *vol_status |= URR_STATUS_REPORTED;
+                    }
                 }
                 else {
                     /* No quota is set, unlimited by default */
-					if (tmp_value >= vol_thres) {
-                    	*vol_status = URR_STATUS_REPORTED;
-					}
+                    if (tmp_value >= vol_thres) {
+                        *vol_status = URR_STATUS_REPORTED;
+                    }
                 }
             }
             break;
@@ -497,22 +491,22 @@ urr_chk_volume(struct urr_table *urr_entry, int64_t pkt_len, uint8_t dlflag)
     /* Downlink */
     if (dlflag) {
         if (cont->flag.d.dlvol) {
-			urr_add_volume(&cont->vol_dlink, &cont->vol_all_dlink, pkt_len,
+            urr_add_volume(&cont->vol_dlink, &cont->vol_all_dlink, pkt_len,
                 cont->mon_cfg.sub_vol_thres.downlink, cont->mon_cfg.sub_vol_quota.downlink,
                 &cont->vol_dl_status);
             LOG(SESSION, RUNNING,
                 "urr(%d): dl status %x.", urr_entry->index, cont->vol_dl_status);
         }
         if (cont->flag.d.tovol) {
-			urr_add_volume(&cont->vol_total, &cont->vol_all_total, pkt_len,
+            urr_add_volume(&cont->vol_total, &cont->vol_all_total, pkt_len,
                 cont->mon_cfg.sub_vol_thres.total, cont->mon_cfg.sub_vol_quota.total,
                 &cont->vol_tot_status);
             LOG(SESSION, RUNNING,
                 "urr(%d): tot status %x.", urr_entry->index, cont->vol_tot_status);
         }
 
-		//门限上报使用循环上报的方法，每次上报完重新统计
-		if (cont->vol_dl_status & URR_STATUS_REPORTED) {
+        /* The threshold report uses the method of circular report, and the statistics are repeated after each report */
+        if (cont->vol_dl_status & URR_STATUS_REPORTED) {
             /* Send report */
             if (cont->vol_dl_status & URR_STATUS_STOPED) {
                 urr_send_report(urr_entry, URR_TRIGGER_VOLQU);
@@ -521,14 +515,14 @@ urr_chk_volume(struct urr_table *urr_entry, int64_t pkt_len, uint8_t dlflag)
             else {
                 /* Send report */
                 urr_send_report(urr_entry, URR_TRIGGER_VOLTH);
-				cont->vol_dl_status = URR_STATUS_NORMAL;
+                cont->vol_dl_status = URR_STATUS_NORMAL;
 
-				if (cont->flag.d.tovol) {
-					cont->vol_tot_status = URR_STATUS_NORMAL;
-				}
+                if (cont->flag.d.tovol) {
+                    cont->vol_tot_status = URR_STATUS_NORMAL;
+                }
             }
         }
-		else if (cont->vol_tot_status & URR_STATUS_REPORTED) {
+        else if (cont->vol_tot_status & URR_STATUS_REPORTED) {
             /* Send report */
             if (cont->vol_tot_status & URR_STATUS_STOPED) {
                 urr_send_report(urr_entry, URR_TRIGGER_VOLQU);
@@ -537,7 +531,7 @@ urr_chk_volume(struct urr_table *urr_entry, int64_t pkt_len, uint8_t dlflag)
             else {
                 /* Send report */
                 urr_send_report(urr_entry, URR_TRIGGER_VOLTH);
-				cont->vol_tot_status = URR_STATUS_NORMAL;
+                cont->vol_tot_status = URR_STATUS_NORMAL;
             }
         }
     }
@@ -557,8 +551,8 @@ urr_chk_volume(struct urr_table *urr_entry, int64_t pkt_len, uint8_t dlflag)
                 "urr(%d): tot status %x.", urr_entry->index, cont->vol_tot_status);
         }
 
-		//门限上报使用循环上报的方法，每次上报完重新统计
-		if (cont->vol_ul_status & URR_STATUS_REPORTED) {
+        //门限上报使用循环上报的方法，每次上报完重新统计
+        if (cont->vol_ul_status & URR_STATUS_REPORTED) {
             /* Send report */
             if (cont->vol_ul_status & URR_STATUS_STOPED) {
                 urr_send_report(urr_entry, URR_TRIGGER_VOLQU);
@@ -567,14 +561,14 @@ urr_chk_volume(struct urr_table *urr_entry, int64_t pkt_len, uint8_t dlflag)
             else {
                 /* Send report */
                 urr_send_report(urr_entry, URR_TRIGGER_VOLTH);
-				cont->vol_ul_status = URR_STATUS_NORMAL;
+                cont->vol_ul_status = URR_STATUS_NORMAL;
 
-				if (cont->flag.d.tovol) {
-					cont->vol_tot_status = URR_STATUS_NORMAL;
-				}
+                if (cont->flag.d.tovol) {
+                    cont->vol_tot_status = URR_STATUS_NORMAL;
+                }
             }
         }
-		else if (cont->vol_tot_status & URR_STATUS_REPORTED) {
+        else if (cont->vol_tot_status & URR_STATUS_REPORTED) {
             /* Send report */
             if (cont->vol_tot_status & URR_STATUS_STOPED) {
                 urr_send_report(urr_entry, URR_TRIGGER_VOLQU);
@@ -583,7 +577,7 @@ urr_chk_volume(struct urr_table *urr_entry, int64_t pkt_len, uint8_t dlflag)
             else {
                 /* Send report */
                 urr_send_report(urr_entry, URR_TRIGGER_VOLTH);
-				cont->vol_tot_status = URR_STATUS_NORMAL;
+                cont->vol_tot_status = URR_STATUS_NORMAL;
             }
         }
     }
@@ -637,26 +631,26 @@ static void urr_chk_time(struct urr_table *urr_entry)
     urr_container        *cont;
     uint32_t                new_gap, new_time;
     uint8_t                 *tim_status;
-	comm_msg_urr_config 	*conf = &urr_entry->urr;
+    comm_msg_urr_config     *conf = &urr_entry->urr;
 
     cont = &urr_entry->container;
 
     if (unlikely(0 == ros_atomic32_read(&cont->last_pkt))) {
         /* First packet, don't record */
         LOG(SESSION, RUNNING, "Last packet time is 0.");
-		/*停止检测流量收到第一个包时，如果剩余时间小于不活跃检测时间，
-		将定时时长设为剩余时长*/
-		if(ros_atomic32_read(&cont->time) <= conf->inact_detect) {
-			ros_timer_reset(cont->idt_timer, ros_atomic32_read(&cont->time) * ROS_TIMER_TICKS_PER_SEC,
-				ROS_TIMER_MODE_ONCE, (uint64_t)urr_entry, urr_proc_timer_idt);
+        /*停止检测流量收到第一个包时，如果剩余时间小于不活跃检测时间，
+        将定时时长设为剩余时长*/
+        if(ros_atomic32_read(&cont->time) <= conf->inact_detect) {
+            ros_timer_reset(cont->idt_timer, ros_atomic32_read(&cont->time) * ROS_TIMER_TICKS_PER_SEC,
+                ROS_TIMER_MODE_ONCE, (uint64_t)urr_entry, urr_proc_timer_idt);
 
-			LOG(SESSION, RUNNING, "ros_atomic32_read(&cont->time) %d!", ros_atomic32_read(&cont->time));
-		}
+            LOG(SESSION, RUNNING, "ros_atomic32_read(&cont->time) %d!", ros_atomic32_read(&cont->time));
+        }
         return;
     }
 
     new_gap = ros_getime() - ros_atomic32_read(&cont->last_pkt);
-	LOG(SESSION, RUNNING, "urr(%d), new_gap %d, ros_atomic32_read(&cont->time) %d.", urr_entry->index,new_gap, ros_atomic32_read(&cont->time));
+    LOG(SESSION, RUNNING, "urr(%d), new_gap %d, ros_atomic32_read(&cont->time) %d.", urr_entry->index,new_gap, ros_atomic32_read(&cont->time));
     if (likely(!new_gap)) {
         /* Toooo frequently, don't record */
         return;
@@ -692,23 +686,23 @@ static void urr_chk_time(struct urr_table *urr_entry)
                         LOG(SESSION, RUNNING,
                             "new_time(%u), new_gap(%u)!", new_time, new_gap);
 
-						ros_atomic32_set(&cont->time, new_time - new_gap);
+                        ros_atomic32_set(&cont->time, new_time - new_gap);
                         /* Before sub pkt len, need judge */
                         if (new_time > new_gap) {
                             /* Reset volume */
-							if (ros_atomic32_read(&cont->time) >= cont->mon_cfg.sub_tim_thres_fixed) {
-								ros_atomic32_set(&cont->time, 0);
-								*tim_status = URR_STATUS_NORMAL;
-								cont->mon_cfg.sub_tim_thres +=  cont->mon_cfg.sub_tim_thres_fixed;
-								/* Send report */
-                            	urr_send_report(urr_entry, URR_TRIGGER_TIMTH);
-								ros_atomic32_set(&cont->time, cont->mon_cfg.sub_tim_thres_fixed);
-							}
-							else {
-								*tim_status = URR_STATUS_REPORTED;
-	                            /* Send report */
-	                            urr_send_report(urr_entry, URR_TRIGGER_TIMTH);
-							}
+                            if (ros_atomic32_read(&cont->time) >= cont->mon_cfg.sub_tim_thres_fixed) {
+                                ros_atomic32_set(&cont->time, 0);
+                                *tim_status = URR_STATUS_NORMAL;
+                                cont->mon_cfg.sub_tim_thres +=  cont->mon_cfg.sub_tim_thres_fixed;
+                                /* Send report */
+                                urr_send_report(urr_entry, URR_TRIGGER_TIMTH);
+                                ros_atomic32_set(&cont->time, cont->mon_cfg.sub_tim_thres_fixed);
+                            }
+                            else {
+                                *tim_status = URR_STATUS_REPORTED;
+                                /* Send report */
+                                urr_send_report(urr_entry, URR_TRIGGER_TIMTH);
+                            }
 
                         }
                         else {
@@ -716,7 +710,7 @@ static void urr_chk_time(struct urr_table *urr_entry)
                             /* Send report */
                             urr_send_report(urr_entry, URR_TRIGGER_TIMTH);
 
-							 /* Stop to forward more packets */
+                             /* Stop to forward more packets */
                             *tim_status = URR_STATUS_STOPED;
                         }
                     }
@@ -725,20 +719,20 @@ static void urr_chk_time(struct urr_table *urr_entry)
                         *tim_status = URR_STATUS_STOPED;
                         ros_atomic32_set(&cont->time, 0);
 
-						/* Send report */
+                        /* Send report */
                         urr_send_report(urr_entry, URR_TRIGGER_TIMTH);
                     }
                 }
                 else {
                     /* No quota is set, unlimited by default */
-					//门限循环上报
+                    /* Threshold cycle Report */
                     *tim_status = URR_STATUS_NORMAL;
-					ros_atomic32_set(&cont->time, 0);
+                    ros_atomic32_set(&cont->time, 0);
 
                     urr_send_report(urr_entry, URR_TRIGGER_TIMTH);
-					LOG(SESSION, RUNNING,
+                    LOG(SESSION, RUNNING,
                             "reset timer %u, &cont->time %d!", cont->mon_cfg.sub_tim_thres, ros_atomic32_read(&cont->time));
-					ros_atomic32_set(&cont->time, cont->mon_cfg.sub_tim_thres);
+                    ros_atomic32_set(&cont->time, cont->mon_cfg.sub_tim_thres);
                 }
             }
             break;
@@ -766,19 +760,19 @@ int urr_get_status(uint32_t urr_index)
 
     urr_entry = urr_get_table(urr_index);
 
-	if (urr_entry->container.vol_ul_status > urr_entry->container.vol_dl_status) {
-		new_status = urr_entry->container.vol_ul_status;
-	}
-	else {
-		new_status = urr_entry->container.vol_dl_status;
-	}
+    if (urr_entry->container.vol_ul_status > urr_entry->container.vol_dl_status) {
+        new_status = urr_entry->container.vol_ul_status;
+    }
+    else {
+        new_status = urr_entry->container.vol_dl_status;
+    }
 
 
-	if (new_status < urr_entry->container.vol_tot_status) {
+    if (new_status < urr_entry->container.vol_tot_status) {
         new_status = urr_entry->container.vol_tot_status;
     }
 
-   if (new_status < urr_entry->container.tim_status) {
+    if (new_status < urr_entry->container.tim_status) {
         new_status = urr_entry->container.tim_status;
     }
 
@@ -786,8 +780,7 @@ int urr_get_status(uint32_t urr_index)
         new_status = urr_entry->container.eve_status;
     }
 
-    switch (new_status)
-    {
+    switch (new_status) {
         case URR_STATUS_REPORTED:
             return COMM_MSG_LIGHT_YELLOW;
         case URR_STATUS_STOPED:
@@ -811,88 +804,82 @@ static void *urr_proc_timer_idt_pthr_cb(void *arg)
     comm_msg_urr_config *conf = &urr_entry->urr;
     urr_container *cont = &urr_entry->container;
 
-	if(NULL == urr_entry){
-		LOG(SESSION, ERR, "urr_entry is NULL!");
-	}
+    if(NULL == urr_entry){
+        LOG(SESSION, ERR, "urr_entry is NULL!");
+    }
 
     LOG(SESSION, RUNNING,
         "urr(%d): IDT timer expired! cont->time %d, new_gap %d",
         urr_entry->index, ros_atomic32_read(&cont->time), ros_getime() - cont->last_pkt.cnt);
 
-	/* 需要上报的场景:
-	1. 达到门限
-	2. 达到配额，并且没有配置门限*/
-	if(likely(urr_entry->urr.inact_detect > 0)) {
-	    if (0 == ros_atomic32_read(&cont->last_pkt)) {
-	        new_time_len = conf->inact_detect;
-	    } else {
-	        new_gap = ros_getime() - cont->last_pkt.cnt;
+    /* 需要上报的场景:
+    1. 达到门限
+    2. 达到配额，并且没有配置门限*/
+    if(likely(urr_entry->urr.inact_detect > 0)) {
+        if (0 == ros_atomic32_read(&cont->last_pkt)) {
+            new_time_len = conf->inact_detect;
+        } else {
+            new_gap = ros_getime() - cont->last_pkt.cnt;
 
-	        /* The remaining time in the pool is greater than the IDT time */
-	        if (ros_atomic32_read(&cont->time) <= conf->inact_detect) {
-	            if (new_gap >= ros_atomic32_read(&cont->time)) {
-	                ros_rwlock_write_lock(&urr_entry->lock); /* lock */
-			        urr_chk_time(urr_entry);
-					ros_rwlock_write_unlock(&urr_entry->lock); /* unlock */
-	                new_time_len = conf->inact_detect;
-	            }
-	            else
-	                new_time_len = ros_atomic32_read(&cont->time) - new_gap;
-	        } else {
-	            if (new_gap >= conf->inact_detect) {
-	                ros_atomic32_sub(&cont->time, conf->inact_detect);
-	                ros_atomic32_set(&cont->last_pkt, 0);
-	                new_time_len = conf->inact_detect;
-	            }
-	            else
-	                new_time_len = conf->inact_detect - new_gap;
-	        }
-	    }
+            /* The remaining time in the pool is greater than the IDT time */
+            if (ros_atomic32_read(&cont->time) <= conf->inact_detect) {
+                if (new_gap >= ros_atomic32_read(&cont->time)) {
+                    ros_rwlock_write_lock(&urr_entry->lock); /* lock */
+                    urr_chk_time(urr_entry);
+                    ros_rwlock_write_unlock(&urr_entry->lock); /* unlock */
+                    new_time_len = conf->inact_detect;
+                }
+                else
+                    new_time_len = ros_atomic32_read(&cont->time) - new_gap;
+            } else {
+                if (new_gap >= conf->inact_detect) {
+                    ros_atomic32_sub(&cont->time, conf->inact_detect);
+                    ros_atomic32_set(&cont->last_pkt, 0);
+                    new_time_len = conf->inact_detect;
+                }
+                else
+                    new_time_len = conf->inact_detect - new_gap;
+            }
+        }
 
-	    if (cont->tim_status != URR_STATUS_STOPED) {
-	        /* Reset timer, set the gap as timer length */
-			ros_timer_reset(cont->idt_timer, new_time_len * ROS_TIMER_TICKS_PER_SEC,
-				ROS_TIMER_MODE_ONCE, (uint64_t)urr_entry, urr_proc_timer_idt);
-	    }
-	}else{
-		ros_rwlock_write_lock(&urr_entry->lock); /* lock */
-		urr_chk_time(urr_entry);
-		ros_rwlock_write_unlock(&urr_entry->lock); /* unlock */
+        if (cont->tim_status != URR_STATUS_STOPED) {
+            /* Reset timer, set the gap as timer length */
+            ros_timer_reset(cont->idt_timer, new_time_len * ROS_TIMER_TICKS_PER_SEC,
+                ROS_TIMER_MODE_ONCE, (uint64_t)urr_entry, urr_proc_timer_idt);
+        }
+    }else{
+        ros_rwlock_write_lock(&urr_entry->lock); /* lock */
+        urr_chk_time(urr_entry);
+        ros_rwlock_write_unlock(&urr_entry->lock); /* unlock */
 
-		if(cont->tim_status != URR_STATUS_STOPED) {
-			if (cont->mon_cfg.sub_tim_quota >= cont->mon_cfg.sub_tim_thres) {
-				new_time_len = cont->mon_cfg.sub_tim_thres_fixed;
-			}
-			else if (cont->mon_cfg.sub_tim_quota > cont->mon_cfg.sub_tim_thres_fixed) {
-				new_time_len = cont->mon_cfg.sub_tim_quota - cont->mon_cfg.sub_tim_thres;
-			}
-			else {
-				new_time_len = cont->mon_cfg.sub_tim_thres_fixed;
-			}
-			LOG(SESSION, RUNNING, "ros_timer_reset idt new_time_len: %d", new_time_len);
-			ros_timer_reset(cont->idt_timer, new_time_len * ROS_TIMER_TICKS_PER_SEC,
-				ROS_TIMER_MODE_ONCE, (uint64_t)urr_entry, urr_proc_timer_idt);
-		}
-	}
+        if(cont->tim_status != URR_STATUS_STOPED) {
+            if (cont->mon_cfg.sub_tim_quota >= cont->mon_cfg.sub_tim_thres) {
+                new_time_len = cont->mon_cfg.sub_tim_thres_fixed;
+            }
+            else if (cont->mon_cfg.sub_tim_quota > cont->mon_cfg.sub_tim_thres_fixed) {
+                new_time_len = cont->mon_cfg.sub_tim_quota - cont->mon_cfg.sub_tim_thres;
+            }
+            else {
+                new_time_len = cont->mon_cfg.sub_tim_thres_fixed;
+            }
+            LOG(SESSION, RUNNING, "ros_timer_reset idt new_time_len: %d", new_time_len);
+            ros_timer_reset(cont->idt_timer, new_time_len * ROS_TIMER_TICKS_PER_SEC,
+                ROS_TIMER_MODE_ONCE, (uint64_t)urr_entry, urr_proc_timer_idt);
+        }
+    }
 
-	if (URR_STATUS_STOPED == cont->tim_status)
-	{
-		urr_change_inst_light(urr_entry, COMM_MSG_LIGHT_RED);
-		LOG(SESSION, RUNNING, "Stop forward");
-	}
+    if (URR_STATUS_STOPED == cont->tim_status)
+    {
+        urr_change_inst_light(urr_entry, COMM_MSG_LIGHT_RED);
+        LOG(SESSION, RUNNING, "Stop forward");
+    }
 
     return NULL;
 }
 
 static void urr_proc_timer_idt(void *timer, uint64_t para)
 {
-    pthread_t pth_id;
-
-    if (0 != pthread_create(&pth_id, NULL,
-		urr_proc_timer_idt_pthr_cb, (void *)para)) {
-		LOG(SESSION, ERR, "create audit pthread failed.");
-        urr_proc_timer_idt_pthr_cb((void *)para);
-	}
+    urr_proc_timer_idt_pthr_cb((void *)para);
 }
 
 static void *urr_proc_timer_mon_pthr_cb(void *arg)
@@ -916,13 +903,7 @@ static void *urr_proc_timer_mon_pthr_cb(void *arg)
 
 static inline void urr_proc_timer_mon(void *timer, uint64_t para)
 {
-    pthread_t pth_id;
-
-    if (0 != pthread_create(&pth_id, NULL,
-		urr_proc_timer_mon_pthr_cb, (void *)para)) {
-		LOG(SESSION, ERR, "create audit pthread failed.");
-        urr_proc_timer_mon_pthr_cb((void *)para);
-	}
+    urr_proc_timer_mon_pthr_cb((void *)para);
 }
 
 static void *urr_proc_timer_qht_pthr_cb(void *arg)
@@ -933,7 +914,7 @@ static void *urr_proc_timer_qht_pthr_cb(void *arg)
     LOG(SESSION, RUNNING,
         "urr(%d): quota holding timer expired!", urr_entry->index);
 
-    new_gap = ros_getime() - urr_entry->container.last_pkt.cnt;
+    new_gap = ros_getime() - ros_atomic32_read(&urr_entry->container.last_pkt);
     /* Handle Quota Holding Timer */
     if (new_gap >= urr_entry->urr.quota_hold) {
 
@@ -956,13 +937,7 @@ static void *urr_proc_timer_qht_pthr_cb(void *arg)
 
 static inline void urr_proc_timer_qht(void *timer, uint64_t para)
 {
-    pthread_t pth_id;
-
-    if (0 != pthread_create(&pth_id, NULL,
-		urr_proc_timer_qht_pthr_cb, (void *)para)) {
-		LOG(SESSION, ERR, "create audit pthread failed.");
-        urr_proc_timer_qht_pthr_cb((void *)para);
-	}
+    urr_proc_timer_qht_pthr_cb((void *)para);
 }
 
 static inline void urr_proc_timer_per(void *timer, uint64_t para)
@@ -986,8 +961,8 @@ static inline void urr_proc_timer_stp(void *timer, uint64_t para)
     /* the stop of traffic is detected*/
     urr_send_report(urr_entry, URR_TRIGGER_STOPT);
 
-	ros_timer_del(urr_entry->container.stp_timer);
-	urr_entry->container.stp_timer = NULL;
+    ros_timer_del(urr_entry->container.stp_timer);
+    urr_entry->container.stp_timer = NULL;
 }
 
 static inline int urr_change_inst_light(struct urr_table *entry, uint8_t light)
@@ -1033,11 +1008,11 @@ static inline int urr_change_inst_thres(struct urr_table *entry)
 {
     struct pfcp_session *sess = NULL;
     struct pdr_table *pdr = NULL;
-	struct urr_table *urr_tbl = NULL;
+    struct urr_table *urr_tbl = NULL;
     uint32_t cnt, cnt2, urr_id, urr_num;
     comm_msg_update_inst_thres_t mdf_thres_arr[MAX_PDR_NUM];
     uint32_t mdf_thres_num = 0;
-	uint64_t min_thres = -1;
+    uint64_t min_thres = -1;
 
     /* Search for PDRs using this URR */
     urr_id = entry->urr.urr_id;
@@ -1054,23 +1029,23 @@ static inline int urr_change_inst_thres(struct urr_table *entry)
         for (cnt = 0; cnt < urr_num; ++cnt) {
             if (urr_id == pdr->pdr.urr_id_array[cnt]) {
 
-				for (cnt2 = 0; cnt2 < urr_num; ++cnt2)
-				{
-					urr_tbl = urr_table_search(entry->sess, pdr->pdr.urr_id_array[cnt2]);
-					//取携带urr中最小的门限值
-					if (urr_tbl->urr.vol_thres.flag.d.dlvol) {
-						if (min_thres > urr_tbl->urr.vol_thres.downlink)
-							min_thres = urr_tbl->urr.vol_thres.downlink;
-					}
-					if (urr_tbl->urr.vol_thres.flag.d.ulvol) {
-						if (min_thres > urr_tbl->urr.vol_thres.uplink)
-							min_thres = urr_tbl->urr.vol_thres.uplink;
-					}
-					if (urr_tbl->urr.vol_thres.flag.d.tovol) {
-						if (min_thres > urr_tbl->urr.vol_thres.total)
-							min_thres = urr_tbl->urr.vol_thres.total;
-					}
-				}
+                for (cnt2 = 0; cnt2 < urr_num; ++cnt2)
+                {
+                    urr_tbl = urr_table_search(entry->sess, pdr->pdr.urr_id_array[cnt2]);
+                    /* Take the minimum threshold of all URRS */
+                    if (urr_tbl->urr.vol_thres.flag.d.dlvol) {
+                        if (min_thres > urr_tbl->urr.vol_thres.downlink)
+                            min_thres = urr_tbl->urr.vol_thres.downlink;
+                    }
+                    if (urr_tbl->urr.vol_thres.flag.d.ulvol) {
+                        if (min_thres > urr_tbl->urr.vol_thres.uplink)
+                            min_thres = urr_tbl->urr.vol_thres.uplink;
+                    }
+                    if (urr_tbl->urr.vol_thres.flag.d.tovol) {
+                        if (min_thres > urr_tbl->urr.vol_thres.total)
+                            min_thres = urr_tbl->urr.vol_thres.total;
+                    }
+                }
 
                 mdf_thres_arr[mdf_thres_num].inst_index = pdr->index;
                 mdf_thres_arr[mdf_thres_num].collect_thres = min_thres/2;
@@ -1193,19 +1168,19 @@ uint32_t urr_container_init(uint32_t urr_index)
     method  = &urr_entry->urr.method;
 
     /* Init parameters */
-	cont->vol_ul_status = 0;
-	cont->vol_dl_status = 0;
-	cont->vol_tot_status = 0;
+    cont->vol_ul_status = 0;
+    cont->vol_dl_status = 0;
+    cont->vol_tot_status = 0;
     cont->tim_status    = 0;
     cont->eve_status    = 0;
     cont->flag.value    = 0;
     ros_atomic64_init(&cont->vol_total);
     ros_atomic64_init(&cont->vol_dlink);
     ros_atomic64_init(&cont->vol_ulink);
-	ros_atomic64_init(&cont->vol_all_total);
+    ros_atomic64_init(&cont->vol_all_total);
     ros_atomic64_init(&cont->vol_all_dlink);
     ros_atomic64_init(&cont->vol_all_ulink);
-	ros_atomic32_init(&cont->event);
+    ros_atomic32_init(&cont->event);
     ros_atomic32_init(&cont->droppkts);
     ros_atomic32_init(&cont->dropbyte);
     ros_atomic32_init(&cont->time);
@@ -1220,7 +1195,7 @@ uint32_t urr_container_init(uint32_t urr_index)
         cont->idt_timer = NULL;
     }
 
-	if (cont->stp_timer) {
+    if (cont->stp_timer) {
         /* If stp_timer timer is running, stop it */
         ros_timer_del(cont->stp_timer);
         cont->stp_timer = NULL;
@@ -1301,9 +1276,9 @@ uint32_t urr_container_init(uint32_t urr_index)
             ros_atomic32_set(&cont->droppkts, conf->drop_thres.packets);
         }
 
-		cont->vol_ul_status  = URR_STATUS_NORMAL;
-		cont->vol_dl_status  = URR_STATUS_NORMAL;
-		cont->vol_tot_status = URR_STATUS_NORMAL;
+        cont->vol_ul_status  = URR_STATUS_NORMAL;
+        cont->vol_dl_status  = URR_STATUS_NORMAL;
+        cont->vol_tot_status = URR_STATUS_NORMAL;
 
         LOG(SESSION, RUNNING,
             "urr(%d): start volume charging!", urr_entry->index);
@@ -1311,8 +1286,8 @@ uint32_t urr_container_init(uint32_t urr_index)
     else {
         /* Set init status */
         cont->vol_ul_status  = URR_STATUS_INVALID;
-		cont->vol_dl_status  = URR_STATUS_INVALID;
-		cont->vol_tot_status = URR_STATUS_INVALID;
+        cont->vol_dl_status  = URR_STATUS_INVALID;
+        cont->vol_tot_status = URR_STATUS_INVALID;
     }
 
     if (method->d.durat) {
@@ -1333,17 +1308,17 @@ uint32_t urr_container_init(uint32_t urr_index)
                 urr_proc_timer_idt);
             LOG(SESSION, RUNNING, "Inactivity Detection Time is valid.");
         } else {
-			/* 不带IDT时，达到门限或达到配额上报 */
-			if(monitor->sub_tim_thres){
-	            cont->idt_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
-	                monitor->sub_tim_thres * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
-	                urr_proc_timer_idt);
-			}else{
-				cont->idt_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
-	                monitor->sub_tim_quota * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
-	                urr_proc_timer_idt);
-			}
-		}
+            /* 不带IDT时，达到门限或达到配额上报 */
+            if(monitor->sub_tim_thres){
+                cont->idt_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
+                    monitor->sub_tim_thres * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
+                    urr_proc_timer_idt);
+            }else{
+                cont->idt_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
+                    monitor->sub_tim_quota * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
+                    urr_proc_timer_idt);
+            }
+        }
 
         /* Set init status */
         cont->tim_status = URR_STATUS_NORMAL;
@@ -1392,7 +1367,7 @@ uint32_t urr_container_init(uint32_t urr_index)
             urr_entry->index, time_diff);
     }
 
-    if (conf->trigger.d.macar) {
+    if (conf->trigger.d.macar && conf->eth_inact_time) {
         /*urr_mac_create_bucket(urr_entry);
         cont->eit_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
             conf->eth_inact_time * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
@@ -1404,7 +1379,7 @@ uint32_t urr_container_init(uint32_t urr_index)
             urr_entry->index, conf->eth_inact_time);
     }
 
-    if (conf->trigger.d.perio) {
+    if (conf->trigger.d.perio && conf->period) {
         cont->per_timer = ros_timer_create(ROS_TIMER_MODE_PERIOD,
             conf->period * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
             urr_proc_timer_per);
@@ -1420,21 +1395,21 @@ uint32_t urr_container_init(uint32_t urr_index)
     }
 
 
-	if (conf->trigger.d.stopt) {
-		cont->stp_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
-			URR_STOP_TIME * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
-			urr_proc_timer_stp);
+    if (conf->trigger.d.stopt) {
+        cont->stp_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
+            URR_STOP_TIME * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
+            urr_proc_timer_stp);
 
-		LOG(SESSION, RUNNING,
-			"traffic stop detection timer is valid!");
-	}
-	else {
-		/* Set to zero to indicate QHT stopped */
-		cont->stp_timer = NULL;
-	}
+        LOG(SESSION, RUNNING,
+            "traffic stop detection timer is valid!");
+    }
+    else {
+        /* Set to zero to indicate QHT stopped */
+        cont->stp_timer = NULL;
+    }
 
     /* If provisioned QHT, create timer but not start */
-    if (conf->quota_hold) {
+    if (conf->trigger.d.quhti && conf->quota_hold) {
         cont->qht_timer = ros_timer_create(ROS_TIMER_MODE_ONCE,
             conf->quota_hold * ROS_TIMER_TICKS_PER_SEC, (uint64_t)urr_entry,
             urr_proc_timer_qht);
@@ -1463,7 +1438,7 @@ uint32_t urr_container_init(uint32_t urr_index)
     }
 
     urr_change_inst_light(urr_entry, COMM_MSG_LIGHT_GREEN);
-	urr_change_inst_thres(urr_entry);
+    urr_change_inst_thres(urr_entry);
 
     return 0;
 }
@@ -1546,11 +1521,10 @@ uint32_t urr_container_destroy(uint32_t urr_index)
 uint32_t urr_proc_recv(uint32_t urr_index, int64_t pkt_len, uint8_t dlflag)
 {
     struct urr_table *urr_entry;
-    comm_msg_urr_method_t   *method;
+    comm_msg_urr_method_t *method;
 
-    LOG(SESSION, RUNNING,
-        "start to handle urr(%d), packet len %ld, %s.",
-        urr_index, pkt_len, (dlflag==0)?"uplink":"downlink");
+    LOG(SESSION, RUNNING, "start to handle urr(%d), packet len %ld, %s.",
+        urr_index, pkt_len, (dlflag==0) ? "uplink" : "downlink");
 
     /* Get entry */
     urr_entry = urr_get_table(urr_index);
@@ -1559,62 +1533,63 @@ uint32_t urr_proc_recv(uint32_t urr_index, int64_t pkt_len, uint8_t dlflag)
             "Invalid urr index(%d)!", urr_index);
         return EN_COMM_ERRNO_PARAM_INVALID;
     }
-
-	if (0 == ros_atomic32_read(&urr_entry->container.first_pkt)) {
-		if(urr_entry->urr.trigger.d.start) {
-			urr_send_report(urr_entry, URR_TRIGGER_START);
-		}
-        /* First packet time */
-        ros_atomic32_set(&urr_entry->container.first_pkt, ros_getime());
-    }
-
-    /* If Inactive Measurement Flag is true, stop measuring */
-    if (urr_entry->urr.measu_info.d.inam) {
-        LOG(SESSION, RUNNING,
-            "Inactive Measurement Flag is true, don't measure!");
-        return EN_COMM_ERRNO_OK;
-    }
-
-    /* If it is first packet in this cycle, record time */
-    if (0 == ros_atomic32_read(&urr_entry->container.start_time)) {
-
-        /* If not NULL, start it */
-        if (urr_entry->container.idt_timer) {
-            /* Start timer */
-            ros_timer_start(urr_entry->container.idt_timer);
-        }
-
-        if (urr_entry->container.qht_timer) {
-            /* Start timer */
-            ros_timer_start(urr_entry->container.qht_timer);
-        }
-
-        /* Record current time */
-        ros_atomic32_set(&urr_entry->container.start_time, ros_getime());
-        ros_atomic32_set(&urr_entry->container.start_hold, ros_getime());
-    }
-
-	if (urr_entry->container.stp_timer) {
-        /* Start timer */
-        ros_timer_start(urr_entry->container.stp_timer);
-    }
-
     method = &urr_entry->urr.method;
 
-    /* Handle volume */
-    if (method->d.volum) {
-        urr_chk_volume(urr_entry, pkt_len, dlflag);
+    /* An action performed only when there is traffic */
+    if (pkt_len) {
+        if (unlikely(0 == ros_atomic32_read(&urr_entry->container.first_pkt))) {
+            if(urr_entry->urr.trigger.d.start) {
+                urr_send_report(urr_entry, URR_TRIGGER_START);
+            }
+            /* First packet time */
+            ros_atomic32_set(&urr_entry->container.first_pkt, ros_getime());
+        }
+
+        /* Record packet time */
+        ros_atomic32_set(&urr_entry->container.last_pkt, ros_getime());
+
+        /* If Inactive Measurement Flag is true, stop measuring */
+        if (urr_entry->urr.measu_info.d.inam) {
+            LOG(SESSION, RUNNING, "Inactive Measurement Flag is true, don't measure!");
+            return EN_COMM_ERRNO_OK;
+        }
+
+        /* If it is first packet in this cycle, record time */
+        if (unlikely(0 == ros_atomic32_read(&urr_entry->container.start_time))) {
+
+            /* If not NULL, start it */
+            if (urr_entry->container.idt_timer) {
+                /* Start timer */
+                ros_timer_start(urr_entry->container.idt_timer);
+            }
+
+            if (urr_entry->container.qht_timer) {
+                /* Start timer */
+                ros_timer_start(urr_entry->container.qht_timer);
+            }
+
+            /* Record current time */
+            ros_atomic32_set(&urr_entry->container.start_time, ros_getime());
+            ros_atomic32_set(&urr_entry->container.start_hold, ros_getime());
+        }
+
+        if (urr_entry->container.stp_timer) {
+            /* Start timer */
+            ros_timer_start(urr_entry->container.stp_timer);
+        }
+
+        /* Handle volume */
+        if (method->d.volum) {
+            urr_chk_volume(urr_entry, pkt_len, dlflag);
+        }
     }
 
-    /* Handle time */
+    /* Handle time, Even if there is no flow, it needs to be detected regularly */
     if (method->d.durat) {
-		ros_rwlock_write_lock(&urr_entry->lock); /* lock */
-        urr_chk_time(urr_entry);
-		ros_rwlock_write_unlock(&urr_entry->lock); /* unlock */
+        ros_rwlock_write_lock(&urr_entry->lock); /* lock */
+        urr_chk_time(urr_entry); /* The external lock may be removed */
+        ros_rwlock_write_unlock(&urr_entry->lock); /* unlock */
     }
-
-    /* Record packet time */
-    ros_atomic32_set(&urr_entry->container.last_pkt, ros_getime());
 
     return 0;
 }
@@ -1793,7 +1768,7 @@ int urr_count_proc(uint32_t stat_num, comm_msg_urr_stat_conf_t *stat_arr)
 {
     uint8_t index, pdr_si;
     struct session_inst_entry *entry = NULL;
-	struct session_t *sess_tbl = NULL;
+    struct session_t *sess_tbl = NULL;
     struct pdr_table *pdr_tbl = NULL;
     uint32_t new_status, max_status = COMM_MSG_LIGHT_GREEN;
     uint32_t cnt, light_cnt = 0;
@@ -1802,17 +1777,17 @@ int urr_count_proc(uint32_t stat_num, comm_msg_urr_stat_conf_t *stat_arr)
     LOG(SESSION, RUNNING, "Process URR status, stat_num: %u.", stat_num);
     for (cnt = 0; cnt < stat_num; ++cnt) {
         stat_arr[cnt].inst_index = ntohl(stat_arr[cnt].inst_index);
-        stat_arr[cnt].urr_stat.forw_pkts.cnt    = ntohll(stat_arr[cnt].urr_stat.forw_pkts.cnt);
-        stat_arr[cnt].urr_stat.forw_bytes.cnt   = ntohll(stat_arr[cnt].urr_stat.forw_bytes.cnt);
-        stat_arr[cnt].urr_stat.drop_pkts.cnt    = ntohll(stat_arr[cnt].urr_stat.drop_pkts.cnt);
-        stat_arr[cnt].urr_stat.drop_bytes.cnt   = ntohll(stat_arr[cnt].urr_stat.drop_bytes.cnt);
-        stat_arr[cnt].urr_stat.err_cnt.cnt      = ntohll(stat_arr[cnt].urr_stat.err_cnt.cnt);
+        stat_arr[cnt].urr_stat.forw_pkts    = ntohll(stat_arr[cnt].urr_stat.forw_pkts);
+        stat_arr[cnt].urr_stat.forw_bytes   = ntohll(stat_arr[cnt].urr_stat.forw_bytes);
+        stat_arr[cnt].urr_stat.drop_pkts    = ntohll(stat_arr[cnt].urr_stat.drop_pkts);
+        stat_arr[cnt].urr_stat.drop_bytes   = ntohll(stat_arr[cnt].urr_stat.drop_bytes);
+        stat_arr[cnt].urr_stat.err_cnt      = ntohll(stat_arr[cnt].urr_stat.err_cnt);
 
         if (COMM_MSG_ORPHAN_NUMBER == stat_arr[cnt].inst_index) {
             continue;
         }
         entry = session_instance_get_entry(stat_arr[cnt].inst_index);
-        if (!entry) {
+        if (NULL == entry) {
             LOG(SESSION, ERR, "Entry index error, index: %u.", stat_arr[cnt].inst_index);
             continue;
         }
@@ -1823,36 +1798,36 @@ int urr_count_proc(uint32_t stat_num, comm_msg_urr_stat_conf_t *stat_arr)
         }
 
         pdr_tbl = pdr_get_table_public(stat_arr[cnt].inst_index);
-        if (!pdr_tbl) {
+        if (NULL == pdr_tbl) {
             LOG(SESSION, ERR, "PDR index error, index: %u.", stat_arr[cnt].inst_index);
             continue;
         }
         pdr_si = pdr_tbl->pdr.pdi_content.si;
 
-		sess_tbl = pdr_tbl->session_link;
-	    if (unlikely(NULL == sess_tbl)) {
-	        LOG(SESSION, ERR,
-	            "pdr linked session is NULL, pdr id: %d.\n",
-	            pdr_tbl->pdr.pdr_id);
-	        continue;
-	    }
-		if(sess_tbl->inactivity_timer_id){
-			/* If not NULL, restart it */
-			ros_timer_start(sess_tbl->inactivity_timer_id);
-		}
+        sess_tbl = pdr_tbl->session_link;
+        if (unlikely(NULL == sess_tbl)) {
+            LOG(SESSION, ERR, "pdr linked session is NULL, pdr id: %d.\n",
+                pdr_tbl->pdr.pdr_id);
+            continue;
+        }
+        if (sess_tbl->inactivity_timer_id){
+            /* If not NULL, restart it */
+            ros_timer_start(sess_tbl->inactivity_timer_id);
+        }
 
-        LOG(SESSION, RUNNING, "PDR %u, Forward bytes: %ld, forward packets: %ld, dorp bytes: %ld, dorp packets: %ld.",
+        LOG(SESSION, RUNNING, "PDR %u, Forward bytes: %ld, forward packets: %ld, dorp bytes: %ld, dorp packets: %ld",
             pdr_tbl->pdr.pdr_id,
-            ros_atomic64_read(&stat_arr[cnt].urr_stat.forw_bytes),
-            ros_atomic64_read(&stat_arr[cnt].urr_stat.forw_pkts),
-            ros_atomic64_read(&stat_arr[cnt].urr_stat.drop_bytes),
-            ros_atomic64_read(&stat_arr[cnt].urr_stat.drop_pkts));
+            stat_arr[cnt].urr_stat.forw_bytes,
+            stat_arr[cnt].urr_stat.forw_pkts,
+            stat_arr[cnt].urr_stat.drop_bytes,
+            stat_arr[cnt].urr_stat.drop_pkts);
 
         for (index = 0; index < entry->control.urr_bnum; ++index) {
-            urr_proc_recv(entry->control.urr_bqos[index], ros_atomic64_read(&stat_arr[cnt].urr_stat.forw_bytes),
+            urr_proc_recv(entry->control.urr_bqos[index],
+                stat_arr[cnt].urr_stat.forw_bytes - entry->stat.forw_bytes,
                 (pdr_si != EN_COMM_SRC_IF_ACCESS));
 
-			/* Update instance status */
+            /* Update instance status */
             new_status = urr_get_status(entry->control.urr_bqos[index]);
             if (new_status > max_status) {
                 max_status = new_status;
@@ -1861,7 +1836,7 @@ int urr_count_proc(uint32_t stat_num, comm_msg_urr_stat_conf_t *stat_arr)
 
         /* Apply the rules after qos enforcement */
         for (index = 0; index < entry->control.urr_anum; ++index) {
-            urr_proc_recv(entry->control.urr_aqos[index], ros_atomic64_read(&stat_arr[cnt].urr_stat.forw_bytes),
+            urr_proc_recv(entry->control.urr_aqos[index], stat_arr[cnt].urr_stat.forw_bytes - entry->stat.forw_bytes,
                 (pdr_si != EN_COMM_SRC_IF_ACCESS));
 
             /* Update instance status */
@@ -1874,9 +1849,12 @@ int urr_count_proc(uint32_t stat_num, comm_msg_urr_stat_conf_t *stat_arr)
 
         /* Apply urr drop rules */
         for (index = 0; index < entry->control.urr_dnum; ++index) {
-            urr_proc_drop(entry->control.urr_drop[index], ros_atomic64_read(&stat_arr[cnt].urr_stat.drop_bytes),
-                ros_atomic64_read(&stat_arr[cnt].urr_stat.drop_pkts));
+            urr_proc_drop(entry->control.urr_drop[index], stat_arr[cnt].urr_stat.drop_bytes - entry->stat.drop_bytes,
+                stat_arr[cnt].urr_stat.drop_pkts - entry->stat.drop_pkts);
         }
+
+        /* Update local statistics */
+        ros_memcpy(&entry->stat, &stat_arr[cnt].urr_stat, sizeof(comm_msg_urr_stat_t));
 
         mdf_light[light_cnt].inst_index = stat_arr[cnt].inst_index;
         mdf_light[light_cnt].light = entry->control.light;
@@ -1889,27 +1867,6 @@ int urr_count_proc(uint32_t stat_num, comm_msg_urr_stat_conf_t *stat_arr)
         LOG(SESSION, ERR, "Update inst light to fpu failed.\n");
         return -1;
     }
-
-    return 0;
-}
-
-int test_spu_urr(struct cli_def *cli,int argc, char **argv)
-{
-    comm_msg_urr_stat_conf_t stat;
-
-    if (argc < 5) {
-        printf("\r\nParameters too few, urr_test <inst_index> <fwd_pkts> <fwd_bytes> <drop_pkts> <drop_bytes>\r\n");
-        return -1;
-    }
-
-    stat.inst_index                 = htonl(atoi(argv[0]));
-    stat.urr_stat.forw_pkts.cnt     = htonll(atoll(argv[1]));
-    stat.urr_stat.forw_bytes.cnt    = htonll(atoll(argv[2]));
-    stat.urr_stat.drop_pkts.cnt     = htonll(atoll(argv[3]));
-    stat.urr_stat.drop_bytes.cnt    = htonll(atoll(argv[4]));
-    stat.urr_stat.err_cnt.cnt       = 0;
-
-    urr_count_proc(1, &stat);
 
     return 0;
 }

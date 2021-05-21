@@ -37,7 +37,7 @@ typedef union tag_upc_establish_m_opt {
     struct {
 #if BYTE_ORDER == BIG_ENDIAN
     uint8_t             spare       :4;     /* spare */
-    uint8_t             create_far  :1;     /* create far flag */
+    uint8_t             create_far  :1;     /* create far or activate predefined rules flag */
     uint8_t             create_pdr  :1;     /* create pdr flag */
     uint8_t             f_seid      :1;     /* f-seid flag */
     uint8_t             node_id     :1;     /* node id flag */
@@ -45,7 +45,7 @@ typedef union tag_upc_establish_m_opt {
     uint8_t             node_id     :1;     /* node id flag */
     uint8_t             f_seid      :1;     /* f-seid flag */
     uint8_t             create_pdr  :1;     /* create pdr flag */
-    uint8_t             create_far  :1;     /* create far flag */
+    uint8_t             create_far  :1;     /* create far or activate predefined rules flag */
     uint8_t             spare       :4;     /* spare */
 #endif
     } d;
@@ -161,6 +161,9 @@ typedef union tag_upc_create_mar_m_opt {
 
 int upc_ueip_add_target(session_pdr_create *pdr);
 
+PFCP_CAUSE_TYPE upc_parse_source_ip_address(session_source_ip_address *source_ip,
+    uint8_t* buffer, uint16_t *buf_pos, int buf_max, uint16_t obj_len);
+
 void upc_parse_session_establishment_request(uint8_t* buffer,
     uint16_t buf_pos1, int buf_max, uint32_t pkt_seq, struct sockaddr *sa);
 void upc_parse_session_modification_request(uint8_t* buffer,
@@ -182,6 +185,9 @@ void upc_parse_node_report_response(uint8_t* buffer,
 int upc_publish_sess_sig_trace(uint8_t msg_type, uint64_t up_seid, uint64_t cp_seid, uint32_t flag);
 int upc_write_wireshark(char *buf, int len, uint32_t remote_ip, int flag);
 
+int upc_build_source_ip_address(session_source_ip_address *src_ip_addr,
+    uint8_t *resp_buffer, uint16_t *resp_pos);
+
 int upc_local_session_establishment(session_content_create *sess_content);
 void upc_build_session_establishment_response(
     session_emd_response *sess_rep, uint8_t *resp_buffer,
@@ -196,7 +202,6 @@ void upc_build_session_deletion_response(
     uint16_t *resp_pos, uint32_t pkt_seq, uint64_t cp_seid, int trace_flag);
 
 void upc_report_proc(void *report, size_t buf_len);
-int upc_node_create_pf_rule(char *act,char *pf_rule_name);
 
 #ifdef __cplusplus
 }

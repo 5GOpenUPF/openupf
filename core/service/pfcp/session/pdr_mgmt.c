@@ -13,10 +13,11 @@
 #include "pfd_mgmt.h"
 #include "sp_dns_cache.h"
 #include "session_ethernet.h"
+#include "predefine_rule_mgmt.h"
 
 #include "local_parse.h"
 #include "pdr_mgmt.h"
-#include "predefine_rule_mgmt.h"
+#include "white_list.h"
 
 struct pdr_table_head pdr_tbl_head;
 struct sdf_filter_table sdf_filter_head;
@@ -419,6 +420,14 @@ static int pdr_id_compare(struct rb_node *node, void *key)
     return 0;
 }
 
+static int pdr_predefined_name_compare(struct rb_node *node, void *key)
+{
+    struct pdr_table *pdr_node = (struct pdr_table *)node;
+    char *predef_name = (char *)key;
+
+    return strcmp(pdr_node->pdr.act_pre_arr[0].rules_name, predef_name);
+}
+
 static int pdr_fteid_v4_compare(struct rb_node *node, void *key)
 {
     struct pdr_local_fteid *node_fteid =
@@ -751,45 +760,47 @@ static inline void eth_filter_clear(struct dl_list *list_head)
     ros_rwlock_write_unlock(&eth_head->lock);/* unlock */
 }
 
-struct pdr_table *pdr_table_create(struct session_t *sess, uint16_t id)
+static inline void pdr_table_parameters_init(struct pdr_table *pdr_tbl)
+{
+    ros_memset(&pdr_tbl->pdr, 0, sizeof(struct pkt_detection_rule));
+
+    pdr_tbl->predef_root = RB_ROOT_INIT_VALUE;
+    dl_list_init(&pdr_tbl->pdr.pdi_content.filter_list);
+    dl_list_init(&pdr_tbl->eth_dl_node);
+    ros_atomic16_set(&pdr_tbl->nocp_flag, 1);
+    pdr_tbl->is_active = 0;
+}
+
+struct pdr_table *pdr_table_create_to_pdr_table(struct session_t *sess, struct pdr_table *root_pdr, char *predef_name)
 {
     struct pdr_table *pdr_tbl = NULL;
     uint32_t key = 0, index = 0;
-    uint16_t pdr_id = id;
 
-    if (NULL == sess) {
-        LOG(SESSION, ERR, "sess is NULL.");
+    if (NULL == sess || NULL == root_pdr || NULL == predef_name) {
+        LOG(SESSION, ERR, "Abnormal parameters, sess(%p), root_pdr(%p), predef_name(%p).",
+            sess, root_pdr, predef_name);
         return NULL;
     }
 
-    if (G_FAILURE == Res_Alloc(pdr_get_pool_id(), &key, &index,
-        EN_RES_ALLOC_MODE_OC)) {
-        LOG(SESSION, ERR,
-            "create failed, Resource exhaustion, pool id: %d.",
+    if (G_FAILURE == Res_Alloc(pdr_get_pool_id(), &key, &index, EN_RES_ALLOC_MODE_OC)) {
+        LOG(SESSION, ERR, "create failed, Resource exhaustion, pool id: %d.",
             pdr_get_pool_id());
         return NULL;
     }
 
     pdr_tbl = pdr_get_table(index);
 
-    ros_memset(&pdr_tbl->pdr, 0, sizeof(struct pkt_detection_rule));
-
-    pdr_tbl->pdr.pdr_id = pdr_id;
-    dl_list_init(&pdr_tbl->pdr.pdi_content.filter_list);
-    dl_list_init(&pdr_tbl->eth_dl_node);
-    /*dl_list_init(&pdr_tbl->pdr.act_pre_rule_list);*/
-    ros_atomic16_set(&pdr_tbl->nocp_flag, 1);
+    pdr_table_parameters_init(pdr_tbl);
     pdr_tbl->session_link = sess;
-    pdr_tbl->is_active = 0;
+    strcpy(pdr_tbl->pdr.act_pre_arr[0].rules_name, predef_name);
 
     ros_rwlock_write_lock(&sess->lock);/* lock */
     /* insert node to session tree root*/
-    if (rbtree_insert(&sess->session.pdr_root, &pdr_tbl->pdr_node,
-        &pdr_id, pdr_id_compare) < 0) {
+    if (rbtree_insert(&root_pdr->predef_root, &pdr_tbl->pdr_node,
+        predef_name, pdr_predefined_name_compare) < 0) {
         ros_rwlock_write_unlock(&sess->lock);/* unlock */
         Res_Free(pdr_get_pool_id(), key, index);
-        LOG(SESSION, ERR,
-            "rb tree insert failed, pdr_id: %u.", pdr_id);
+        LOG(SESSION, ERR, "PDR create fail, rb-tree insert failed, predefined name: %s", predef_name);
         return NULL;
     }
     ros_rwlock_write_unlock(&sess->lock);/* unlock */
@@ -799,31 +810,40 @@ struct pdr_table *pdr_table_create(struct session_t *sess, uint16_t id)
     return pdr_tbl;
 }
 
-struct pdr_table *pdr_table_create_local(uint16_t id)
+struct pdr_table *pdr_table_create(struct session_t *sess, uint16_t id)
 {
     struct pdr_table *pdr_tbl = NULL;
     uint32_t key = 0, index = 0;
     uint16_t pdr_id = id;
 
+    if (NULL == sess) {
+        LOG(SESSION, ERR, "Abnormal parameters, sess(%p)", sess);
+        return NULL;
+    }
+
     if (G_FAILURE == Res_Alloc(pdr_get_pool_id(), &key, &index,
         EN_RES_ALLOC_MODE_OC)) {
-        LOG(SESSION, ERR,
-            "create failed, Resource exhaustion, pool id: %d.",
+        LOG(SESSION, ERR, "create failed, Resource exhaustion, pool id: %d.",
             pdr_get_pool_id());
         return NULL;
     }
 
     pdr_tbl = pdr_get_table(index);
 
-    memset(&pdr_tbl->pdr, 0, sizeof(struct pkt_detection_rule));
-
+    pdr_table_parameters_init(pdr_tbl);
+    pdr_tbl->session_link = sess;
     pdr_tbl->pdr.pdr_id = pdr_id;
-    dl_list_init(&pdr_tbl->pdr.pdi_content.filter_list);
-    dl_list_init(&pdr_tbl->eth_dl_node);
-    /*dl_list_init(&pdr_tbl->pdr.act_pre_rule_list);*/
-    ros_atomic16_set(&pdr_tbl->nocp_flag, 1);
-    pdr_tbl->session_link = NULL;
-    pdr_tbl->is_active = 0;
+
+    ros_rwlock_write_lock(&sess->lock);/* lock */
+    /* insert node to session tree root*/
+    if (rbtree_insert(&sess->session.pdr_root, &pdr_tbl->pdr_node,
+        &pdr_id, pdr_id_compare) < 0) {
+        ros_rwlock_write_unlock(&sess->lock);/* unlock */
+        Res_Free(pdr_get_pool_id(), key, index);
+        LOG(SESSION, ERR, "rb tree insert failed, pdr_id: %u.", pdr_id);
+        return NULL;
+    }
+    ros_rwlock_write_unlock(&sess->lock);/* unlock */
 
     pdr_use_num_add(1);
 
@@ -2980,44 +3000,6 @@ int pdr_fraud_identify(struct filter_key *key, struct pdr_table *pdr_tbl)
     return 0;
 }
 
-uint8_t pdr_table_delete_local(uint32_t *arr, uint8_t num)
-{
-  struct pdr_table    *pdr_tbl = NULL;
-    uint32_t index_cnt = 0;
-
-  if (NULL == arr) {
-        LOG(SESSION, ERR, "pdr remove failed, arr(%p)",arr);
-        return -1;
-    }
-
-  for (index_cnt = 0; index_cnt < num; ++index_cnt)
-  {
-    if(NULL == (pdr_tbl = pdr_get_table(arr[index_cnt])))
-    {
-          LOG(SESSION, ERR, "pdr_get_table[%d] failed",arr[index_cnt]);
-          return -1;
-      }
-
-    /* stop timer */
-      ros_timer_stop(pdr_tbl->timer_id);
-      ros_timer_stop(pdr_tbl->nocp_report_timer);
-
-      /* if sdf filter, delete filter list,
-         otherwise, need delete each sdf filter in ethernet filter */
-      if (FILTER_SDF == pdr_tbl->pdr.pdi_content.filter_type) {
-          sdf_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
-      } else if (FILTER_ETH == pdr_tbl->pdr.pdi_content.filter_type) {
-          eth_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
-      }
-
-      /* resource free */
-      Res_Free(pdr_get_pool_id(), 0, pdr_tbl->index);
-      pdr_use_num_sub(1);
-  }
-
-  return 0;
-}
-
 void pdr_set_deactive_timer_cb(void *timer, uint64_t para)
 {
     struct pdr_table *pdr_tbl = NULL;
@@ -3271,7 +3253,6 @@ int pdr_set_active(struct pdr_table *pdr_tbl)
     return ret;
 }
 
-
 int pdr_insert(struct session_t *sess, void *parse_pdr_arr,
     uint32_t pdr_num, uint32_t *fail_id)
 {
@@ -3279,22 +3260,131 @@ int pdr_insert(struct session_t *sess, void *parse_pdr_arr,
     uint32_t            index_cnt = 0;
 
     if (NULL == sess || (NULL == parse_pdr_arr && pdr_num)) {
-        LOG(SESSION, ERR, "insert failed, sess(%p), parse_pdr_arr(%p),"
-            " pdr_num: %u.", sess, parse_pdr_arr, pdr_num);
+        LOG(SESSION, ERR, "insert failed, sess(%p), parse_pdr_arr(%p), pdr_num: %u.",
+            sess, parse_pdr_arr, pdr_num);
         return -1;
     }
 
     for (index_cnt = 0; index_cnt < pdr_num; ++index_cnt) {
-
         pdr_tbl = pdr_add(sess, parse_pdr_arr, index_cnt, fail_id);
         if (NULL == pdr_tbl) {
-            LOG(SESSION, ERR, "pdr add failed.");
+            LOG(SESSION, ERR, "PDR add failed");
             return -1;
         }
+    }
 
-        if (-1 == pdr_set_active(pdr_tbl)) {
-            LOG(SESSION, ERR, "pdr set active failed, pdr id: %d.",
-                pdr_tbl->pdr.pdr_id);
+    return 0;
+}
+
+static inline void pdr_remove_common(struct pdr_table *pdr_tbl, uint32_t *pdr_index_arr, uint32_t *index_cnt)
+{
+    /* stop timer */
+    ros_timer_stop(pdr_tbl->timer_id);
+    ros_timer_stop(pdr_tbl->nocp_report_timer);
+
+    /* if sdf filter, delete filter list,
+     * otherwise, need delete each sdf filter in ethernet filter
+     */
+    if (FILTER_SDF == pdr_tbl->pdr.pdi_content.filter_type) {
+        sdf_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
+    } else if (FILTER_ETH == pdr_tbl->pdr.pdi_content.filter_type) {
+        eth_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
+    }
+
+    ros_rwlock_write_lock(&pdr_tbl->lock);/* lock */
+    /* is active, need delete map, instance, gtpu entry */
+    if (pdr_tbl->is_active) {
+        pdr_tbl->is_active = 0;
+        ros_rwlock_write_unlock(&pdr_tbl->lock);/* unlock */
+
+        if (0 > pdr_map_remove(pdr_tbl)) {
+            LOG(SESSION, ERR, "delete pdr map failed.");
+        }
+
+        if (0 > session_instance_del(pdr_tbl->index, 0)) {
+            LOG(SESSION, ERR, "delete instance:%u failed.", pdr_tbl->index);
+        } else {
+            if (pdr_index_arr) {
+                pdr_index_arr[*index_cnt] = pdr_tbl->index;
+                ++(*index_cnt);
+            }
+        }
+    } else {
+        ros_rwlock_write_unlock(&pdr_tbl->lock);/* unlock */
+    }
+
+    /* resource free */
+    Res_Free(pdr_get_pool_id(), 0, pdr_tbl->index);
+    pdr_use_num_sub(1);
+}
+
+int pdr_remove_predefined_pdr(struct session_t *sess, struct pdr_table *root_pdr, char *predef_name)
+{
+    struct pdr_table *pdr_tbl = NULL;
+    uint32_t pdr_index_arr[MAX_PDR_NUM], index_cnt = 0;
+
+    if (NULL == sess || NULL == root_pdr || NULL == predef_name) {
+        LOG(SESSION, ERR, "Abnormal parameters, sess(%p), root_pdr(%p), predef_name(%p)",
+            sess, root_pdr, predef_name);
+        return -1;
+    }
+
+    ros_rwlock_write_lock(&sess->lock);/* lock */
+    /* search pdr table,if exist, free node, otherwise, failed */
+    pdr_tbl = (struct pdr_table *)rbtree_delete(&root_pdr->predef_root,
+        predef_name, pdr_predefined_name_compare);
+    if (NULL == pdr_tbl) {
+        ros_rwlock_write_unlock(&sess->lock);/* unlock */
+        LOG(SESSION, DEBUG, "Delete predefined PDR fail, No such predefined name: %s",
+            predef_name);
+        return -1;
+    }
+    ros_rwlock_write_unlock(&sess->lock);/* unlock */
+
+    pdr_remove_common(pdr_tbl, pdr_index_arr, &index_cnt);
+
+    if (index_cnt) {
+        if (-1 == rules_fp_del(pdr_index_arr, index_cnt, EN_COMM_MSG_UPU_INST_DEL, MB_SEND2BE_BROADCAST_FD)) {
+            LOG(SESSION, ERR, "fp del failed.");
+        }
+    }
+
+    return 0;
+}
+
+int pdr_predefined_rules_cleanup_from_pdr(struct session_t *sess, struct pdr_table *root_pdr)
+{
+    struct pdr_table *pdr_tbl = NULL;
+    uint32_t pdr_index_arr[MAX_PDR_NUM], index_cnt = 0;
+    uint8_t cnt;
+
+    if (NULL == sess || NULL == root_pdr) {
+        LOG(SESSION, ERR, "Abnormal parameters, sess(%p), root_pdr(%p)",
+            sess, root_pdr);
+        return -1;
+    }
+
+    ros_rwlock_write_lock(&root_pdr->lock);/* lock */
+    pdr_tbl = (struct pdr_table *)rbtree_first(&root_pdr->predef_root);
+    while (NULL != pdr_tbl) {
+        rbtree_erase(&pdr_tbl->pdr_node, &root_pdr->predef_root);
+
+        pdr_remove_common(pdr_tbl, pdr_index_arr, &index_cnt);
+
+        pdr_tbl = (struct pdr_table *)rbtree_next(&pdr_tbl->pdr_node);
+    }
+    ros_rwlock_write_unlock(&root_pdr->lock);/* unlock */
+
+    if (index_cnt) {
+        if (-1 == rules_fp_del(pdr_index_arr, index_cnt, EN_COMM_MSG_UPU_INST_DEL, MB_SEND2BE_BROADCAST_FD)) {
+            LOG(SESSION, ERR, "fp del failed.");
+        }
+    }
+
+    for (cnt = 0; cnt < root_pdr->pdr.act_pre_number; ++cnt) {
+        if (0 > predef_rules_erase(sess, root_pdr->pdr.act_pre_arr[cnt].rules_name)) {
+            LOG(SESSION, DEBUG, "Erase predefined rules failed.");
+            /* Keep going */
         }
     }
 
@@ -3302,19 +3392,18 @@ int pdr_insert(struct session_t *sess, void *parse_pdr_arr,
 }
 
 int pdr_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num,
-    uint32_t *rm_pdr_index_arr, uint32_t *rm_pdr_num)
+    uint32_t *rm_pdr_index_arr, uint32_t *rm_pdr_num, uint32_t *fail_id)
 {
-    struct pdr_table    *pdr_tbl = NULL;
-    uint32_t index_arr[MAX_URR_NUM], index_cnt = 0;
-    uint32_t success_cnt = 0, rm_pdr_cnt = 0;
+    struct pdr_table *pdr_tbl = NULL;
+    uint32_t index_arr[MAX_PDR_NUM], index_cnt = 0;
+    uint32_t success_cnt = 0;
+    //uint8_t predef_cnt;
 
     if (NULL == sess || (NULL == id_arr && id_num)) {
         LOG(SESSION, ERR, "remove failed, sess(%p), id_arr(%p),"
             " id_num: %d.", sess, id_arr, id_num);
         return -1;
     }
-    if (rm_pdr_num)
-        rm_pdr_cnt = *rm_pdr_num;
 
     for (index_cnt = 0; index_cnt < id_num; ++index_cnt) {
         ros_rwlock_write_lock(&sess->lock);/* lock */
@@ -3325,61 +3414,28 @@ int pdr_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num,
             ros_rwlock_write_unlock(&sess->lock);/* unlock */
             LOG(SESSION, ERR, "No such pdr table, pdr_id %u.",
                 id_arr[index_cnt]);
+            if (fail_id)
+                *fail_id = id_arr[index_cnt];
             return -1;
         }
         ros_rwlock_write_unlock(&sess->lock);/* unlock */
 
-        /* stop timer */
-        ros_timer_stop(pdr_tbl->timer_id);
-        ros_timer_stop(pdr_tbl->nocp_report_timer);
-
-        /* if sdf filter, delete filter list,
-           otherwise, need delete each sdf filter in ethernet filter */
-        /* At present, if the PDR has a predefined activation rule,
-        *  it will get the local filter by default, so do not delete it.
-        *  Delete only if you don't bring it
-        */
-        if(pdr_tbl->pdr.act_pre_number == 0)
-        {
-            if (FILTER_SDF == pdr_tbl->pdr.pdi_content.filter_type) {
-                sdf_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
-            } else if (FILTER_ETH == pdr_tbl->pdr.pdi_content.filter_type) {
-                eth_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
+        /* Remove activated predefined PDR */
+        /*for (predef_cnt = 0; predef_cnt < pdr_tbl->pdr.act_pre_number; ++predef_cnt) {
+            if (0 > pdr_predefined_deactivate(sess, pdr_tbl, pdr_tbl->pdr.act_pre_arr[predef_cnt].rules_name)) {
+                LOG(SESSION, ERR, "Deactivate predefined rules failed.");
             }
+        }*/
+        if (0 > pdr_predefined_rules_cleanup_from_pdr(sess, pdr_tbl)) {
+            LOG(SESSION, ERR, "Cleanup activated predefined rules failed.");
         }
 
-        ros_rwlock_write_lock(&pdr_tbl->lock);/* lock */
-        /* is active, need delete map, instance, gtpu entry */
-
-        if (pdr_tbl->is_active) {
-            pdr_tbl->is_active = 0;
-            ros_rwlock_write_unlock(&pdr_tbl->lock);/* unlock */
-
-            if (0 > pdr_map_remove(pdr_tbl)) {
-                LOG(SESSION, ERR, "delete pdr map failed.");
-            }
-
-            if (0 > session_instance_del(pdr_tbl->index, 0)) {
-                LOG(SESSION, ERR, "delete instance:%u failed.",
-                    pdr_tbl->index);
-            } else {
-                if (rm_pdr_index_arr) {
-                    rm_pdr_index_arr[rm_pdr_cnt++] = pdr_tbl->index;
-                }
-                index_arr[success_cnt] = pdr_tbl->index;
-                ++success_cnt;
-            }
-        } else {
-            ros_rwlock_write_unlock(&pdr_tbl->lock);/* unlock */
-        }
-
-        /* resource free */
-        Res_Free(pdr_get_pool_id(), 0, pdr_tbl->index);
-        pdr_use_num_sub(1);
+        pdr_remove_common(pdr_tbl, index_arr, &success_cnt);
     }
 
     if (rm_pdr_num) {
-        *rm_pdr_num = rm_pdr_cnt;
+        ros_memcpy(&rm_pdr_index_arr[*rm_pdr_num], index_arr, sizeof(index_arr[0]) * success_cnt);
+        *rm_pdr_num += success_cnt;
     }
 
     if (NULL == rm_pdr_num && success_cnt) {
@@ -3415,8 +3471,7 @@ int pdr_modify(struct session_t *sess, void *parse_pdr_arr,
 }
 
 /* clear all pdr rules releated the current pfcp session */
-int pdr_clear(struct session_t *sess,
-    uint8_t fp_sync, struct session_rules_index * rules)
+int pdr_clear(struct session_t *sess, uint8_t fp_sync, struct session_rules_index *rules)
 {
     struct pdr_table *pdr_tbl = NULL;
     uint16_t id = 0;
@@ -3439,58 +3494,27 @@ int pdr_clear(struct session_t *sess,
             continue;
         }
 
-        /* stop timer */
-        ros_timer_stop(pdr_tbl->timer_id);
-        ros_timer_stop(pdr_tbl->nocp_report_timer);
-
-        /* if sdf filter, delete filter list,
-           otherwise, need delete each sdf filter in ethernet filter */
-        if (FILTER_SDF == pdr_tbl->pdr.pdi_content.filter_type) {
-            sdf_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
-        } else if (FILTER_ETH == pdr_tbl->pdr.pdi_content.filter_type) {
-            eth_filter_clear(&pdr_tbl->pdr.pdi_content.filter_list);
+        ros_rwlock_write_unlock(&sess->lock);// unlock
+        if (0 > pdr_predefined_rules_cleanup_from_pdr(sess, pdr_tbl)) {
+            LOG(SESSION, ERR, "Cleanup activated predefined rules failed.");
         }
+        ros_rwlock_write_lock(&sess->lock);/* lock */
 
-        Res_Free(pdr_get_pool_id(), 0, pdr_tbl->index);
-
-        ros_rwlock_write_lock(&pdr_tbl->lock);/* lock */
-        /* is active, need delete map, instance, gtpu entry */
-
-        if (pdr_tbl->is_active) {
-            pdr_tbl->is_active = 0;
-            ros_rwlock_write_unlock(&pdr_tbl->lock);/* unlock */
-
-            if (0 > session_instance_del(pdr_tbl->index, 0)) {
-                LOG(SESSION, ERR, "instance entry del failed, id: %u.",
-                    pdr_tbl->index);
-            } else {
-                if (fp_sync) {
-                    index_arr[index_cnt] = pdr_tbl->index;
-                    ++index_cnt;
-                } else {
-                    rules->index_arr[EN_RULE_INST][rules->index_num[
-                        EN_RULE_INST]] = pdr_tbl->index;
-                    ++rules->index_num[EN_RULE_INST];
-
-                    if (rules->index_num[EN_RULE_INST] >=
-                        SESSION_RULE_INDEX_LIMIT) {
-                        rules->overflow.d.rule_inst = 1;
-                    }
-                }
-            }
-
-            if (0 > pdr_map_remove(pdr_tbl)) {
-                LOG(SESSION, ERR, "delete pdr map failed.");
-            }
-        } else {
-            ros_rwlock_write_unlock(&pdr_tbl->lock);/* unlock */
-        }
-
-        pdr_use_num_sub(1);
+        pdr_remove_common(pdr_tbl, index_arr, &index_cnt);
 
         pdr_tbl = (struct pdr_table *)rbtree_next(&pdr_tbl->pdr_node);
     }
     ros_rwlock_write_unlock(&sess->lock);// unlock
+
+    if (!fp_sync) {
+        if ((rules->index_num[EN_RULE_INST] + index_cnt) >= SESSION_RULE_INDEX_LIMIT) {
+            rules->overflow.d.rule_inst = 1;
+        }
+
+        ros_memcpy(&rules->index_arr[EN_RULE_INST][rules->index_num[EN_RULE_INST]], index_arr,
+            sizeof(index_arr[0]) * index_cnt);
+        rules->index_num[EN_RULE_INST] += index_cnt;
+    }
 
     if (fp_sync && index_cnt) {
         if (-1 == rules_fp_del(index_arr, index_cnt, EN_COMM_MSG_UPU_INST_DEL, MB_SEND2BE_BROADCAST_FD)) {
@@ -3504,7 +3528,7 @@ int pdr_clear(struct session_t *sess,
 
 int pdr_sum(void)
 {
-    struct pdr_table_head    *pdr_head = pdr_get_head();
+    struct pdr_table_head *pdr_head = pdr_get_head();
 
     return ros_atomic32_read(&pdr_head->use_num);
 }
@@ -3538,7 +3562,6 @@ int64_t pdr_table_init(uint32_t session_num)
     for (index = 0; index < max_num; ++index) {
         pdr_tbl[index].index = index;
         dl_list_init(&pdr_tbl[index].pdr.pdi_content.filter_list);
-        /*dl_list_init(&pdr_tbl[index].pdr.act_pre_rule_list);*/
         ros_atomic16_set(&pdr_tbl[index].nocp_flag, 1);
         pdr_tbl[index].timer_id = ros_timer_create(ROS_TIMER_MODE_ONCE,
             _1_SECONDS_TIME, (uint64_t)&pdr_tbl[index], pdr_set_deactive_timer_cb);

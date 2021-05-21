@@ -40,16 +40,14 @@ int comm_msg_cmd_entry(void *token, char *inbuf, uint32_t inlen)
         }
         if (cmd_header->magic_word != ntohl(COMM_MSG_MAGIC_WORD))
         {
-            LOG(COMM, ERR,
-                "protocol error in magic word(%x).",
+            LOG(COMM, ERR, "protocol error in magic word(%x).",
                 ntohl(cmd_header->magic_word));
             return -1;
         }
 
         msg_offset += ntohl(cmd_header->total_len);
         if (msg_offset > (int32_t)inlen) {
-            LOG(COMM, ERR, "Abnormal buf length, offset: %u, msg total_len: %u.",
-                (msg_offset - ntohl(cmd_header->total_len)), ntohl(cmd_header->total_len));
+            LOG(COMM, DEBUG, "The message has not been accepted completely, waiting for completion.");
             return (msg_offset - ntohl(cmd_header->total_len));
         }
 
@@ -326,7 +324,7 @@ static void *comm_msg_channel_server_recv_cb(void *arg)
                         } else if (ret == -1) {
                             cur_buf_len = 0;
                         }
-                    } else if (0 > buf_len) {
+                    } else {
                         LOG(COMM, ERR, "recv fail, errno:%s", strerror(errno));
                         close(fd);
                         return NULL;
@@ -537,7 +535,7 @@ static void *comm_msg_channel_client_recv_cb(void *arg)
                         } else if (ret == -1) {
                             cur_buf_len = 0;
                         }
-                    } else if (0 > buf_len) {
+                    } else {
                         LOG(COMM, ERR, "recv fail, errno:%s", strerror(errno));
                         close(fd);
                         setp->fd = -1;

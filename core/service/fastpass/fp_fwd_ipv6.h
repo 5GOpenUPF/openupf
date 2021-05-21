@@ -27,18 +27,14 @@ typedef struct  tag_comm_msg_fast_cfg_ipv6 {
 
 
 void fp_pkt_match_n3_ipv6(fp_packet_info *pkt_info, fp_fast_table *head,
-    fp_fast_entry *entry, fp_cblk_entry *cblk, int trace_flag, int src_intface);
+    fp_fast_entry *entry, fp_cblk_entry *cblk, int trace_flag);
 
 void fp_pkt_match_n6_ipv6(fp_packet_info *pkt_info, fp_fast_table *head,
     fp_fast_entry *entry, fp_cblk_entry *cblk, int trace_flag);
 
-void fp_pkt_match_l1v4_l2v6(fp_packet_info *pkt_info, fp_fast_table *head,
-    fp_fast_entry *entry, fp_cblk_entry *cblk, int trace_flag, int src_intface);
-
 void fp_pkt_inner_ipv6_proc(fp_packet_info *pkt_info);
 
 void fp_pkt_ipv6_entry(fp_packet_info *pkt_info);
-void fp_pkt_ipv6_n4_entry(fp_packet_info *pkt_info);
 
 #ifdef __cplusplus
 }

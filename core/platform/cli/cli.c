@@ -24,7 +24,6 @@ typedef struct cmdNode
 }cmdNode;
 
 extern int cli_get_time(struct cli_def *cli, int argc, char **argv);
-extern int git_version(struct cli_def *cli, int argc, char **argv);
 extern int cli_show_version(struct cli_def *cli,int argc, char *argv[]);
 extern int log_cli_show_log_switch(struct cli_def *cli,int argc, char **argv);
 extern int log_cli_set_log_switch(struct cli_def *cli,int argc, char **argv);
@@ -45,12 +44,6 @@ extern int bar_get_show(struct cli_def *cli, int argc, char **argv);
 extern int qer_get_show(struct cli_def *cli, int argc, char **argv);
 extern int fp_get_start_config_show(struct cli_def *cli, int argc, char **argv);
 extern int fp_ip_show(struct cli_def *cli, int argc, char **argv);
-extern int fp_cli_start_sent_task(struct cli_def *cli, int argc, char **argv);
-extern int fp_cli_stop_sent_task(struct cli_def *cli, int argc, char **argv);
-extern int fp_cli_pkt_stat_start_task(struct cli_def *cli, int argc, char **argv);
-extern int fp_cli_pkt_stat_stop_task(struct cli_def *cli, int argc, char **argv);
-extern int fp_cli_pkt_stat_clear(struct cli_def *cli, int argc, char **argv);
-extern int fp_cli_pkt_test_resend(struct cli_def *cli, int argc, char **argv);
 extern int fp_show_signal_trace_ueip(struct cli_def *cli,int argc, char **argv);
 extern int fp_set_head_enrich_flag(struct cli_def *cli, int argc, char **argv);
 
@@ -67,11 +60,9 @@ extern int cli_user_sig_trace(struct cli_def *cli, int argc, char **argv);
 extern int cli_show_up_features(struct cli_def * cli, int argc, char * * argv);
 extern int upc_sig_trace_show(struct cli_def *cli, int argc, char **argv);
 extern int cli_set_hb_time(struct cli_def * cli, int argc, char * * argv);
-extern int cli_pf_rule(struct cli_def *cli, int argc, char **argv);
 extern int cli_del_all_node(struct cli_def *cli, int argc, char **argv);
 extern int cli_show_session(struct cli_def *cli, int argc, char **argv);
 extern int cli_session_ip(struct cli_def *cli, int argc, char **argv);
-extern int pf_rule_table_show(struct cli_def *cli, int argc, char **argv);
 extern int cli_white_list(struct cli_def *cli, int argc, char **argv);
 extern int pdr_show_activate_table(struct cli_def *cli, int argc, char **argv);
 
@@ -124,7 +115,7 @@ static cmdNode mLogChildren[] =
 #if (defined(PRODUCT_IS_smu))
 static cmdNode mUpChildren[] =
 {
-	{ "configure",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,upc_set_features,NULL },
+    { "configure",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,upc_set_features,NULL },
     { "show",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_show_up_features,NULL },
 };
 
@@ -137,7 +128,7 @@ static cmdNode mUpChildren[] =
 
 static cmdNode mRootChildren[] =
 {
-	{ "show",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, sizeof(mShowChildren)/sizeof(cmdNode),mShowChildren , NULL,NULL },
+    { "show",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, sizeof(mShowChildren)/sizeof(cmdNode),mShowChildren , NULL,NULL },
     { "log",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, sizeof(mLogChildren)/sizeof(cmdNode),mLogChildren , NULL,NULL },
 
 #if (defined(PRODUCT_IS_fpu))
@@ -154,6 +145,7 @@ static cmdNode mRootChildren[] =
     { "ha_status","Display active and standby working status",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,lb_ha_get_lbu_status,NULL },
     { "ngb_cache","Show neighbor cache table",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,lb_neighbor_cache_show,NULL },
     { "res_stat","Show resource usage",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,lb_show_resource_stats,NULL },
+    { "stats","Show DPDK statistics",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,lb_show_packet_stat,NULL },
 #elif (defined(PRODUCT_IS_smu))
     { "asso_setup","asso_setup [ip] [port]",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_asso_setup,NULL },
     { "asso_update","asso_update",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_asso_update,NULL },
@@ -165,10 +157,10 @@ static cmdNode mRootChildren[] =
 
     { "show_node","Display node information",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_show_node,NULL },
     { "up_features","Configure UP features",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, sizeof(mUpChildren)/sizeof(cmdNode), mUpChildren,NULL,NULL },
+    { "nat","Enable/disable NAT flag",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,upc_configure_nat,NULL },
 
     { "res_stat","Display resource statistic",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,upc_stats_resource_info,NULL },
     { "set_hb_time","Set heartbeat interval of node",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_set_hb_time,NULL },
-    //{ "pf_rule","Configure predefined rules",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_pf_rule,NULL },
     { "asso_release","Release node",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,upc_node_release_cli,NULL },
     { "ha_status","Display active and standby working status",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,upc_show_working_status,NULL },
 
@@ -176,14 +168,16 @@ static cmdNode mRootChildren[] =
     { "show_all_session","Show all session information",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,session_show_all_seid,NULL },
 	{ "show_sess_ueip","Show UEIP of session",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_session_ip,NULL },
     { "pfd","Configure and query PFD rules",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,pfd_cli_process,NULL },
-    { "pfrule_show","Show predefined rules",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,pf_rule_table_show,NULL },
     { "white_list","Configure white list",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,cli_white_list,NULL },
     { "pdr_show","Display PDR rule information",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,pdr_show_activate_table,NULL },
     { "dns_show","Show cached DNS",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,sdc_table_show,NULL },
     { "dns_aging","Configure DNS aging time",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,sdc_aging_time_set,NULL },
     { "dns_snf","Configure DNS sniffer",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,sdc_sniffer_cmd,NULL },
+    { "predef","Configure pre-defined rules",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,upc_configure_predefined_rules,NULL },
+    { "inst_stat","View the statistics of instance",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,session_instance_stats_show,NULL },
 #elif (defined(PRODUCT_IS_stub))
     { "sess_perf","Simple UPF testing tool",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,stub_session_test,NULL },
+    { "test_predef","Test pre-defined rules",PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,stub_test_predefined_rules,NULL },
 #endif
     //{ "mblk",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,ROS_DebugBlkMem,NULL },
     //{ "msys",NULL,PRIVILEGE_UNPRIVILEGED, MODE_EXEC, 0, NULL,ROS_DebugMemSys,NULL },
@@ -358,7 +352,7 @@ uint64_t cli_parse_argv(int argc, char **argv)
 
     cli_init();
 
-    cli_no_pty_proc(g_cli,argc - 1, argv + 1);
+    cli_no_pty_proc(g_cli, argc - 1, argv + 1);
 
     return G_SUCCESS;
 }

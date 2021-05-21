@@ -33,10 +33,4 @@ if [ $? -eq 0 ]; then
     rm /var/run/netns/$lbu_pid >/dev/null 2>&1
 fi
 
-for LINE in `ip link|grep '@'|awk -F '@' '{print $1}'|awk '{print $2}'`
-do
-    echo "delete veth $LINE"
-    ip link delete $LINE >/dev/null 2>&1
-done
-
 exit 0

@@ -19,14 +19,14 @@ extern "C" {
 #define LB_BACKEND_TIMEOUT_MAX      (3)
 
 typedef struct tag_lb_backend_config {
-    struct rb_node      be_node;
-    uint8_t             be_mac[ETH_ALEN];
-    ros_atomic16_t      valid;  /* 0:invalid  1:valid */
-    ros_atomic32_t      assign_count;
-    uint32_t            index;
-    int                 fd;     /* Currently valid connections */
-    ros_rwlock_t        lock;
-    uint64_t            be_key;
+    struct rb_node          be_node;
+    ros_atomic32_t          assign_count;
+    uint32_t                index;
+    int                     fd;     /* Currently valid connections */
+    ros_rwlock_t            lock;
+    comm_msg_backend_config be_config;
+    uint8_t                 spare;
+    ros_atomic16_t          valid;  /* 0:invalid  1:valid */
 }lb_backend_config;
 
 typedef struct tag_lb_backend_mgmt {
@@ -48,10 +48,11 @@ typedef struct tag_lb_sync_hash_config {
 } lb_sync_hash_config;
 
 typedef struct tag_lb_sync_backend_config {
-    uint8_t             be_mac[ETH_ALEN];
-    uint8_t             valid;  /* 0:invalid  1:valid */
-    uint8_t             be_index;
-    int32_t             assign_count;
+    comm_msg_backend_config be_config;
+    uint8_t                 valid;  /* 0:invalid  1:valid */
+    uint8_t                 be_index;
+    uint8_t                 spare;
+    int32_t                 assign_count;
 } lb_sync_backend_config;
 
 
@@ -73,8 +74,8 @@ void lb_ha_tell_backend_change_active_mac(uint8_t local_active);
 void lb_backend_heartbeat_reply(int fd);
 void lb_backend_validity(int fd);
 
-uint8_t *lb_match_backend(uint32_t hash);
-lb_backend_config *lb_backend_register(comm_msg_heartbeat_config *reg_cfg);
+int lb_match_backend(uint32_t hash, uint8_t *dest_mac);
+lb_backend_config *lb_backend_register(comm_msg_backend_config *reg_cfg);
 void lb_backend_activate(uint8_t be_index);
 void lb_backend_unregister(uint8_t be_index);
 lb_backend_config *lb_backend_search(uint64_t be_key);

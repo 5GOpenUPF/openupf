@@ -109,7 +109,9 @@ extern int stub_build_pfd(struct cli_def *cli,int argc, char **argv);
 extern int stub_build_assoc(struct cli_def *cli,int argc, char **argv);
 extern int stub_session_test(struct cli_def *cli,int argc, char *argv[]);
 extern int stub_show_recv_stat(struct cli_def *cli,int argc, char **argv);
+extern int stub_test_predefined_rules(struct cli_def *cli, int argc, char *argv[]);
 
+/* SMU */
 extern int ueip_pool_show(struct cli_def *cli,int argc, char **argv);
 extern int upc_cmd_teid(struct cli_def *cli,int argc, char **argv);
 extern int upc_ha_active_standby_switch(struct cli_def *cli,int argc, char **argv);
@@ -120,14 +122,15 @@ extern void upc_node_create_node(uint8_t ipver, uint32_t ipv4,
         uint8_t *ipv6, uint16_t peer_port);
 extern int upc_node_release_cli(struct cli_def *cli, int argc, char *argv[]);
 extern int upc_set_features(struct cli_def *cli, int argc, char **argv);
+extern int upc_configure_nat(struct cli_def *cli, int argc, char **argv);
+extern int upc_configure_predefined_rules(struct cli_def *cli, int argc, char *argv[]);
 
-/* SP */
-extern int test_spu_urr(struct cli_def *cli,int argc, char **argv);
 extern int session_show_all_seid(struct cli_def *cli, int argc, char **argv);
 extern int pfd_cli_process(struct cli_def *cli, int argc, char **argv);
 extern int sdc_aging_time_set(struct cli_def *cli, int argc, char **argv);
 extern int sdc_table_show(struct cli_def *cli, int argc, char **argv);
 extern int sdc_sniffer_cmd(struct cli_def *cli, int argc, char **argv);
+extern int session_instance_stats_show(struct cli_def *cli, int argc, char **argv);
 
 extern int rqueue_test(int argc, char *argv[]);
 
@@ -136,6 +139,7 @@ extern int lb_ha_active_standby_switch(struct cli_def *cli,int argc, char **argv
 extern int lb_ha_get_lbu_status(struct cli_def *cli,int argc, char **argv);
 extern int lb_neighbor_cache_show(struct cli_def *cli,int argc, char **argv);
 extern int lb_show_resource_stats(struct cli_def *cli, int argc, char **argv);
+extern int lb_show_packet_stat(struct cli_def *cli,int argc, char **argv);
 
 
 #if (defined(__x86_64__))
@@ -154,6 +158,7 @@ extern int lb_show_resource_stats(struct cli_def *cli, int argc, char **argv);
 
 int ros_read_from_shell_cmd(char *result, size_t sizeof_result, const char *command);
 int ros_get_if_mac_addr(char *if_name, uint8_t *mac);
+int ros_get_if_link_status(const char *if_name);
 uint8_t ros_get_avail_core_num(void);
 uint8_t ros_parse_cpuset_cpus(uint8_t cpus[]);
 uint64_t ros_init(struct pcf_file *conf);

@@ -2359,6 +2359,7 @@ void Res_MarkClr(int32_t uiPoolNo, uint32_t uiBitNo)
  功能        : 获取并清除资源标记
  输入参数    : uiPoolNo     资源池编号
                uiCurBit     从哪个资源开始搜索
+               hook         针对特定情况不去清除标记
  输出参数    : 无
  返回值      : 资源编号
  函数调用说明:
@@ -2440,7 +2441,7 @@ int32_t Res_MarkGetClr(int32_t uiPoolNo, int32_t uiCurBit, RES_MARK_HOOK hook)
 
             /* Release this unit if match condition */
             /* In order to make a specific session still report next time */
-            if ((hook)&&(hook(iTgtIndex) == TRUE)) {
+            if ((NULL == hook) || (hook(iTgtIndex) == TRUE)) {
                 /* Those that do not meet the requirements will be cleared after reporting */
                 RES_SET_BIT(pstSec->puiBitFld[uiLoop], uiBit);
                 pstPool->uiAlloced--;

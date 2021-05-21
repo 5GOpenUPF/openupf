@@ -9,6 +9,7 @@
 #include "upc_node.h"
 #include "upc_session.h"
 #include "upc_temp_buffer.h"
+#include "pfcp_association.h"
 #include "pfcp_pfd_mgmt.h"
 #include "pfd_mgmt.h"
 
@@ -912,35 +913,14 @@ void pfcp_parse_pfd_mgmt_request(uint8_t* buffer,
     uint16_t buf_pos = buf_pos1, last_pos = 0;
     uint16_t obj_type, obj_len;
     PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
+    pfcp_node_id *node_id = NULL;
+    uint8_t node_type;
     upc_node_cb *node_cb;
     session_pfd_mgmt_request pfd_mgmt_req = {{0}};
     session_pfd_management_response pfd_resp = {{0}};
     pfcp_pfd_entry *pfd_entry = NULL;
 
     LOG(UPC, RUNNING, "buf_pos %d, buf_max %d", buf_pos, buf_max);
-
-    node_cb = upc_get_node_by_sa(sa);
-    if (unlikely(NULL == node_cb)) {
-        uint16_t msg_hdr_pos;
-
-        upc_fill_ip_udp_hdr(resp_buffer, &resp_pos, sa);
-
-        msg_hdr_pos = resp_pos;
-        /* Encode msg header */
-        pfcp_client_encode_header(resp_buffer, &resp_pos, 0, 0,
-            SESS_PFD_MANAGEMENT_RESPONSE, 0, pkt_seq);
-
-        /* Encode cause */
-        tlv_encode_type(resp_buffer, &resp_pos, UPF_CAUSE);
-        tlv_encode_length(resp_buffer, &resp_pos, sizeof(uint8_t));
-        tlv_encode_uint8_t(resp_buffer, &resp_pos, SESS_NO_ESTABLISHED_PFCP_ASSOCIATION);
-
-        LOG(UPC, ERR, "Process PFD management request fail, no such node.");
-
-        pfcp_client_set_header_length(resp_buffer, msg_hdr_pos, resp_pos);
-        upc_buff_send2smf(resp_buffer, resp_pos, sa);
-        return;
-    }
 
     /* Parse packet */
     while (buf_pos < buf_max) {
@@ -975,6 +955,19 @@ void pfcp_parse_pfd_mgmt_request(uint8_t* buffer,
                 }
                 break;
 
+            case UPF_NODE_ID:
+                node_id = (pfcp_node_id *)(buffer + buf_pos);
+                PFCP_MOVE_FORWORD(buf_pos, obj_len);
+
+                LOG(UPC, RUNNING,
+                    "decode node id, type %d, value %02x%02x%02x%02x",
+                    node_id->type.d.type,
+                    node_id->node_id[0],
+                    node_id->node_id[1],
+                    node_id->node_id[2],
+                    node_id->node_id[3]);
+                break;
+
             default:
                 LOG(UPC, ERR, "type %d, not support.", obj_type);
                 res_cause = SESS_SERVICE_NOT_SUPPORTED;
@@ -1001,6 +994,27 @@ void pfcp_parse_pfd_mgmt_request(uint8_t* buffer,
             break;
         }
     }
+
+    if (NULL == node_id) {
+        /* If you don't carry NDOE_ID IE, query according to the source IP */
+        node_cb = upc_get_node_by_sa(sa);
+        if (NULL == node_cb) {
+            LOG(UPC, ERR, "Get NODE control block failed.");
+            res_cause = SESS_NO_ESTABLISHED_PFCP_ASSOCIATION;
+            node_type = sa->sa_family == AF_INET ? UPF_NODE_TYPE_IPV4 : UPF_NODE_TYPE_IPV6;
+            goto fast_response;
+        }
+    } else {
+        node_cb = upc_node_get(node_id->type.d.type, node_id->node_id);
+        if (NULL == node_cb) {
+            LOG(UPC, ERR, "Get NODE control block failed.");
+
+            res_cause = SESS_NO_ESTABLISHED_PFCP_ASSOCIATION;
+            node_type = sa->sa_family == AF_INET ? UPF_NODE_TYPE_IPV4 : UPF_NODE_TYPE_IPV6;
+            goto fast_response;
+        }
+    }
+    node_type = node_cb->peer_id.type.d.type;
 
     if (res_cause != SESS_REQUEST_ACCEPTED) {
         LOG(UPC, ERR, "parse session establishment request failed.");
@@ -1077,7 +1091,7 @@ fast_response:
     upc_fill_ip_udp_hdr(resp_buffer, &resp_pos, sa);
 
     pfd_resp.cause = res_cause;
-    pfcp_build_pfd_management_response(&pfd_resp, resp_buffer, &resp_pos, pkt_seq);
+    pfcp_build_pfd_management_response(&pfd_resp, resp_buffer, &resp_pos, pkt_seq, node_type);
 
     if (0 > upc_buff_send2smf(resp_buffer, resp_pos, sa)) {
         LOG(UPC, ERR, "Send packet to SMF failed.");
@@ -1096,7 +1110,7 @@ fast_response:
 }
 
 void pfcp_build_pfd_management_response(session_pfd_management_response *pfd_rep, uint8_t *resp_buffer,
-    uint16_t *resp_pos, uint32_t pkt_seq)
+    uint16_t *resp_pos, uint32_t pkt_seq, uint8_t node_type)
 {
     uint16_t msg_hdr_pos = *resp_pos;
 
@@ -1124,6 +1138,9 @@ void pfcp_build_pfd_management_response(session_pfd_management_response *pfd_rep
         tlv_encode_uint16_t(resp_buffer, resp_pos, pfd_rep->offending_ie);
         LOG(UPC, RUNNING, "encode offending ie %d.", pfd_rep->offending_ie);
     }
+
+    /* Encode NODE ID ie */
+    pfcp_encode_node_id(resp_buffer, resp_pos, node_type);
 
     /* Filling msg header length */
     pfcp_client_set_header_length(resp_buffer, msg_hdr_pos, *resp_pos);

@@ -156,32 +156,37 @@ upc_node_cb *upc_node_get(uint8_t node_type, uint8_t *nodeid)
             continue;
         }
 
-        if (node_type == UPF_NODE_TYPE_IPV4) {
-            if ((node_type == upc_node_mng.node[node_loop].peer_id.type.d.type)
-              &&(memcmp((char *)upc_node_mng.node[node_loop].peer_id.node_id,
-                (char *)nodeid, 4) == 0))
+        switch (node_type) {
+            case UPF_NODE_TYPE_IPV4:
+                if ((node_type == upc_node_mng.node[node_loop].peer_id.type.d.type)
+                  &&(memcmp((char *)upc_node_mng.node[node_loop].peer_id.node_id,
+                    (char *)nodeid, 4) == 0)) {
+                    return (&(upc_node_mng.node[node_loop]));
+                }
+                break;
 
-            return (&(upc_node_mng.node[node_loop]));
-        }
-        else if (node_type == UPF_NODE_TYPE_IPV6) {
-            if ((node_type == upc_node_mng.node[node_loop].peer_id.type.d.type)
-              &&(memcmp((char *)upc_node_mng.node[node_loop].peer_id.node_id,
-                (char *)nodeid, 16) == 0))
+            case UPF_NODE_TYPE_IPV6:
+                if ((node_type == upc_node_mng.node[node_loop].peer_id.type.d.type)
+                  &&(memcmp((char *)upc_node_mng.node[node_loop].peer_id.node_id,
+                    (char *)nodeid, 16) == 0)) {
+                    return (&(upc_node_mng.node[node_loop]));
+                }
+                break;
 
-            return (&(upc_node_mng.node[node_loop]));
-        }
-        else if (node_type == UPF_NODE_TYPE_FQDN) {
-            if ((node_type == upc_node_mng.node[node_loop].peer_id.type.d.type)
-              &&(strncmp((char *)upc_node_mng.node[node_loop].peer_id.node_id,
-                (char *)nodeid, PFCP_MAX_NODE_ID_LEN) == 0))
+            case UPF_NODE_TYPE_FQDN:
+                if ((node_type == upc_node_mng.node[node_loop].peer_id.type.d.type)
+                  &&(strncmp((char *)upc_node_mng.node[node_loop].peer_id.node_id,
+                    (char *)nodeid, PFCP_MAX_NODE_ID_LEN) == 0)) {
 
-            return (&(upc_node_mng.node[node_loop]));
-        }
-        else
-        {
-            return NULL;
+                    return (&(upc_node_mng.node[node_loop]));
+                }
+                break;
+
+            default:
+                return NULL;
         }
     }
+
     return NULL;
 }
 
@@ -640,12 +645,13 @@ int upc_node_hb_timer_stop(void)
 
 int upc_node_show_cp_features(struct cli_def * cli, int index)
 {
-    uint8_t cp_value = 0;
+    uint16_t cp_value = 0;
     char output_str[512];
     uint32_t output_len = 0;
     uint32_t cp_name_cnt;
     upc_node_cb *node = NULL;
-    char *cp_name[] = {"LOAD", "OVRL", "EPFAR", "SSET", "BUNDL", "MPAS", "ARDR"};
+    char *cp_name[] = {"PSUCC", "", "", "", "", "", "", "",
+                       "LOAD", "OVRL", "EPFAR", "SSET", "BUNDL", "MPAS", "ARDR", "UIAUR"};
     uint32_t cp_name_num = sizeof(cp_name)/sizeof(cp_name[0]);
 
 	node = upc_node_cb_get_public(index);
@@ -653,7 +659,7 @@ int upc_node_show_cp_features(struct cli_def * cli, int index)
     cp_value = node->assoc_config.cp_features.value;
 
     for (cp_name_cnt = 0; cp_name_cnt < cp_name_num; ++cp_name_cnt) {
-        if ((cp_value >> cp_name_cnt) & 1) {
+        if ((cp_value >> cp_name_cnt) & 0x1) {
             output_len += sprintf(&output_str[output_len], "%s ", cp_name[cp_name_cnt]);
         }
     }
@@ -673,7 +679,7 @@ int upc_node_show_up_features(struct cli_def * cli)
                        "DPDRA", "ADPDP", "UEIP", "SSET", "MNOP", "MTE", "BUNDL", "GCOM",
                        "MPAS", "RTTL", "VTIME", "NORP", "IPTV", "IP6PL", "TSCU", "MPTCP",
                        "ATSSS-LL", "QFQM", "GPQM", "MT_EDT", "CIOT", "ETHAR", "DDDS", "RDS",
-                       "RTTWP"};
+                       "RTTWP", "QUASF", "NSPOC"};
     uint32_t up_name_num = sizeof(up_name)/sizeof(up_name[0]);
 
     up_value = htonll(upc_get_up_features());

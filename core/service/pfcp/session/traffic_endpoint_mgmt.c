@@ -131,7 +131,7 @@ static void traffic_endpoint_clean_pdr(struct session_t *sess, uint8_t *te_id_ar
     }
     ros_rwlock_read_unlock(&sess->lock);/* unlock */
 
-    if (0 > pdr_remove(sess, index_arr, index_cnt, rm_pdr_index_arr, rm_pdr_num)) {
+    if (0 > pdr_remove(sess, index_arr, index_cnt, rm_pdr_index_arr, rm_pdr_num, NULL)) {
         LOG(SESSION, ERR, "Delete PDR exception referencing TE.");
     }
 }

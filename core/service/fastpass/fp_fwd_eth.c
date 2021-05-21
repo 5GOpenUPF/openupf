@@ -29,7 +29,6 @@ static void fp_pkt_match_n3_eth(fp_packet_info *pkt_info, fp_fast_table *head,
     fp_inst_entry           *inst_entry = NULL;
     comm_msg_inst_config    *inst_config;
     fp_far_entry            *far_entry;
-    char                    action_str[64];
     pkt_buf_struct          *m = (pkt_buf_struct *)mbuf;
     int                     len_diff;
 
@@ -48,8 +47,7 @@ static void fp_pkt_match_n3_eth(fp_packet_info *pkt_info, fp_fast_table *head,
 
     /* If temp status, buffer it */
     if (unlikely(entry_cfg->temp_flag)) {
-        if (likely(0 == fp_pkt_temp_buffer(pkt_info, head,
-            entry, EN_PORT_N3, trace_flag))) {
+        if (likely(0 == fp_pkt_temp_buffer(pkt_info, head, entry, trace_flag))) {
             /* Don't check other action bit */
             /* Exit 1, temp branch. Queue mbuf, no cblk in this case, update 2 stats */
             return;
@@ -100,9 +98,8 @@ static void fp_pkt_match_n3_eth(fp_packet_info *pkt_info, fp_fast_table *head,
     }
 
     /* get read lock, keep no reading when writing */
-    ros_rwlock_write_lock(&inst_entry->rwlock);
-    fp_get_action_str(far_entry->config.action.value, action_str);
-    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "action: %s", action_str);
+    ros_rwlock_read_lock(&inst_entry->rwlock);
+    fp_print_action_str(&far_entry->config.action, trace_flag);
 
     /* If forw */
     if (likely(far_entry->config.action.d.forw)) {
@@ -162,8 +159,8 @@ static void fp_pkt_match_n3_eth(fp_packet_info *pkt_info, fp_fast_table *head,
 		/* in forw case, check QER first */
 #ifdef ENABLE_FP_QER
 		if (inst_config->choose.d.flag_qer) {
-            if (0 > fp_pkt_qer_process(inst_config, NULL, EN_PORT_N3, count_len, trace_flag)) {
-                ros_rwlock_write_unlock(&inst_entry->rwlock);
+            if (0 > fp_pkt_qer_process(inst_config, NULL, G_TRUE, count_len, trace_flag)) {
+                ros_read_write_unlock(&inst_entry->rwlock);
                 /* Color red */
                 goto drop;
             }
@@ -181,10 +178,10 @@ static void fp_pkt_match_n3_eth(fp_packet_info *pkt_info, fp_fast_table *head,
     /* only download flow support BUFF and NOCP, refer to 3gpp 25244-5.2.3.1 */
 
     /* Transmit branch */
-    ros_rwlock_write_unlock(&inst_entry->rwlock);
+    ros_rwlock_read_unlock(&inst_entry->rwlock);
 
     /* Send buffer */
-    fp_pkt_send2phy(m, cblk, far_entry->config.forw_if);
+    fp_pkt_send2phy(m, cblk, far_entry->config.forw_if, pkt_info->port_id);
 
     LOG_TRACE(FASTPASS, RUNNING, trace_flag,
         "forward ipv4 packet(len %d) to interface %d!",
@@ -202,7 +199,7 @@ drop:
     /* if fail, free cblk or mbuf */
 #ifdef CONFIG_FP_DPDK_PORT
     if (cblk) {
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
     } else {
         /* free buffer */
@@ -229,7 +226,7 @@ err:
     /* if fail, free cblk or mbuf */
 #ifdef CONFIG_FP_DPDK_PORT
     if (cblk) {
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
     } else {
         /* free buffer */
@@ -261,7 +258,6 @@ void fp_pkt_match_n6_eth(fp_packet_info *pkt_info, fp_fast_table *head,
     fp_inst_entry           *inst_entry = NULL;
     comm_msg_inst_config    *inst_config;
     fp_far_entry            *far_entry;
-    char                    action_str[64];
     pkt_buf_struct          *m = (pkt_buf_struct *)mbuf;
     int                     len_diff;
 #ifdef ENABLE_FP_QER
@@ -286,8 +282,7 @@ void fp_pkt_match_n6_eth(fp_packet_info *pkt_info, fp_fast_table *head,
 
     /* If temp status, buffer it */
     if (unlikely(entry_cfg->temp_flag)) {
-        if (likely(0 == fp_pkt_temp_buffer(pkt_info, head,
-            entry, EN_PORT_N6, trace_flag))) {
+        if (likely(0 == fp_pkt_temp_buffer(pkt_info, head, entry, trace_flag))) {
             /* Don't check other action bit */
             /* Exit 1, temp branch. Queue mbuf, no cblk in this case, update 2 stats */
             return;
@@ -337,9 +332,8 @@ void fp_pkt_match_n6_eth(fp_packet_info *pkt_info, fp_fast_table *head,
     }
 
     /* get read lock, keep no reading when writing */
-    ros_rwlock_write_lock(&inst_entry->rwlock);
-    fp_get_action_str(far_entry->config.action.value, action_str);
-    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "action: %s", action_str);
+    ros_rwlock_read_lock(&inst_entry->rwlock);
+    fp_print_action_str(&far_entry->config.action, trace_flag);
 
     /* If forw */
     if (likely(far_entry->config.action.d.forw)) {
@@ -348,8 +342,8 @@ void fp_pkt_match_n6_eth(fp_packet_info *pkt_info, fp_fast_table *head,
         /* in forw case, check QER first */
 #ifdef ENABLE_FP_QER
         if (inst_config->choose.d.flag_qer) {
-            if (0 > fp_pkt_qer_process(inst_config, &gtpu_ext, EN_PORT_N6, count_len, trace_flag)) {
-                ros_rwlock_write_unlock(&inst_entry->rwlock);
+            if (0 > fp_pkt_qer_process(inst_config, &gtpu_ext, G_FALSE, count_len, trace_flag)) {
+                ros_rwlock_read_unlock(&inst_entry->rwlock);
                 /* Color red */
                 goto drop;
             }
@@ -392,7 +386,7 @@ void fp_pkt_match_n6_eth(fp_packet_info *pkt_info, fp_fast_table *head,
         eth_hdr  = (struct pro_eth_hdr *)(pktforw - ETH_ALEN - ETH_ALEN);
 
         ros_memcpy(eth_hdr->dest, entry_cfg->dst_mac, ETH_ALEN);
-        fp_pkt_fill_outer_src_mac(eth_hdr, far_entry->config.forw_if);
+        fp_pkt_fill_outer_src_mac(eth_hdr, pkt_info->port_id);
 
         /* transport level marking */
         /* put it on outer header if have */
@@ -417,10 +411,10 @@ void fp_pkt_match_n6_eth(fp_packet_info *pkt_info, fp_fast_table *head,
     else if (unlikely((far_entry->config.action.d.buff)
       || (far_entry->config.action.d.nocp))) {
         if (likely(0 == fp_pkt_buffer_action_process(pkt_info, head, entry,
-                &far_entry->config, EN_PORT_N6, trace_flag))) {
+                &far_entry->config, trace_flag))) {
 
             /* Don't check other action bit */
-            ros_rwlock_write_unlock(&inst_entry->rwlock);
+            ros_rwlock_read_unlock(&inst_entry->rwlock);
 
             /* if cblk exist, free it */
             if (cblk)
@@ -429,17 +423,17 @@ void fp_pkt_match_n6_eth(fp_packet_info *pkt_info, fp_fast_table *head,
             /* Exit 2, buff and nocp branch. Queue mbuf, free cblk, update 2 stats */
             return;
         } else {
-            ros_rwlock_write_unlock(&inst_entry->rwlock);
+            ros_rwlock_read_unlock(&inst_entry->rwlock);
 
             goto err;
         }
     }
 
     /* Transmit branch */
-    ros_rwlock_write_unlock(&inst_entry->rwlock);
+    ros_rwlock_read_unlock(&inst_entry->rwlock);
 
     /* Send buffer */
-    fp_pkt_send2phy(m, cblk, far_entry->config.forw_if);
+    fp_pkt_send2phy(m, cblk, far_entry->config.forw_if, pkt_info->port_id);
 
     LOG_TRACE(FASTPASS, RUNNING, trace_flag,
         "forward ipv4 packet(len %d) to interface %d!",
@@ -459,7 +453,7 @@ drop:
     /* if fail, free cblk or mbuf */
 #ifdef CONFIG_FP_DPDK_PORT
     if (cblk) {
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
     } else {
         /* free buffer */
@@ -487,7 +481,7 @@ err:
     /* if fail, free cblk or mbuf */
 #ifdef CONFIG_FP_DPDK_PORT
     if (cblk) {
-        cblk->port = EN_PORT_BUTT; /* Let the applicant release */
+        cblk->port = FP_DROP_PORT_ID; /* Let the applicant release */
         fp_dpdk_add_cblk_buf(cblk);
     } else {
         /* free buffer */
@@ -570,8 +564,7 @@ int fp_pkt_n3_eth_forw(fp_packet_info *pkt_info, comm_msg_fast_cfg *entry_cfg,
 	/* in forw case, check QER first */
 #ifdef ENABLE_FP_QER
 	if (inst_config->choose.d.flag_qer) {
-        if (0 > fp_pkt_qer_process(inst_config, NULL, EN_PORT_N3, count_len, trace_flag)) {
-            ros_rwlock_write_unlock(&inst_entry->rwlock);
+        if (0 > fp_pkt_qer_process(inst_config, NULL, G_TRUE, count_len, trace_flag)) {
             /* Color red */
             return -1;
         }
@@ -624,8 +617,7 @@ void fp_pkt_inner_ethernet_proc(fp_packet_info *pkt_info)
         LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N3 fast table match failed");
 
         /* Alloc new entry */
-        entry = fp_pkt_no_match(pkt_info, G_FALSE,
-            head, hash_key, aux_info, EN_PORT_N3, trace_flag);
+        entry = fp_pkt_no_match(pkt_info, G_FALSE, head, hash_key, aux_info, trace_flag);
         if (unlikely(NULL == entry)) {
             LOG_TRACE(FASTPASS, ERR, trace_flag, "Alloc fast entry failed.");
             fp_free_pkt(pkt_info->arg);
@@ -671,8 +663,7 @@ void fp_pkt_eth_n6_entry(fp_packet_info *pkt_info)
         LOG_TRACE(FASTPASS, RUNNING, trace_flag, "N6 fast table match failed");
 
         /* Alloc new entry */
-        entry = fp_pkt_no_match(pkt_info, G_FALSE,
-            head, hash_key, aux_info, EN_PORT_N6, trace_flag);
+        entry = fp_pkt_no_match(pkt_info, G_FALSE, head, hash_key, aux_info, trace_flag);
         if (unlikely(NULL == entry)) {
             LOG_TRACE(FASTPASS, ERR, trace_flag, "Alloc fast entry failed.");
             fp_free_pkt(pkt_info->arg);

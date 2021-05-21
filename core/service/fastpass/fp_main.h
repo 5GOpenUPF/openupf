@@ -61,7 +61,6 @@ typedef struct tag_fpu_Signaling_trace_ueip_t {
 	ros_rwlock_t                rwlock;
 } fpu_Signaling_trace_ueip_t;
 
-
 typedef enum {
     FP_SOCK_TO_SPU_CTRL,
     FP_SOCK_TO_SPU_SRVC,
@@ -85,6 +84,8 @@ typedef struct tag_fp_packet_info {
     void                *arg;
     struct filter_key   match_key;
     int                 len;
+    uint16_t            port_id;
+    uint16_t            spare; /* align */
 }fp_packet_info;
 
 static inline comm_msg_header_t *fp_fill_msg_header(uint8_t *buf)
@@ -129,9 +130,8 @@ void *fp_mac_table_get(void);
 void *fp_frag_buff_get(void);
 
 void fp_packet_stat_count(uint32_t stat_mod);
-int fp_phy_n4_pkt_entry(char *buf, int len, void *arg);
 
-int fp_check_signal_trace(uint32_t sip, uint32_t dip, uint16_t spt, uint16_t dpt, uint8_t pro);
+int fp_check_signal_trace(uint32_t sip, uint32_t dip);
 
 uint32_t fp_get_capture2spu_switch(void);
 

@@ -35,6 +35,8 @@
 #include "urr_proc.h"
 #include "tuple_table.h"
 #include "local_parse.h"
+#include "parse_session_config.h"
+#include "predefine_rule_mgmt.h"
 
 upc_config_info g_upc_config;
 user_Signaling_trace_t user_sig_trace;
@@ -48,6 +50,9 @@ ros_atomic64_t upc_pkt_stat[UPC_PKT_STATUS_BUTT];
 /* REST api instance */
 struct _u_instance upc_restful_instance;
 #endif
+
+/* If you use network address translation, you need to turn it on */
+static int upc_nat_enabled = 0;
 
 static ros_atomic16_t  upc_work_status = {.cnt = HA_STATUS_INIT};    /* init | active | standby */
 static ros_atomic16_t  upc_standby_alive = {.cnt = G_FALSE};
@@ -220,6 +225,16 @@ static int upc_check_eth_name(char *ethname)
     return OK;
 }
 
+int upc_get_nat_flag(void)
+{
+    return upc_nat_enabled;
+}
+
+void upc_set_nat_flag(int act)
+{
+    upc_nat_enabled = act ? 1 : 0;
+}
+
 void upc_dump_packet(uint8_t *buf, uint16_t buf_len)
 {
     uint16_t cnt = 0;
@@ -263,12 +278,12 @@ void upc_fill_ip_udp_hdr(uint8_t *buf, uint16_t *buf_len, struct sockaddr *sa)
                 ip6_hdr = (struct pro_ipv6_hdr *)(buf + offset);
                 offset += sizeof(struct pro_ipv6_hdr);
                 ip6_hdr->vtc_flow.d.version     = 6;
-        		ip6_hdr->vtc_flow.d.priority    = 0;
-        		ip6_hdr->vtc_flow.d.flow_lbl    = (uint32_t)ros_get_tsc_hz();
+                ip6_hdr->vtc_flow.d.priority    = 0;
+                ip6_hdr->vtc_flow.d.flow_lbl    = (uint32_t)ros_rdtsc();
                 ip6_hdr->vtc_flow.value         = htonl(ip6_hdr->vtc_flow.value);
-        		ip6_hdr->payload_len            = 0;
-        		ip6_hdr->nexthdr                = IP_PRO_UDP;
-        		ip6_hdr->hop_limit              = 64;
+                ip6_hdr->payload_len            = 0;
+                ip6_hdr->nexthdr                = IP_PRO_UDP;
+                ip6_hdr->hop_limit              = 64;
                 ros_memcpy(ip6_hdr->saddr, upc_conf->upf_ip_cfg[EN_PORT_N4].ipv6, IPV6_ALEN);
                 ros_memcpy(ip6_hdr->daddr, &sa_v6->sin6_addr, IPV6_ALEN);
 
@@ -294,9 +309,9 @@ void upc_fill_ip_udp_hdr(uint8_t *buf, uint16_t *buf_len, struct sockaddr *sa)
                 /* Encode total length */
                 ip_hdr->tot_len = 0;
                 /* Encode ID */
-                ip_hdr->id = (uint16_t)ros_get_tsc_hz();
+                ip_hdr->id = (uint16_t)ros_rdtsc();
                 /* Encode fragment */
-                ip_hdr->frag_off = 0x0040;
+                ip_hdr->frag_off = 0;
                 /* Encode TTL */
                 ip_hdr->ttl = 0x40;
                 /* Encode protocol */
@@ -702,15 +717,15 @@ static uint32_t upc_msg_proc(void *token, comm_msg_ie_t *ie)
 
         case EN_COMM_MSG_BACKEND_HB:
             {
-                comm_msg_heartbeat_config *hb_cfg = (comm_msg_heartbeat_config *)ie->data;
+                comm_msg_backend_config *hb_cfg = (comm_msg_backend_config *)ie->data;
                 upc_backend_config *be_cfg;
 
-                LOG(UPC, RUNNING, "Back-end heartbeat, key: %lu", hb_cfg->key);
+                LOG(UPC, PERIOD, "Back-end heartbeat, key: %lu", hb_cfg->key);
                 be_cfg = upc_backend_search(hb_cfg->key);
                 if (NULL == be_cfg) {
                     LOG(UPC, MUST, "Back-end register, key: %lu", hb_cfg->key);
 
-                    be_cfg = upc_backend_register((uint8_t *)hb_cfg->mac, hb_cfg->key, fd);
+                    be_cfg = upc_backend_register(hb_cfg, fd);
                     if (NULL == be_cfg) {
                         LOG(UPC, ERR, "Register backend failed.");
                         upc_tell_backend_re_register(fd);
@@ -728,7 +743,7 @@ static uint32_t upc_msg_proc(void *token, comm_msg_ie_t *ie)
 
         case EN_COMM_MSG_BACKEND_ACTIVE:
             {
-                comm_msg_heartbeat_config *hb_cfg = (comm_msg_heartbeat_config *)ie->data;
+                comm_msg_backend_config *hb_cfg = (comm_msg_backend_config *)ie->data;
                 upc_backend_config *be_cfg;
 
                 be_cfg = upc_backend_search(hb_cfg->key);
@@ -743,6 +758,21 @@ static uint32_t upc_msg_proc(void *token, comm_msg_ie_t *ie)
                     session_send_simple_cmd_to_fp(EN_COMM_MSG_UPU_INST_VALIDITY, fd);
 
                     upc_backend_activate(be_cfg);
+                }
+            }
+            break;
+
+        case EN_COMM_MSG_BACKEND_DEACTIVE:
+            {
+                comm_msg_backend_config *hb_cfg = (comm_msg_backend_config *)ie->data;
+                upc_backend_config *be_cfg;
+
+                be_cfg = upc_backend_search(hb_cfg->key);
+                if (NULL == be_cfg) {
+                    LOG(UPC, ERR, "Deactive back-end failed, no such key: %lu", hb_cfg->key);
+                } else {
+                    LOG(SESSION, MUST, "Deactive back-end, key: %lu", hb_cfg->key);
+                    upc_backend_unregister((uint8_t)be_cfg->index);
                 }
             }
             break;
@@ -862,6 +892,15 @@ int upc_show_packet_stats(struct cli_def *cli, int argc, char **argv)
         upc_pkt_status_read(UPC_PKT_PFD_MANAGEMENT_SEND2SMF));
     cli_print(cli,"\treceive pfd management request from smf:\t%ld\r\n",
         upc_pkt_status_read(UPC_PKT_PFD_MANAGEMENT_RECV4SMF));
+
+    cli_print(cli,"\tsend PFCP heartbeat response to smf:\t%ld\r\n",
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_RESP_SEND2SMF));
+    cli_print(cli,"\treceive PFCP heartbeat request from smf:\t%ld\r\n",
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_REQU_RECV4SMF));
+    cli_print(cli,"\tsend PFCP heartbeat request to smf:\t%ld\r\n",
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_REQU_SEND2SMF));
+    cli_print(cli,"\treceive PFCP heartbeat response from smf:\t%ld\r\n",
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_RESP_RECV4SMF));
 
     cli_print(cli,"\treceived fpu packets:\t%ld\n",
         session_pkt_status_read(SESSION_PKT_RECV_FORM_FPU));
@@ -1923,6 +1962,15 @@ static int upc_collect_status_data(const struct _u_request *request,
     data_len += sprintf(&data[data_len], "%s{name=\"recv4smf_pfd_mgmt_req\"} %ld\n", stat_name,
         upc_pkt_status_read(UPC_PKT_PFD_MANAGEMENT_RECV4SMF));
 
+    data_len += sprintf(&data[data_len], "%s{name=\"send2smf_heartbeat_resp\"} %ld\n",stat_name,
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_RESP_SEND2SMF));
+    data_len += sprintf(&data[data_len], "%s{name=\"recv4smf_heartbeat_req\"} %ld\n", stat_name,
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_REQU_RECV4SMF));
+    data_len += sprintf(&data[data_len], "%s{name=\"send2smf_heartbeat_req\"} %ld\n", stat_name,
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_REQU_SEND2SMF));
+    data_len += sprintf(&data[data_len], "%s{name=\"recv4smf_heartbeat_resp\"} %ld\n", stat_name,
+        upc_pkt_status_read(UPC_PKT_HEARTBEAT_RESP_RECV4SMF));
+
     ulfius_set_string_body_response(response, 200, data);
 
     return U_CALLBACK_CONTINUE;
@@ -1953,6 +2001,34 @@ static int upc_update_status_init(uint32_t port)
 }
 #endif
 
+/**
+ * Get qualified health threshold
+ */
+uint16_t upc_get_qualified_health_threshold(void)
+{
+    return SMU_PORT_WEIGHT;
+}
+
+/**
+ * Gets the current health value
+ */
+uint16_t upc_get_health_value(void)
+{
+    upc_config_info *upc_conf = upc_get_config();
+    uint16_t health_value = 0;
+
+    /* Check DPDK port */
+    health_value += ros_get_if_link_status(upc_conf->upc2smf_name) ? SMU_PORT_WEIGHT : 0;
+
+    /**
+     *  Check whether it is on the same server as LBU
+     *  (you need to deploy to the same server as much as possible)
+     */
+
+
+    return health_value;
+}
+
 int32_t upc_init(struct pcf_file *conf)
 {
     upc_config_info *upc_conf = upc_get_config();
@@ -1960,7 +2036,7 @@ int32_t upc_init(struct pcf_file *conf)
     int64_t total_mem = sizeof(struct ros_timer) * ROS_TIMER_EACH_CORE_MAX_NUM, ret = 0;
 
     /* Prepare */
-    ret = Res_Init(60, 60, 8000*1024);
+    ret = Res_Init(80, 80, 16000*1024);
     if (ret != G_TRUE) {
         LOG(UPC, ERR, "Res_Init failed!");
         return -1;
@@ -2118,7 +2194,7 @@ void upc_deinit(void)
 #endif
 }
 
-int upc_stats_resource_info(struct cli_def *cli,int argc, char **argv)
+int upc_stats_resource_info(struct cli_def *cli, int argc, char **argv)
 {
     uint32_t equ_flag = 0, cnt = 0;
     upc_node_header *node_mng = upc_node_mng_get();
@@ -2139,6 +2215,7 @@ int upc_stats_resource_info(struct cli_def *cli,int argc, char **argv)
     sp_dns_cache_table *dns_mgmt = sdc_get_table_public();
     upc_backend_mgmt *be_mgmt = upc_get_backend_mgmt_public();
     upc_management_end_config *mb_mgmt = upc_mb_config_get_public();
+    predefined_rules_table *predef_mgmt = predef_get_table_public();
 
     cli_print(cli,"                Maximum number        Use number        \n");
 
@@ -2216,6 +2293,16 @@ int upc_stats_resource_info(struct cli_def *cli,int argc, char **argv)
     /* dns table resource */
     cli_print(cli,"dns:             %-8u             %-8u\n", dns_mgmt->max_num,
         Res_GetAlloced(dns_mgmt->pool_id));
+
+    /* Predefined rules resource */
+    cli_print(cli,"predef_pdr:      %-8u             %-8u\n", predef_mgmt->max_pdr_num,
+        Res_GetAlloced(predef_mgmt->pdr_pool_id));
+    cli_print(cli,"predef_far:      %-8u             %-8u\n", predef_mgmt->max_far_num,
+        Res_GetAlloced(predef_mgmt->far_pool_id));
+    cli_print(cli,"predef_qer:      %-8u             %-8u\n", predef_mgmt->max_qer_num,
+        Res_GetAlloced(predef_mgmt->qer_pool_id));
+    cli_print(cli,"predef_urr:      %-8u             %-8u\n", predef_mgmt->max_urr_num,
+        Res_GetAlloced(predef_mgmt->urr_pool_id));
 
     /* backend resource */
     cli_print(cli,"backend:         %-8u             %-8u        Active: %u\n",
@@ -2418,8 +2505,7 @@ int upc_set_features(struct cli_def *cli, int argc, char **argv)
     uint32_t up_name_num = sizeof(up_name)/sizeof(up_name[0]);
     char print_str[256];
     uint32_t print_str_len;
-
-	if (0 == strcmp("help", argv[0]))
+    if (argc == 1 && 0 == strcmp("help", argv[0]))
 		goto help;
 
     if (argc < 2) {
@@ -2428,11 +2514,16 @@ int upc_set_features(struct cli_def *cli, int argc, char **argv)
     }
 
     if (0 == strcmp("all", argv[1])) {
-        session_up_features tmp_up = {.value = (uint64_t)-1};
-        tmp_up.d.spare_6 = 0;
-        tmp_up.d.spare_7 = 0;
-        tmp_up.d.spare_8 = 0;
-        upc_set_up_config(tmp_up.value);
+        if (0 == strcmp("enable", argv[0])) {
+            session_up_features tmp_up = {.value = (uint64_t)-1};
+            tmp_up.d.spare_6 = 0;
+            tmp_up.d.spare_7 = 0;
+            tmp_up.d.spare_8 = 0;
+
+            upc_set_up_config(tmp_up.value);
+        } else {
+            upc_set_up_config(0UL);
+        }
         cli_print(cli, "Finish.");
 
         return 0;
@@ -2443,8 +2534,11 @@ int upc_set_features(struct cli_def *cli, int argc, char **argv)
             if (0 == strcmp(up_name[up_name_cnt], argv[cnt])) {
                 if (0 == strcmp("enable", argv[0])) {
                     change_value |= (uint64_t)1 << up_name_cnt;
-                } else {
+                } else if (0 == strcmp("disable", argv[0]))  {
                     change_value &= ~((uint64_t)1 << up_name_cnt);
+                } else {
+                    cli_print(cli, "Unrecognized parameter <%s>", argv[0]);
+                    goto help;
                 }
                 break;
             }
@@ -2460,7 +2554,7 @@ int upc_set_features(struct cli_def *cli, int argc, char **argv)
     return 0;
 
 help:
-    cli_print(cli, "up_features <enable|disable> <feature|all> [feature] ...");
+    cli_print(cli, "up_features configure <enable|disable> <feature|all> [feature] ...");
     cli_print(cli, "feature:");
     if (up_name_num > 8) {
     	uint32_t cnt_max = up_name_num & 0xFFFFFFF8;
@@ -2478,6 +2572,76 @@ help:
     }
     cli_print(cli, "%s", print_str);
     cli_print(cli, "e.g.\n\tup_features enable UDBC DDND");
+
+    return 0;
+}
+
+int upc_configure_nat(struct cli_def *cli, int argc, char **argv)
+{
+    if (argc < 1) {
+        cli_print(cli, "Parameters too few.");
+        goto help;
+    }
+
+    if (0 == strcmp("enable", argv[0])) {
+        upc_set_nat_flag(G_TRUE);
+    } else if (0 == strcmp("disable", argv[0])) {
+        upc_set_nat_flag(G_FALSE);
+    }
+
+    cli_print(cli, "Set the NAT flag to %s successfully.", upc_get_nat_flag() ? "enable" : "disable");
+
+    return 0;
+
+help:
+    cli_print(cli, "nat <enable|disable>");
+
+    return 0;
+}
+
+int upc_configure_predefined_rules(struct cli_def *cli, int argc, char *argv[])
+{
+    char *filename;
+    session_content_create sess = {{0}};
+
+    if (argc < 2) {
+        cli_print(cli, "Parameters too few...");
+        goto help;
+    }
+    filename = argv[1];
+
+    if (0 == strncmp("add", argv[0], 3)) {
+        if (0 > psc_parse_predefined_rules(&sess, filename)) {
+            cli_print(cli, "Parse pre-defined rules failed.\n");
+        }
+
+        if (0 > predef_rules_add(&sess)) {
+            cli_print(cli, "Add pre-defined rules failed.\n");
+        } else {
+            cli_print(cli, "Add pre-defined rules success.\n");
+        }
+    } else if (0 == strncmp("del", argv[0], 3)) {
+        if (0 > psc_parse_predefined_rules(&sess, filename)) {
+            cli_print(cli, "Parse pre-defined rules failed.\n");
+        }
+
+        if (0 > predef_rules_del(&sess)) {
+            cli_print(cli, "Delete pre-defined rules failed.\n");
+        } else {
+            cli_print(cli, "Delete pre-defined rules success.\n");
+        }
+    } else if (0 == strncmp("show", argv[0], 4)) {
+
+    }
+
+    return 0;
+
+help:
+    cli_print(cli, "predef <action> <filename|predefined name>");
+    cli_print(cli, "action: add|del|show");
+    cli_print(cli, "e.g.    test_predef add ./config/predef_5_pdr.json");
+    cli_print(cli, "e.g.    test_predef del ./config/predef_5_pdr.json");
+    cli_print(cli, "e.g.    test_predef show userdefined_1");
 
     return 0;
 }

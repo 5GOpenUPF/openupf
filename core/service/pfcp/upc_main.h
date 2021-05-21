@@ -20,6 +20,12 @@ extern "C" {
 
 #define UPC_IF_NAME_LEN                 32
 
+/** SMU health value weight
+ *  The health value weight of each port needs to be greater than the sum of the health values of other factors,
+ *  in order to quickly determine whether the decisive condition is healthy or not
+ */
+#define SMU_PORT_WEIGHT         40
+
 /* SMU work status, Don't change the order */
 enum EN_UPC_WORK_STATUS {
     HA_STATUS_INIT              = 0,
@@ -106,6 +112,11 @@ enum UPC_PKT_STATUS_UNIT {
     UPC_PKT_PFD_MANAGEMENT_SEND2SMF,  /* send pfd management response to smf */
     UPC_PKT_PFD_MANAGEMENT_RECV4SMF,  /* receive pfd management request from smf */
 
+    UPC_PKT_HEARTBEAT_REQU_SEND2SMF,  /* send PFCP heartbeat request to smf */
+    UPC_PKT_HEARTBEAT_RESP_SEND2SMF,  /* send PFCP heartbeat response to smf */
+    UPC_PKT_HEARTBEAT_REQU_RECV4SMF,  /* receive PFCP heartbeat request from smf */
+    UPC_PKT_HEARTBEAT_RESP_RECV4SMF,  /* receive PFCP heartbeat response from smf */
+
     UPC_PKT_STATUS_BUTT,
 };
 
@@ -170,6 +181,8 @@ void        upc_set_standby_alive(int16_t status);
 int16_t     upc_get_standby_alive(void);
 
 upc_config_info *upc_get_config(void);
+int upc_get_nat_flag(void);
+void upc_set_nat_flag(int act);
 
 void upc_pkt_status_add(int unit);
 

@@ -749,10 +749,19 @@ int cli_check_parm(struct cli_def *cli, int argc, char **argv)
 {
     if ((1 == argc) && (*argv[0] == '?' || strcmp(argv[0],"help") == 0))
     {
-        if (cli->commands->parent && cli->commands->parent->callback)
+        if (cli->commands->parent && cli->commands->parent->callback && cli->commands->parent->help)
         {
-            cli_error(cli, "%-20s %s", cli_command_name(cli, cli->commands->parent),  cli->commands->parent->help ? : "");
+            if (cli->commands->parent->help) {
+                cli_error(cli, "%-20s %s", cli_command_name(cli, cli->commands->parent),  cli->commands->parent->help ? : "");
+            }
+            else {
+                return 0; /* Using help in callback functions */
+            }
         }
+        else {
+            return 0; /* Using help in callback functions */
+        }
+
         return -1;
     }
 
@@ -760,8 +769,17 @@ int cli_check_parm(struct cli_def *cli, int argc, char **argv)
     {
         if (cli->commands->parent && cli->commands->parent->callback)
         {
+            if (cli->commands->parent->help) {
             cli_error(cli, "%-20s %s", cli_command_name(cli, cli->commands->parent),  cli->commands->parent->help ? : "");
+            }
+            else {
+                return 0; /* Using help in callback functions */
+            }
         }
+        else {
+            return 0; /* Using help in callback functions */
+        }
+
         return -1;
     }
     return 0;
@@ -937,7 +955,7 @@ static int cli_find_command(struct cli_def *cli, struct cli_command *commands, i
 
             if (rc == CLI_OK)
             {
-                if(0 == cli_check_parm(cli, c_words - start_word - 1,words + start_word + 1))
+                if (0 == cli_check_parm(cli, c_words - start_word - 1,words + start_word + 1))
                 {
                     //rc = c->callback(cli, cli_command_name(cli, c), c_words - start_word - 1,words + start_word + 1);
                     rc = c->callback(cli, c_words - start_word - 1,words + start_word + 1);

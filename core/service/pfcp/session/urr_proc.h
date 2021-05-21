@@ -47,7 +47,7 @@ uint32_t urr_container_init(uint32_t urr_index);
 uint32_t urr_container_destroy(uint32_t urr_index);
 uint32_t urr_proc_recv(uint32_t urr_index, int64_t pkt_len, uint8_t dlflag);
 uint32_t urr_proc_drop(uint32_t urr_index, int64_t pkt_len, int64_t pkt_num);
-void urr_send_report(struct urr_table *urr_entry, uint16_t trigger);
+void urr_send_report(struct urr_table *urr_entry, uint32_t trigger);
 void urr_select_monitor(struct urr_table *urr_entry);
 int  urr_get_status(uint32_t urr_index);
 void urr_fill_value(struct urr_table *urr_entry, comm_msg_urr_report_t *report);

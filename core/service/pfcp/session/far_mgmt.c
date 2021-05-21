@@ -40,7 +40,7 @@ void far_table_show(struct far_table *far_tbl)
         LOG(SESSION, RUNNING, "bar id: %d", far_tbl->far_priv.bar_id);
     }
 
-    LOG(SESSION, RUNNING, "far id: %d", far_tbl->far_cfg.far_id);
+    LOG(SESSION, RUNNING, "far id: 0x%08x", far_tbl->far_cfg.far_id);
     LOG(SESSION, RUNNING, "action value: %d",
         far_tbl->far_cfg.action.value);
     LOG(SESSION, RUNNING, "forw interface: %d",
@@ -101,7 +101,7 @@ void far_table_show(struct far_table *far_tbl)
             break;
 
         case 4:
-            LOG(SESSION, RUNNING, "redirect SIP URL:  %s\n", far_tbl->far_cfg.forw_redirect.sip_url);
+            LOG(SESSION, RUNNING, "redirect SIP URL:  %s\n", far_tbl->far_cfg.forw_redirect.sip_uri);
             break;
 
         case 5:
@@ -335,40 +335,6 @@ struct far_table *far_table_create(struct session_t *sess, uint32_t id)
     return far_tbl;
 }
 
-struct far_table *far_table_create_local(uint32_t id)
-{
-    struct far_table_head *far_head = far_get_head();
-    struct far_table *far_tbl = NULL;
-    uint32_t key = 0, index = 0, far_id = id;
-
-    if (G_FAILURE == Res_Alloc(far_head->pool_id, &key, &index,
-        EN_RES_ALLOC_MODE_OC)) {
-        LOG(SESSION, ERR,
-            "create failed, Resource exhaustion, pool id: %d.",
-            far_head->pool_id);
-        return NULL;
-    }
-
-    far_tbl = far_get_table(index);
-    if (!far_tbl) {
-        Res_Free(far_head->pool_id, key, index);
-        LOG(SESSION, ERR, "Entry index error, index: %u.", index);
-        return NULL;
-    }
-    ros_rwlock_write_lock(&far_tbl->lock);/* lock */
-    memset(&far_tbl->far_cfg, 0, sizeof(comm_msg_far_config));
-    memset(&far_tbl->far_priv, 0, sizeof(struct far_sp_private));
-
-    far_tbl->far_cfg.far_id = far_id;
-    ros_rwlock_write_unlock(&far_tbl->lock);/* unlock */
-
-    ros_atomic32_add(&far_head->use_num, 1);
-
-    LOG(SESSION, RUNNING, "create far %u success.", far_id);
-
-    return far_tbl;
-}
-
 inline void far_config_hton(comm_msg_far_config *far_cfg)
 {
 #ifdef FAR_DUPL_ENABLE
@@ -376,6 +342,7 @@ inline void far_config_hton(comm_msg_far_config *far_cfg)
 #endif
 
     far_cfg->far_id = htonl(far_cfg->far_id);
+    far_cfg->action.value = htons(far_cfg->action.value);
     far_cfg->choose.value = htons(far_cfg->choose.value);
     far_cfg->forw_cr_outh.type.value = htons(far_cfg->forw_cr_outh.type.value);
     far_cfg->forw_cr_outh.port = htons(far_cfg->forw_cr_outh.port);
@@ -423,6 +390,7 @@ inline void far_config_ntoh(comm_msg_far_config *far_cfg)
 #endif
 
     far_cfg->far_id = ntohl(far_cfg->far_id);
+    far_cfg->action.value = ntohs(far_cfg->action.value);
     far_cfg->choose.value = ntohs(far_cfg->choose.value);
     far_cfg->forw_cr_outh.type.value = ntohs(far_cfg->forw_cr_outh.type.value);
     far_cfg->forw_cr_outh.port = ntohs(far_cfg->forw_cr_outh.port);
@@ -533,7 +501,6 @@ int far_insert(struct session_t *sess, session_far_create *parse_far_arr,
     uint32_t far_num, uint32_t *fail_id)
 {
     struct far_table *far_tbl = NULL;
-	session_far_create *far_arr = NULL;
     uint32_t index_cnt = 0;
 
     if (NULL == sess || (NULL == parse_far_arr && far_num)) {
@@ -543,11 +510,6 @@ int far_insert(struct session_t *sess, session_far_create *parse_far_arr,
     }
 
     for (index_cnt = 0; index_cnt < far_num; ++index_cnt) {
-		//取far_id最高位，如果是1则表示是预定义规则，在本地配置
-		far_arr=(session_far_create *)parse_far_arr;
-		if (far_arr[index_cnt].far_id & 0x80000000)
-			continue;
-
         far_tbl = far_add(sess, parse_far_arr, index_cnt, fail_id);
         if (NULL == far_tbl) {
             LOG(SESSION, ERR, "far add failed.");
@@ -560,7 +522,7 @@ int far_insert(struct session_t *sess, session_far_create *parse_far_arr,
             if (NULL == bar_tbl) {
                 uint32_t rm_far_id = far_tbl->far_cfg.far_id;
 
-                far_remove(sess, &rm_far_id, 1, NULL);
+                far_remove(sess, &rm_far_id, 1, NULL, NULL);
 
                 LOG(SESSION, ERR, "search bar table failed, bar id: %d.",
                     far_tbl->far_priv.bar_id);
@@ -577,50 +539,7 @@ int far_insert(struct session_t *sess, session_far_create *parse_far_arr,
     return 0;
 }
 
-int far_table_delete_local(uint32_t *arr, uint8_t index_num)
-{
-    struct far_table_head *far_head = far_get_head();
-    struct far_table *far_tbl = NULL;
-	uint32_t index_arr[MAX_FAR_NUM], index_cnt = 0;
-    uint32_t success_cnt = 0;
-
-	if (NULL == arr) {
-        LOG(SESSION, ERR, "far remove failed, arr(%p)",arr);
-        return -1;
-    }
-
-    for (index_cnt = 0; index_cnt < index_num; ++index_cnt) {
-		far_tbl = far_get_table(arr[index_cnt]);
-
-        ros_rwlock_write_lock(&far_tbl->lock);/* lock */
-        if (far_tbl->far_cfg.choose.d.flag_out_header1) {
-            if (0 > session_gtpu_delete(&far_tbl->far_cfg.forw_cr_outh)) {
-                LOG(SESSION, ERR, "far delete gtpu entry failed.");
-                /* don't return first */
-            }
-            if (0 > session_peer_fteid_delete(&far_tbl->far_cfg.forw_cr_outh)) {
-                LOG(SESSION, ERR, "far delete peer f-teid entry failed.");
-                /* don't return first */
-            }
-        }
-	    ros_atomic32_sub(&far_head->use_num, 1);
-        Res_Free(far_head->pool_id, 0, far_tbl->index);
-        ros_rwlock_write_unlock(&far_tbl->lock);/* unlock */
-
-		index_arr[success_cnt] = far_tbl->index;
-		++success_cnt;
-	}
-
-    if (success_cnt) {
-	    if (-1 == rules_fp_del(index_arr, success_cnt, EN_COMM_MSG_UPU_FAR_DEL, MB_SEND2BE_BROADCAST_FD)) {
-	        LOG(SESSION, ERR, "fp remove failed.");
-	    }
-    }
-
-    return 0;
-}
-
-int far_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr)
+int far_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr, uint32_t *fail_id)
 {
     struct far_table_head *far_head = far_get_head();
     struct far_table *far_tbl = NULL;
@@ -640,6 +559,8 @@ int far_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_
 	    if (NULL == far_tbl) {
 	        LOG(SESSION, ERR, "remove failed, not exist, id: %u.",
 				id_arr[index_cnt]);
+            if (fail_id)
+                *fail_id = id_arr[index_cnt];
             return -1;
 	    }
 

@@ -51,8 +51,9 @@ union rules_overflow_flag {
 
 
 /* SESSION_RULE_INDEX_MAX - SESSION_RULE_INDEX_LIMIT > rules max of session */
+#define SESSION_RULE_SIZE_MAX       (max(max(MAX_PDR_NUM, MAX_URR_NUM), max(MAX_FAR_NUM, MAX_QER_NUM)))
 #define SESSION_RULE_INDEX_MAX		(2048)
-#define SESSION_RULE_INDEX_LIMIT	(2000)
+#define SESSION_RULE_INDEX_LIMIT	(SESSION_RULE_INDEX_MAX - (SESSION_RULE_SIZE_MAX << 1))
 struct session_rules_index {
 	union rules_overflow_flag	overflow;	/* rules overflow flags */
 	uint32_t					index_num[EN_RULE_BUTT];
@@ -105,7 +106,6 @@ void session_update_fpu_status(comm_msg_fpu_stat *fpu_stat);
 int session_init(upc_config_info *upc_conf);
 void session_deinit(void);
 int session_proc_qer_prss(comm_msg_ie_t *ie);
-int session_pf_rule_create_proc(session_content_create *sess_content);
 int session_sig_trace_proc(session_sig_trace *sess_st);
 
 

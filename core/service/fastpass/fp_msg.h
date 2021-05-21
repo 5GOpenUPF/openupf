@@ -315,11 +315,13 @@ typedef struct  tag_fp_inst_entry
 {
 #if BYTE_ORDER == BIG_ENDIAN
     uint32_t            valid :1;       /* valid bit */
-    uint32_t            resv  :3;       /* resv */
+    uint32_t            active:1;       /* Whether the flag is active */
+    uint32_t            resv  :2;       /* resv */
     uint32_t            index :28;      /* index bits */
 #else
     uint32_t            index :28;      /* index bits */
-    uint32_t            resv  :3;       /* resv */
+    uint32_t            resv  :2;       /* resv */
+    uint32_t            active:1;       /* Whether the flag is active */
     uint32_t            valid :1;       /* valid bit */
 #endif
     ros_rwlock_t        lstlock;        /* fast link rw lock */
@@ -349,6 +351,22 @@ typedef struct  tag_fp_inst_table
 }fp_inst_table;
 #pragma pack()
 
+static inline void fp_print_action_str(session_far_action *action, int trace_flag)
+{
+    LOG_TRACE(FASTPASS, RUNNING, trace_flag, "action: %s%s%s%s%s%s%s%s%s%s%s",
+        action->d.drop ? "drop ":"",
+        action->d.forw ? "forw ":"",
+        action->d.buff ? "buff ":"",
+        action->d.nocp ? "nocp ":"",
+        action->d.dupl ? "dupl ":"",
+        action->d.ipma ? "ipma ":"",
+        action->d.ipmd ? "ipmd ":"",
+        action->d.dfrt ? "dfrt ":"",
+        action->d.edrt ? "edrt ":"",
+        action->d.bdpn ? "bdpn ":"",
+        action->d.ddpn ? "ddpn ":"");
+}
+
 uint32_t fp_fast_clear(uint32_t type);
 
 inline void *fp_fast_entry_get(fp_fast_table *head, uint32_t index);
@@ -370,7 +388,6 @@ fp_fast_entry *fp_fast_alloc(fp_fast_table *head);
 uint32_t fp_fast_free(fp_fast_table *head, uint32_t index);
 
 int fp_msg_send(char *buf, uint32_t len);
-void fp_get_action_str(uint8_t action_val, char *action_str);
 void fp_msg_fast_copy(comm_msg_fast_cfg *entry_cfg, comm_msg_fast_cfg *input_cfg);
 uint32_t fp_fast_link_add(uint32_t inst_index, fp_fast_shadow *shadow);
 void fp_msg_inst_second_timer(void *timer, uint64_t para);

@@ -1,0 +1,447 @@
+{
+    "create_pdr": [
+        {
+            "pdr_id": 1,
+            "precedence": 100,
+            "pdi": {
+                "source_interface": 1,
+                "local_f_teid": {
+                    "flags": 1,
+                    "teid": 1280,
+                    "ipv4_address": "192.168.1.1",
+                    "ipv6_address": "2001::1234:12",
+                    "choose_id": 1
+                },
+                "network_instance": "cmcc",
+                "redundant_transmission_detection_parameters": {
+                    "local_f_teid": {
+                        "flags": 1,
+                        "teid": 1280,
+                        "ipv4_address": "192.168.1.1",
+                        "ipv6_address": "2001::1234:12",
+                        "choose_id": 1
+                    },
+                    "network_instance": "cmcc-sz"
+                },
+                "ue_ip_address": [
+                    {
+                        "flags": 6,
+                        "ipv4_address": "10.8.125.21",
+                        "ipv6_address": "2001::1234:12",
+                        "ipv6_prefix_delegation_bits": 24,
+                        "ipv6_prefix_length": 96
+                    }
+                ],
+                "traffic_endpoint_id": [
+                    1,
+                    2,
+                    3
+                ],
+                "sdf_filter": [
+                    {
+                        "flags": 7936,
+                        "flow_description": "permit out ip from any to any",
+                        "tos_traffic_class": 100,
+                        "security_parameter_index": 21,
+                        "flow_label": 33,
+                        "sdf_filter_id": 1
+                    },
+                    {
+                        "flags": 7936,
+                        "flow_description": "permit out ip from any to any",
+                        "tos_traffic_class": 101,
+                        "security_parameter_index": 22,
+                        "flow_label": 34,
+                        "sdf_filter_id": 2
+                    }
+                ],
+                "application_id": "3001",
+                "ethernet_pdu_session_info": {
+                    "flags": 1
+                },
+                "ethernet_packet_filter": [
+                    {
+                        "ethernet_filter_id": 1,
+                        "ethernet_filter_properties": 1,
+                        "mac_address": [
+                            {
+                                "flags": 15,
+                                "source_mac_address": "00:ab:11:22:33:44",
+                                "destination_mac_address": "00:ab:11:22:33:55",
+                                "upper_source_mac_address": "00:ac:11:22:33:44",
+                                "upper_destination_mac_address": "00:ac:11:22:33:66"
+                            },
+                            {
+                                "flags": 15,
+                                "source_mac_address": "00:1b:11:22:33:44",
+                                "destination_mac_address": "00:1b:11:22:33:55",
+                                "upper_source_mac_address": "00:1c:11:22:33:44",
+                                "upper_destination_mac_address": "00:1c:11:22:33:66"
+                            }
+                        ],
+                        "ethertype": 2048,
+                        "c_tag": {
+                            "flags": 21,
+                            "value": 200
+                        },
+                        "s_tag": {
+                            "flags": 28,
+                            "value": 100
+                        },
+                        "sdf_filter": [
+                            {
+                                "flags": 7936,
+                                "flow_description": "permit out ip from any to any",
+                                "tos_traffic_class": 100,
+                                "security_parameter_index": 21,
+                                "flow_label": 33,
+                                "sdf_filter_id": 1
+                            },
+                            {
+                                "flags": 7936,
+                                "flow_description": "permit out ip from any to any",
+                                "tos_traffic_class": 101,
+                                "security_parameter_index": 22,
+                                "flow_label": 34,
+                                "sdf_filter_id": 2
+                            }
+                        ]
+                    },
+                    {
+                        "ethernet_filter_id": 2,
+                        "ethernet_filter_properties": 1,
+                        "mac_address": [
+                            {
+                                "flags": 15,
+                                "source_mac_address": "00:bb:11:22:33:44",
+                                "destination_mac_address": "00:bb:11:22:33:55",
+                                "upper_source_mac_address": "00:bc:11:22:33:44",
+                                "upper_destination_mac_address": "00:bc:11:22:33:66"
+                            },
+                            {
+                                "flags": 15,
+                                "source_mac_address": "00:2b:11:22:33:44",
+                                "destination_mac_address": "00:2b:11:22:33:55",
+                                "upper_source_mac_address": "00:2c:11:22:33:44",
+                                "upper_destination_mac_address": "00:2c:11:22:33:66"
+                            }
+                        ],
+                        "ethertype": 2048,
+                        "c_tag": {
+                            "flags": 21,
+                            "value": 200
+                        },
+                        "s_tag": {
+                            "flags": 28,
+                            "value": 100
+                        },
+                        "sdf_filter": [
+                            {
+                                "flags": 7936,
+                                "flow_description": "permit out ip from any to any",
+                                "tos_traffic_class": 100,
+                                "security_parameter_index": 21,
+                                "flow_label": 33,
+                                "sdf_filter_id": 1
+                            },
+                            {
+                                "flags": 7936,
+                                "flow_description": "permit out ip from any to any",
+                                "tos_traffic_class": 101,
+                                "security_parameter_index": 22,
+                                "flow_label": 34,
+                                "sdf_filter_id": 2
+                            }
+                        ]
+                    }
+                ],
+                "qfi": [
+                    1,
+                    2,
+                    3
+                ],
+                "framed_route": [
+                    {
+                        "destination_ip": "192.168.1.0",
+                        "destination_ip_prefix_length": 24,
+                        "gateway": "192.168.1.1",
+                        "metrics": 100
+                    },
+                    {
+                        "destination_ip": "192.168.2.0",
+                        "destination_ip_prefix_length": 24,
+                        "gateway": "192.168.2.1",
+                        "metrics": 100
+                    }
+                ],
+                "framed_routing": 100,
+                "framed_ipv6_route": [
+                    {
+                        "destination_ip": "2001:abcd::21",
+                        "destination_ip_prefix_length": 64,
+                        "gateway": "2001:abcd::1",
+                        "metrics": 100
+                    },
+                    {
+                        "destination_ip": "2002:abcd::21",
+                        "destination_ip_prefix_length": 64,
+                        "gateway": "2002:abcd::1",
+                        "metrics": 100
+                    }
+                ],
+                "source_interface_type": 1,
+                "ip_multicast_addressing_info": [
+                    {
+                        "ip_multicast_address": {
+                            "flags": 6,
+                            "start_ipv4_address": "192.168.1.1",
+                            "start_ipv6_address": "2001::1234:12",
+                            "end_ipv4_address": "192.168.1.254",
+                            "end_ipv6_address": "2001::1234:22"
+                        },
+                        "source_ip_address": [
+                            {
+                                "flags": 6,
+                                "ipv4_address": "192.168.1.1",
+                                "ipv6_address": "2001::1234:12",
+                                "prefix_length": 24
+                            },
+                            {
+                                "flags": 6,
+                                "ipv4_address": "192.168.1.2",
+                                "ipv6_address": "2001::1234:12",
+                                "prefix_length": 24
+                            }
+                        ]
+                    }
+                ]
+            },
+            "outer_header_removal": {
+                "outer_header_removal_description": 0,
+                "gtp_u_extension_header_deletion": 1
+            },
+            "far_id": 1,
+            "urr_id": [1, 2, 3],
+            "qer_id": [1, 2, 3],
+            "activate_predefined_rules": [
+                "fast forward 1",
+                "fast forward 2"
+            ],
+            "activation_time": 222225,
+            "deactivation_time": 5555555,
+            "mar_id": 1,
+            "packet_replication_and_detection_carry_on_info": 1,
+            "ip_multicast_addressing_info": [
+                {
+                    "ip_multicast_address": {
+                        "flags": 6,
+                        "start_ipv4_address": "192.168.1.1",
+                        "start_ipv6_address": "2001::1234:12",
+                        "end_ipv4_address": "192.168.1.254",
+                        "end_ipv6_address": "2001::1234:22"
+                    },
+                    "source_ip_address": [
+                        {
+                            "flags": 6,
+                            "ipv4_address": "192.168.1.1",
+                            "ipv6_address": "2001::1234:12",
+                            "prefix_length": 24
+                        },
+                        {
+                            "flags": 6,
+                            "ipv4_address": "192.168.1.2",
+                            "ipv6_address": "2001::1234:32",
+                            "prefix_length": 24
+                        }
+                    ]
+                }
+            ],
+            "ue_ip_address_pool_identity": [
+                "ipv4_address_pool_1",
+                "ipv6_address_pool_1"
+            ],
+            "mptcp_applicable_indication": 1,
+            "transport_delay_reporting": {
+                "preceding_ul_gtp_u_peer": {
+                    "flags": 15,
+                    "ipv4_address": "192.168.1.1",
+                    "ipv6_address": "abcd::a123:1",
+                    "destination_interface": 0,
+                    "network_instance": "hello world"
+                },
+                "dscp": 200
+            }
+        }
+    ],
+    "create_far": [
+        {
+            "far_id": 1,
+            "apply_action": ["forw", "dfrt"],
+            "forwarding_parameters": {
+                "destination_interface": 1,
+                "network_instance": "cmcc",
+                "redirect_information": {
+                    "address_type": 2,
+                    "redirect_server_address": "http://www.baidu.com"
+                },
+                "outer_header_creation": {
+                    "outer_header_creation_description": 256,
+                    "teid": 1245,
+                    "ipv4_address": "192.168.1.1",
+                    "ipv6_address": "2001:1231:1124::12",
+                    "port_number": 8805,
+                    "c_tag": {
+                        "flags": 50,
+                        "value": 100
+                    },
+                    "s_tag": {
+                        "flags": 40,
+                        "value": 200
+                    }
+                },
+                "transport_level_marking": 25,
+                "forwarding_policy": "fast forwarding",
+                "header_enrichment": {
+                    "header_type": 1,
+                    "header_field_name": "user_id",
+                    "header_field_value": "session_1"
+                },
+                "linked_traffic_endpoint_id": 12,
+                "proxying": "userdefined_1",
+                "destination_interface_type": 11
+            },
+            "bar_id": 1
+        }
+    ],
+    "create_qer": [
+        {
+            "qer_id": 1,
+            "qer_correlation_id": 2,
+            "gate_status": {
+                "ul_gate": "open",
+                "dl_gate": "closed"
+            },
+            "maximum_bitrate": {
+                "ul_mbr": 20000,
+                "dl_mbr": 20000
+            },
+            "guaranteed_bitrate": {
+                "ul_gbr": 30000,
+                "dl_gbr": 30000
+            },
+            "packet_rate_status": {
+                "flags": 7,
+                "remaining_uplink_packets_allowed": 2000,
+                "remaining_additional_uplink_packets_allowed": 2000,
+                "remaining_downlink_packets_allowed": 1000,
+                "remaining_additional_downlink_packets_allowed": 1000,
+                "rate_control_status_validity_time": 50000
+            },
+            "qfi": 12,
+            "reflective_qos": 2,
+            "paging_policy_indicator": 1,
+            "averaging_window": 2000,
+            "qer_control_indications": 1
+        }
+    ],
+    "create_urr": [
+        {
+            "urr_id": 1,
+            "measurement_method": 7,
+            "reporting_triggers": [
+                "PERIO",
+                "VOLTH",
+                "TIMTH",
+                "EVETH"
+            ],
+            "measurement_period": 100,
+            "volume_threshold": {
+                "flags": 7,
+                "total_volume": 10000,
+                "uplink_volume": 5000,
+                "downlink_volume": 5000
+            },
+            "volume_quota": {
+                "flags": 7,
+                "total_volume": 20000,
+                "uplink_volume": 10000,
+                "downlink_volume": 10000
+            },
+            "event_threshold": 100,
+            "event_quota": 105,
+            "time_threshold": 200,
+            "time_quota": 300,
+            "quota_holding_time": 10,
+            "dropped_dl_traffic_threshold": {
+                "flags": 3,
+                "downlink_packets": 200,
+                "downlink_data_bytes": 20000
+            },
+            "quota_validity_time": 200,
+            "monitoring_time": 100,
+            "subsequent_volume_threshold": {
+                "flags": 7,
+                "total_volume": 10000,
+                "uplink_volume": 5000,
+                "downlink_volume": 5000
+            },
+            "subsequent_time_threshold": 20,
+            "subsequent_volume_quota": {
+                "flags": 7,
+                "total_volume": 20000,
+                "uplink_volume": 10000,
+                "downlink_volume": 10000
+            },
+            "subsequent_time_quota": 100,
+            "subsequent_event_threshold": 20,
+            "subsequent_event_quota": 30,
+            "inactivity_detection_time": 40,
+            "linked_urr_id": [1, 2, 3],
+            "measurement_information": 8,
+            "quota_action_far_id": 2,
+            "ethernet_inactivity_timer": 20,
+            "additional_monitoring_time": [
+                {
+                    "monitoring_time": 100,
+                    "subsequent_volume_threshold": {
+                        "flags": 7,
+                        "total_volume": 10000,
+                        "uplink_volume": 5000,
+                        "downlink_volume": 5000
+                    },
+                    "subsequent_time_threshold": 20,
+                    "subsequent_volume_quota": {
+                        "flags": 7,
+                        "total_volume": 20000,
+                        "uplink_volume": 10000,
+                        "downlink_volume": 10000
+                    },
+                    "subsequent_time_quota": 100,
+                    "subsequent_event_threshold": 20,
+                    "subsequent_event_quota": 30
+                }
+            ],
+            "number_of_reports": 2,
+            "exempted_application_id_for_quota_action": [
+                "3001",
+                "4002"
+            ],
+            "exempted_sdf_filter_for_quota_action": [
+                {
+                    "flags": 7936,
+                    "flow_description": "permit out ip from any to any",
+                    "tos_traffic_class": 100,
+                    "security_parameter_index": 21,
+                    "flow_label": 33,
+                    "sdf_filter_id": 1
+                }
+            ]
+        }
+    ],
+    "create_bar": [
+        {
+            "bar_id": 1,
+            "suggested_buffering_packets_count": 100
+        }
+    ]
+}

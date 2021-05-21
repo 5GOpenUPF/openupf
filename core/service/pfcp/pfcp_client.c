@@ -50,6 +50,8 @@ int pfcp_client_entry(char *buf, int len, void *arg)
         LOG(UPC, RUNNING, "msg sequence %d", pkt_seq);
 
         /* skip spare byte */
+        if (msg_header->mp) {
+        }
         buf_pos++;
 
         LOG(UPC, RUNNING, "msg type %d", msg_header->msg_type);
@@ -59,12 +61,15 @@ int pfcp_client_entry(char *buf, int len, void *arg)
             switch(msg_header->msg_type) {
                 case SESS_HEARTBEAT_REQUEST:
                     /* Parse heartbeat */
+                    upc_pkt_status_add(UPC_PKT_HEARTBEAT_REQU_RECV4SMF);
                     pfcp_parse_heartbeat_request(buffer, buf_pos, msg_len, pkt_seq, (struct sockaddr *)arg);
                     break;
 
                 case SESS_HEARTBEAT_RESPONSE:
                     {
                         upc_node_cb *node_cb = upc_get_node_by_sa(arg);
+
+                        upc_pkt_status_add(UPC_PKT_HEARTBEAT_RESP_RECV4SMF);
                         if (likely(NULL != node_cb)) {
                             ros_atomic16_init(&node_cb->hb_timeout_cnt);
                         } else {
@@ -76,10 +81,10 @@ int pfcp_client_entry(char *buf, int len, void *arg)
 
                 case SESS_PFD_MANAGEMENT_REQUEST:
                     /* Parse request */
-                    upc_pkt_status_add(UPC_PKT_SESS_EST_RECV4SMF);
+                    upc_pkt_status_add(UPC_PKT_PFD_MANAGEMENT_RECV4SMF);
                     pfcp_parse_pfd_mgmt_request(buffer, buf_pos,
                         msg_len, pkt_seq, (struct sockaddr *)arg);
-                    upc_pkt_status_add(UPC_PKT_SESS_EST_SEND2SMF);
+                    upc_pkt_status_add(UPC_PKT_PFD_MANAGEMENT_SEND2SMF);
                     break;
 
                 case SESS_PFD_MANAGEMENT_RESPONSE:

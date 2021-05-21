@@ -9,7 +9,6 @@
 #include "service.h"
 #include "comm_msg.h"
 #include "fp_msg.h"
-#include "fp_urr.h"
 #include "fp_main.h"
 #include "fp_mac.h"
 

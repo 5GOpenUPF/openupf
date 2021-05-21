@@ -214,9 +214,9 @@ static inline int upc_backend_compare(struct rb_node *node, void *key)
     upc_backend_config *be_cfg = (upc_backend_config *)node;
     uint64_t key_vlu = *(uint64_t *)key;
 
-    if (be_cfg->be_key > key_vlu) {
+    if (be_cfg->be_config.key > key_vlu) {
         return -1;
-    } else if (be_cfg->be_key < key_vlu) {
+    } else if (be_cfg->be_config.key < key_vlu) {
         return 1;
     }
 
@@ -253,8 +253,7 @@ void upc_tell_backend_change_active_mac(void)
     msg->total_len = htonl(buf_len);
 
     cur_index = COMM_MSG_BACKEND_START_INDEX - 1;
-    cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER);
-    for (; -1 != cur_index; cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER)) {
+    while (-1 != (cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER))) {
         cur_cfg = upc_get_backend_config((uint8_t)cur_index);
 
         /* Send to backend */
@@ -271,26 +270,25 @@ int upc_tell_lb_adjust_backend(uint32_t *index_arr, uint32_t index_num, uint16_t
     comm_msg_rules_ie_t *ie = NULL;
     uint32_t total_len;
     upc_backend_config *be_cfg;
-    comm_msg_heartbeat_config *be_reg;
+    comm_msg_backend_config *be_reg;
     uint32_t cnt, be_reg_cnt = 0, be_reg_max;
 
-    be_reg_max = (COMM_MSG_CTRL_BUFF_LEN - COMM_MSG_HEADER_LEN - COMM_MSG_IE_LEN_COMMON) / sizeof(comm_msg_heartbeat_config);
+    be_reg_max = (COMM_MSG_CTRL_BUFF_LEN - COMM_MSG_HEADER_LEN - COMM_MSG_IE_LEN_COMMON) / sizeof(comm_msg_backend_config);
 
     msg = upc_fill_msg_header((uint8_t *)buf);
     ie = (comm_msg_rules_ie_t *)(msg->payload);
 
     ie->cmd = htons(cmd);
-    be_reg = (comm_msg_heartbeat_config *)ie->data;
+    be_reg = (comm_msg_backend_config *)ie->data;
 
     for (cnt = 0; cnt < index_num; ++cnt) {
         be_cfg = upc_get_backend_config(index_arr[cnt]);
 
-        be_reg[be_reg_cnt].key = be_cfg->be_key;
-        memcpy(be_reg[be_reg_cnt].mac, be_cfg->be_mac, EN_PORT_BUTT * ETH_ALEN);
+        ros_memcpy(&be_reg[be_reg_cnt], &be_cfg->be_config, sizeof(comm_msg_backend_config));
         ++be_reg_cnt;
 
         if (be_reg_cnt >= be_reg_max) {
-            total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_heartbeat_config) * be_reg_cnt;
+            total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_backend_config) * be_reg_cnt;
             ie->rules_num = htonl(be_reg_cnt);
             ie->len = htons(total_len);
             total_len += COMM_MSG_HEADER_LEN;
@@ -304,7 +302,7 @@ int upc_tell_lb_adjust_backend(uint32_t *index_arr, uint32_t index_num, uint16_t
     }
 
     if (be_reg_cnt > 0) {
-        total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_heartbeat_config) * be_reg_cnt;
+        total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_backend_config) * be_reg_cnt;
         ie->rules_num = htonl(be_reg_cnt);
         ie->len = htons(total_len);
         total_len += COMM_MSG_HEADER_LEN;
@@ -328,16 +326,16 @@ void upc_lb_register_all_backend(void)
     upc_backend_mgmt *be_mgmt = upc_get_backend_mgmt();
     upc_backend_config *be_cfg;
     int32_t cur_index = COMM_MSG_BACKEND_START_INDEX - 1;
-    comm_msg_heartbeat_config *be_reg;
+    comm_msg_backend_config *be_reg;
     uint32_t be_reg_cnt = 0, be_reg_max;
 
-    be_reg_max = (COMM_MSG_CTRL_BUFF_LEN - COMM_MSG_HEADER_LEN - COMM_MSG_IE_LEN_COMMON) / sizeof(comm_msg_heartbeat_config);
+    be_reg_max = (COMM_MSG_CTRL_BUFF_LEN - COMM_MSG_HEADER_LEN - COMM_MSG_IE_LEN_COMMON) / sizeof(comm_msg_backend_config);
 
     msg = upc_fill_msg_header((uint8_t *)buf);
     ie = (comm_msg_rules_ie_t *)(msg->payload);
 
     ie->cmd = htons(EN_COMM_MSG_MB_REGISTER);
-    be_reg = (comm_msg_heartbeat_config *)ie->data;
+    be_reg = (comm_msg_backend_config *)ie->data;
 
     ros_rwlock_write_lock(&be_mgmt->lock);/* lock */
     cur_index = Res_GetAvailableInBand(be_mgmt->pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER);
@@ -348,12 +346,11 @@ void upc_lb_register_all_backend(void)
             continue;
         }
 
-        be_reg[be_reg_cnt].key = be_cfg->be_key;
-        memcpy(be_reg[be_reg_cnt].mac, be_cfg->be_mac, EN_PORT_BUTT * ETH_ALEN);
+        memcpy(&be_reg[be_reg_cnt], &be_cfg->be_config, sizeof(comm_msg_backend_config));
         ++be_reg_cnt;
 
         if (be_reg_cnt >= be_reg_max) {
-            total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_heartbeat_config) * be_reg_cnt;
+            total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_backend_config) * be_reg_cnt;
             ie->rules_num = htonl(be_reg_cnt);
             ie->len = htons(total_len);
             total_len += COMM_MSG_HEADER_LEN;
@@ -369,7 +366,7 @@ void upc_lb_register_all_backend(void)
     ros_rwlock_write_unlock(&be_mgmt->lock);/* unlock */
 
     if (be_reg_cnt > 0) {
-        total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_heartbeat_config) * be_reg_cnt;
+        total_len = COMM_MSG_IE_LEN_COMMON + sizeof(comm_msg_backend_config) * be_reg_cnt;
         ie->rules_num = htonl(be_reg_cnt);
         ie->len = htons(total_len);
         total_len += COMM_MSG_HEADER_LEN;
@@ -646,7 +643,7 @@ int upc_backend_compare_validity(comm_msg_entry_val_config_t *val_cfg)
     return 0;
 }
 
-upc_backend_config *upc_backend_register(uint8_t *mac, uint64_t fp_key, int fd)
+upc_backend_config *upc_backend_register(comm_msg_backend_config *be_hb_config, int fd)
 {
     upc_backend_mgmt *be_mgmt = upc_get_backend_mgmt();
     upc_backend_config *be_cfg;
@@ -659,24 +656,23 @@ upc_backend_config *upc_backend_register(uint8_t *mac, uint64_t fp_key, int fd)
 
     be_cfg = upc_get_backend_config(res_index);
 
-    memcpy(be_cfg->be_mac, mac, EN_PORT_BUTT * ETH_ALEN);
+    ros_memcpy(&be_cfg->be_config, be_hb_config, sizeof(comm_msg_backend_config));
     ros_atomic32_set(&be_cfg->be_state, EN_BACKEND_INIT);
     ros_atomic16_init(&be_cfg->be_timeout_times);
-    be_cfg->be_key = fp_key;
     be_cfg->fd = fd;
 
     ros_rwlock_write_lock(&be_mgmt->lock);/* lock */
     if (0 > rbtree_insert(&be_mgmt->be_root, &be_cfg->be_node,
-        &be_cfg->be_key, upc_backend_compare)) {
+        &be_cfg->be_config.key, upc_backend_compare)) {
         ros_rwlock_write_unlock(&be_mgmt->lock);/* unlock */
         Res_Free(upc_get_backend_pool(), res_key, res_index);
-        LOG(SESSION, ERR, "insert backend failed, key: %lu.", be_cfg->be_key);
+        LOG(SESSION, ERR, "insert backend failed, key: %lu.", be_cfg->be_config.key);
         return NULL;
     }
     ros_rwlock_write_unlock(&be_mgmt->lock);/* unlock */
 
-    LOG(UPC, MUST, "Backend registered successful, MAC: %02x:%02x:%02x:%02x:%02x:%02x, be_index: %u.",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], res_index);
+    LOG(UPC, MUST, "Backend registered successful, key: 0x%lx, be_index: %u.",
+        be_hb_config->key, res_index);
 
     return be_cfg;
 }
@@ -707,13 +703,13 @@ void upc_backend_unregister(uint8_t be_index)
             case HA_STATUS_SMOOTH2ACTIVE:
                 /* Tell LB */
                 if (0 > upc_tell_lb_adjust_backend(&be_cfg->index, 1, EN_COMM_MSG_MB_UNREGISTER)) {
-                    LOG(UPC, ERR, "Tell LB unregister backend failed, key: %lu", be_cfg->be_key);
+                    LOG(UPC, ERR, "Tell LB unregister backend failed, key: %lu", be_cfg->be_config.key);
                 }
 
                 /* Tell standby SMU */
                 if (upc_hk_sync_backend) {
                     if (0 > upc_hk_sync_backend(&be_cfg->index, 1, HA_CREATE)) {
-                        LOG(UPC, ERR, "Sync backend config failed, key: %lu", be_cfg->be_key);
+                        LOG(UPC, ERR, "Sync backend config failed, key: %lu", be_cfg->be_config.key);
                     }
                 }
                 break;
@@ -725,10 +721,8 @@ void upc_backend_unregister(uint8_t be_index)
     ros_atomic16_set(&be_cfg->valid, FALSE);
     Res_Free(upc_get_backend_pool(), 0, be_index);
 
-    LOG(UPC, MUST, "Backend unregistered successful, MAC: %02x:%02x:%02x:%02x:%02x:%02x, be_index: %d.",
-        be_cfg->be_mac[EN_PORT_N3][0], be_cfg->be_mac[EN_PORT_N3][1],
-        be_cfg->be_mac[EN_PORT_N3][2], be_cfg->be_mac[EN_PORT_N3][3],
-        be_cfg->be_mac[EN_PORT_N3][4], be_cfg->be_mac[EN_PORT_N3][5], be_index);
+    LOG(UPC, MUST, "Backend unregistered successful, key: 0x%lx, be_index: %d.",
+        be_cfg->be_config.key, be_index);
 }
 
 void upc_backend_activate(upc_backend_config *be_cfg)
@@ -746,13 +740,13 @@ void upc_backend_activate(upc_backend_config *be_cfg)
         case HA_STATUS_SMOOTH2ACTIVE:
             /* Tell LB */
             if (0 > upc_tell_lb_adjust_backend(&be_cfg->index, 1, EN_COMM_MSG_MB_REGISTER)) {
-                LOG(UPC, ERR, "Tell LB register backend failed, key: %lu", be_cfg->be_key);
+                LOG(UPC, ERR, "Tell LB register backend failed, key: %lu", be_cfg->be_config.key);
             }
 
             /* Tell standby SMU */
             if (upc_hk_sync_backend) {
                 if (0 > upc_hk_sync_backend(&be_cfg->index, 1, HA_CREATE)) {
-                    LOG(UPC, ERR, "Sync backend config failed, key: %lu", be_cfg->be_key);
+                    LOG(UPC, ERR, "Sync backend config failed, key: %lu", be_cfg->be_config.key);
                 }
             }
             break;
@@ -760,7 +754,7 @@ void upc_backend_activate(upc_backend_config *be_cfg)
             break;
     }
 
-    LOG(LB, MUST, "Backend activate successful, be_key: %lu", be_cfg->be_key);
+    LOG(LB, MUST, "Backend activate successful, be_key: %lu", be_cfg->be_config.key);
 }
 
 upc_backend_config *upc_backend_search(uint64_t be_key)
@@ -771,13 +765,13 @@ upc_backend_config *upc_backend_search(uint64_t be_key)
     ros_rwlock_read_lock(&be_mgmt->lock); /* lock */
     be_cfg = (upc_backend_config *)rbtree_search(&be_mgmt->be_root, &be_key, upc_backend_compare);
     if (NULL == be_cfg) {
-        LOG(UPC, RUNNING, "No such backend key: %lu.", be_key);
+        LOG(UPC, DEBUG, "No such backend key: %lu.", be_key);
         ros_rwlock_read_unlock(&be_mgmt->lock); /* unlock */
 
         return NULL;
     }
     ros_rwlock_read_unlock(&be_mgmt->lock); /* unlock */
-    LOG(UPC, RUNNING, "Backend search successful, key: %lu.", be_key);
+    LOG(UPC, DEBUG, "Backend search successful, key: %lu.", be_key);
 
     return be_cfg;
 }
@@ -791,9 +785,8 @@ static void *upc_backend_heartbeat_task(void *arg)
         cur_index = COMM_MSG_BACKEND_START_INDEX - 1;
 
         if (HA_STATUS_ACTIVE == upc_get_work_status()) {
-            /* 这里使用Res_GetAvailableInBand而不去判断valid是为了清除注册成功但超时未激活的backend */
-            cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER);
-            for (; -1 != cur_index; cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER)) {
+            /* 这里使用Res_GetAvailableInBand而不去判断有效性是为了清除注册成功但超时未激活的backend */
+            while (-1 != (cur_index = Res_GetAvailableInBand(pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER))) {
                 cur_cfg = upc_get_backend_config((uint8_t)cur_index);
 
                 if (UPC_BACKEND_TIMEOUT_MAX > ros_atomic16_add_return(&cur_cfg->be_timeout_times, 1)) {
@@ -917,7 +910,7 @@ uint32_t upc_backend_get_active_num(void)
         if (TRUE == ros_atomic16_read(&be_cfg->valid)) {
             ++act_cnt;
         } else {
-            LOG(UPC, MUST, "Backend index: %d not active, key: %lu", cur_index, be_cfg->be_key);
+            LOG(UPC, MUST, "Backend index: %d not active, key: %lu", cur_index, be_cfg->be_config.key);
         }
 
         cur_index = Res_GetAvailableInBand(be_mgmt->pool_id, cur_index + 1, COMM_MSG_BACKEND_NUMBER);

@@ -11,8 +11,6 @@
 #define SERVICE_BUF_SPARE_LEN               (64)
 #define SERVICE_BUF_MAX_LEN                 (2048)
 #define SERVICE_BUF_TOTAL_LEN               (SERVICE_BUF_MAX_LEN + SERVICE_BUF_SPARE_LEN)
-#define SERVICE_PROTO                       0x9090
-#define SERVICE_N3N6                        0x8199
 
 //#define FAR_DUPL_ENABLE
 
@@ -21,8 +19,6 @@
 #define COMM_MSG_BACKEND_START_INDEX        (0)
 
 #define	COMM_SIGNALING_TRACE_FILE_NAME		"/tmp/signaling_trace.pcap"
-
-//#define ENABLE_INST_STAT_COLLECT_IMMD
 
 /* Compatible record fast ID and fast type with Ethernet */
 #define RECORD_FAST_INFO_NEW_VER
@@ -54,6 +50,8 @@
 #define COMM_MSG_IPV6_LEN               16
 #define COMM_MSG_INVALID_INDEX          ((uint32_t)(-1))
 #define COMM_MSG_PRE_HEAD_MAX           128
+/* Maximum number of cores (also ports) supported by FPU */
+#define COMM_MSG_FPU_CORE_MAX           8
 
 /* 4-byte alignment */
 #define MAX_CHECK_VALIDITY_NUMBER       (((uint32_t)(SERVICE_BUF_MAX_LEN - COMM_MSG_HEADER_LEN - \
@@ -224,16 +222,18 @@ typedef enum
     EN_COMM_MSG_BACKEND_HB          = 0x5001,
     /* Send config to Backend */
     EN_COMM_MSG_BACKEND_CONFIG      = 0x5002,
-    /* Tell the management-end that the back-end is ready */
+    /* Tell the management-end that the back-end is ready, active it */
     EN_COMM_MSG_BACKEND_ACTIVE      = 0x5003,
-    /* Tell the back end to be ready to shut down(used for volume reduction) */
-    EN_COMM_MSG_BACKEND_SHUTDOWN    = 0x5004,
+    /* Tell the management-end that the back-end has failed, deactivate it */
+    EN_COMM_MSG_BACKEND_DEACTIVE    = 0x5004,
     /* Tell backend re register */
     EN_COMM_MSG_BACKEND_RE_REGIS    = 0x5005,
     /* Tell backend change load-balancer MAC */
     EN_COMM_MSG_BACKEND_RESET_LBMAC = 0x5006,
     /* Get backend validity from load-balancer */
     EN_COMM_MSG_BACKEND_VALIDITY    = 0x5007,
+    /* Tell the back end to be ready to shut down(used for volume reduction) */
+    EN_COMM_MSG_BACKEND_SHUTDOWN    = 0x5008,
 
     /* Load-balancer master <---> smu(Management end) */
     /* Management end heartbeat */
@@ -436,6 +436,17 @@ typedef struct tag_comm_msg_rules_resp_ie_t {
 #pragma pack()
 #define COMM_MSG_IE_LEN_RULES_RESP		(8)
 
+/* High-Availability heartbeat IE */
+#pragma pack(1)
+typedef struct tag_comm_msg_ha_ie_t {
+    uint16_t            len;            /* IE length, include len and cmd */
+    uint16_t            cmd;            /* command */
+    int16_t             work_status;    /* Work status */
+    uint16_t            health_value;   /* Health value */
+    uint8_t             data[0];        /* content */
+}comm_msg_ha_ie_t;
+#pragma pack()
+
 /* Use only when getting entry validity */
 #pragma pack(1)
 typedef struct tag_comm_msg_entry_val_config_t {
@@ -615,7 +626,7 @@ typedef struct  tag_comm_msg_fast_cfg {
 	uint32_t            head_enrich_flag;/* use for head enrich */
     uint8_t             n6port_index;    /* Route select the target N6 port for up stream. */
     uint8_t             spare;
-    ros_atomic16_t      tcp_hs_stat;     /* Statistics of TCP handshake traffic */
+    uint16_t            tcp_hs_stat;     /* Statistics of TCP handshake traffic */
 }
 comm_msg_fast_cfg;
 #pragma pack()
@@ -697,11 +708,10 @@ typedef struct tag_comm_msg_outh_rm_t {
 
 #pragma pack(1)
 typedef struct tag_comm_msg_user_info_t {
-	session_user_id		user_id;
-	session_ue_ip   	ue_ipaddr[MAX_UE_IP_NUM];
-	session_apn_dnn 	apn_dnn;
-	session_rat_type    rat_type;
-    session_user_location_info      user_local_info;
+	session_user_id		        user_id;
+	session_ue_ip   	        ue_ipaddr[MAX_UE_IP_NUM];
+	session_apn_dnn 	        apn_dnn;
+    uint8_t                     rat_type;
 }comm_msg_user_info_t;
 #pragma pack()
 
@@ -744,14 +754,14 @@ typedef struct  tag_comm_msg_inst_config
         |
         v
     far_id
-    comm_msg_far_action_t
+    session_far_action
     comm_msg_dest_if_t
     comm_msg_far_choose_t
     comm_msg_outh_cr_t
     comm_msg_redirect_addr_t
     comm_msg_transport_level_t
+    session_redirect_server
     comm_msg_header_enrichment_t
-    comm_msg_transport_level_t
     comm_msg_outh_cr_t
 */
 
@@ -801,30 +811,6 @@ typedef union {
     }d;
     uint8_t            value;          /* value in integer */
 }comm_msg_dupl_choose_t;
-
-/* Action */
-#pragma pack(1)
-typedef union {
-    struct tag_comm_msg_far_action_t {
-#if BYTE_ORDER == BIG_ENDIAN
-        uint8_t         spar: 3;        /* not define */
-        uint8_t         dupl: 1;        /* duplicate */
-        uint8_t         nocp: 1;        /* notify */
-        uint8_t         buff: 1;        /* buffering */
-        uint8_t         forw: 1;        /* forward */
-        uint8_t         drop: 1;        /* drop */
-#else
-        uint8_t         drop: 1;        /* drop */
-        uint8_t         forw: 1;        /* forward */
-        uint8_t         buff: 1;        /* buffering */
-        uint8_t         nocp: 1;        /* notify */
-        uint8_t         dupl: 1;        /* duplicate */
-        uint8_t         spar: 3;        /* not define */
-#endif
-    }d;
-    uint8_t             value;          /* value in integer */
-}comm_msg_far_action_t;
-#pragma pack()
 
 /* Redirect address can be configured as IPv4/IPv6/URL/SIP URL/IPv4 and IPv6 */
 #pragma pack(1)
@@ -908,7 +894,6 @@ typedef struct tag_comm_msg_outh_cr_t {
 typedef struct tag_comm_msg_transport_level_t {
     uint8_t             tos;            /* IPv4 Tos/IPv6 traffic class */
     uint8_t             mask;           /* Mask */
-    uint8_t             resv[2];
 }comm_msg_transport_level_t;
 #pragma pack()
 
@@ -937,15 +922,16 @@ typedef struct  tag_comm_msg_dupl_config
 typedef struct  tag_comm_msg_far_config
 {
     uint32_t                        far_id;     /* FAR id */
-    comm_msg_far_action_t           action;     /* action */
-    uint8_t                         forw_if;    /* forward interface */
+    session_far_action              action;     /* action */
     comm_msg_far_choose_t           choose;
+    uint8_t                         forw_if;    /* forward interface */
+    uint8_t                         spare;
+    comm_msg_transport_level_t      forw_trans;
+    uint32_t                        bar_index;  /* include bar cfg */
 
     comm_msg_outh_cr_t              forw_cr_outh;
-    comm_msg_transport_level_t      forw_trans;
     session_redirect_server         forw_redirect;
     comm_msg_header_enrichment_t    forw_enrich;
-    uint32_t                        bar_index;  /* include bar cfg */
 #ifdef FAR_DUPL_ENABLE
     comm_msg_dupl_config            dupl_cfg[MAX_DUPL_PARAM_NUM];
 #endif
@@ -1196,109 +1182,6 @@ typedef struct tag_comm_msg_urr_aggregate_t {
 #pragma pack()
 
 #pragma pack(1)
-/* Used for report */
-typedef union {
-    struct tag_comm_msg_urr_usage_report_trigger_t {
-#if BYTE_ORDER == BIG_ENDIAN
-        uint32_t        spare_b4:8;     /* spare */
-
-        uint32_t        immer:1;        /* immediate report */
-        uint32_t        droth:1;        /* dropped dl traffic threshold */
-        uint32_t        stopt:1;        /* stop of traffic */
-        uint32_t        start:1;        /* start of traffic */
-        uint32_t        quhti:1;        /* quota holding time */
-        uint32_t        timth:1;        /* time threshold */
-        uint32_t        volth:1;        /* volume threshold */
-        uint32_t        perio:1;        /* periodic reporting */
-
-        uint32_t        eveth:1;        /* event threshold */
-        uint32_t        macar:1;        /* mac address reporting */
-        uint32_t        envcl:1;        /* envelope closure */
-        uint32_t        monit:1;        /* monitoring time */
-        uint32_t        termr:1;        /* termination report */
-        uint32_t        liusa:1;        /* linked usage reporting */
-        uint32_t        timqu:1;        /* time quota */
-        uint32_t        volqu:1;        /* volume quota */
-
-        uint32_t        spare_b1:6;     /* spare */
-        uint32_t        tebur:1;        /* Termination By UP function Report */
-        uint32_t        evequ:1;        /* event quota */
-#else
-        uint32_t        evequ:1;        /* event quota */
-        uint32_t        tebur:1;        /* Termination By UP function Report */
-        uint32_t        spare_b1:6;     /* spare */
-
-        uint32_t        volqu:1;        /* volume quota */
-        uint32_t        timqu:1;        /* time quota */
-        uint32_t        liusa:1;        /* linked usage reporting */
-        uint32_t        termr:1;        /* termination report */
-        uint32_t        monit:1;        /* monitoring time */
-        uint32_t        envcl:1;        /* envelope closure */
-        uint32_t        macar:1;        /* mac address reporting */
-        uint32_t        eveth:1;        /* event threshold */
-
-        uint32_t        perio:1;        /* periodic reporting */
-        uint32_t        volth:1;        /* volume threshold */
-        uint32_t        timth:1;        /* time threshold */
-        uint32_t        quhti:1;        /* quota holding time */
-        uint32_t        start:1;        /* start of traffic */
-        uint32_t        stopt:1;        /* stop of traffic */
-        uint32_t        droth:1;        /* dropped dl traffic threshold */
-        uint32_t        immer:1;        /* immediate report */
-
-        uint32_t        spare_b4:8;     /* spare */
-#endif
-    }d;
-    uint32_t value;
-}comm_msg_urr_usage_report_trigger_t;
-#pragma pack()
-
-#pragma pack(1)
-/* Used for trigger action to collect info in fp */
-typedef union {
-    struct tag_comm_msg_urr_reporting_trigger_t
-    {
-#if BYTE_ORDER == BIG_ENDIAN
-        uint16_t        liusa:1;        /* linked usage reporting */
-        uint16_t        droth:1;        /* dropped dl traffic threshold */
-        uint16_t        stopt:1;        /* stop of traffic */
-        uint16_t        start:1;        /* start of traffic */
-        uint16_t        quhti:1;        /* quota holding time */
-        uint16_t        timth:1;        /* time threshold */
-        uint16_t        volth:1;        /* time threshold */
-        uint16_t        perio:1;        /* periodic reporting */
-
-        uint16_t        spare:2;        /* spare */
-        uint16_t        evequ:1;        /* event quota */
-        uint16_t        eveth:1;        /* event threshold */
-        uint16_t        macar:1;        /* mac address reporting */
-        uint16_t        envcl:1;        /* envelope closure */
-        uint16_t        timqu:1;        /* time quota */
-        uint16_t        volqu:1;        /* volume quota */
-#else
-        uint16_t        volqu:1;        /* volume quota */
-        uint16_t        timqu:1;        /* time quota */
-        uint16_t        envcl:1;        /* envelope closure */
-        uint16_t        macar:1;        /* mac address reporting */
-        uint16_t        eveth:1;        /* event threshold */
-        uint16_t        evequ:1;        /* event quota */
-        uint16_t        spare:2;        /* spare */
-
-        uint16_t        perio:1;        /* periodic reporting */
-        uint16_t        volth:1;        /* time threshold */
-        uint16_t        timth:1;        /* time threshold */
-        uint16_t        quhti:1;        /* quota holding time */
-        uint16_t        start:1;        /* start of traffic */
-        uint16_t        stopt:1;        /* stop of traffic */
-        uint16_t        droth:1;        /* dropped dl traffic threshold */
-        uint16_t        liusa:1;        /* linked usage reporting */
-#endif
-    }d;
-    uint16_t value;
-}comm_msg_urr_reporting_trigger_t;
-#pragma pack()
-
-#pragma pack(1)
 typedef struct tag_comm_msg_urr_mon_time_t {
     uint32_t                        mon_time;       /* UTC time */
     comm_msg_urr_volume_t           sub_vol_thres;  /* multiplier */
@@ -1318,7 +1201,7 @@ typedef struct  tag_comm_msg_urr_config
 	uint32_t						ur_seqn;
     comm_msg_urr_method_t           method;
     uint8_t                         quota_far_present;  /* quota_far validity */
-    comm_msg_urr_reporting_trigger_t trigger;
+    session_urr_reporting_trigger   trigger;
     uint32_t                        period;     /* in second */
     comm_msg_urr_volume_t           vol_thres;
     comm_msg_urr_volume_t           vol_quota;
@@ -1353,7 +1236,7 @@ typedef struct tag_comm_msg_urr_report_t
     uint32_t                        urr_id;
 	uint32_t                        urr_index;
     uint32_t                        ur_seqn;
-    comm_msg_urr_usage_report_trigger_t trigger;
+    session_usage_report_trigger    trigger;
     uint32_t                        start_time;     /* UTC time */
     uint32_t                        end_time;       /* UTC time */
     comm_msg_urr_volume_t           vol_meas;
@@ -1372,11 +1255,11 @@ typedef struct tag_comm_msg_urr_report_t
 
 #pragma pack(1)
 typedef struct tag_comm_msg_urr_stat_t{
-    ros_atomic64_t      forw_pkts;      /* packets */
-    ros_atomic64_t      forw_bytes;     /* bytes */
-    ros_atomic64_t      drop_pkts;      /* packets */
-    ros_atomic64_t      drop_bytes;     /* bytes */
-    ros_atomic64_t      err_cnt;        /* error count */
+    int64_t             forw_pkts;      /* packets */
+    int64_t             forw_bytes;     /* bytes */
+    int64_t             drop_pkts;      /* packets */
+    int64_t             drop_bytes;     /* bytes */
+    int64_t             err_cnt;        /* error count */
 }comm_msg_urr_stat_t;
 #pragma pack()
 
@@ -1584,12 +1467,21 @@ typedef struct tag_comm_msg_port_mac_cfg {
 } comm_msg_port_mac_cfg;
 #pragma pack()
 
-/* Backend/SMU/Load-balancer heartbeat config */
+/* SMU/Load-balancer heartbeat config */
 #pragma pack(1)
 typedef struct tag_comm_msg_heartbeat_config {
     uint64_t            key; /* Flag key */
-    uint8_t             mac[EN_PORT_BUTT][ETH_ALEN]; /* LB/SMU/Backend local port mac */
+    uint8_t             mac[EN_PORT_BUTT][ETH_ALEN]; /* LB/SMU local port mac */
 } comm_msg_heartbeat_config;
+#pragma pack()
+
+/* Backend config */
+#pragma pack(1)
+typedef struct tag_comm_msg_backend_config {
+    uint64_t            key; /* Flag key */
+    uint8_t             mac[COMM_MSG_FPU_CORE_MAX][ETH_ALEN]; /* Backend local port mac */
+    uint8_t             dpdk_lcores;  /* The number of dpdk binding cores of FPU */
+} comm_msg_backend_config;
 #pragma pack()
 
 /* Msg IE data config */

@@ -105,10 +105,6 @@ inline void session_instance_config_hton(comm_msg_inst_config *inst_config)
                 htonl(inst_config->user_info.ue_ipaddr[cnt].ipv4_addr);
         }
 	}
-	inst_config->user_info.rat_type.enterprise_id =
-        htons(inst_config->user_info.rat_type.enterprise_id);
-	inst_config->user_info.user_local_info.enterprise_id =
-        htons(inst_config->user_info.user_local_info.enterprise_id);
 
     inst_config->collect_thres = htonll(inst_config->collect_thres);
 }
@@ -135,10 +131,6 @@ inline void session_instance_config_ntoh(comm_msg_inst_config *inst_config)
                 ntohl(inst_config->user_info.ue_ipaddr[cnt].ipv4_addr);
         }
 	}
-	inst_config->user_info.rat_type.enterprise_id =
-        ntohs(inst_config->user_info.rat_type.enterprise_id);
-	inst_config->user_info.user_local_info.enterprise_id =
-        ntohs(inst_config->user_info.user_local_info.enterprise_id);
 
     inst_config->collect_thres = ntohll(inst_config->collect_thres);
 }
@@ -194,7 +186,7 @@ int session_instance_fill_urr(struct session_t *sess, uint8_t urr_number,
             return -1;
         }
 
-		//取携带urr中最小的门限值
+		/* Take the minimum threshold of all URRS */
 		if (urr_tbl->urr.vol_thres.flag.d.dlvol) {
 			if (min_thres > urr_tbl->urr.vol_thres.downlink)
 				min_thres = urr_tbl->urr.vol_thres.downlink;
@@ -233,8 +225,8 @@ int session_instance_fill_urr(struct session_t *sess, uint8_t urr_number,
         inst_ctrl->urr_dnum++;
     }
 
-    inst_config->inact = inact_time;
-    inst_config->max_act = thr_quo_time;
+    inst_config->inact = inact_time + 1; /* One more judgment is used to trigger */
+    inst_config->max_act = thr_quo_time + 1; /* One more judgment is used to trigger */
     inst_ctrl->light = COMM_MSG_LIGHT_GREEN;
 
 	/*没有门限不进行精确上报
@@ -297,10 +289,7 @@ int session_instance_fill_user_info(struct session_t *sess, struct pdr_table *pd
 	}
 	ros_memcpy(&inst_config->user_info.apn_dnn, &sess->session.apn_dnn,
         sizeof(session_apn_dnn));
-	ros_memcpy(&inst_config->user_info.rat_type, &sess->session.rat_type,
-        sizeof(session_rat_type));
-	ros_memcpy(&inst_config->user_info.user_local_info,
-        &sess->session.user_local_info, sizeof(session_user_location_info));
+	inst_config->user_info.rat_type = sess->session.rat_type;
 
 	return 0;
 }
@@ -400,6 +389,7 @@ int session_instance_add(uint32_t index, comm_msg_inst_config *entry_cfg,
 
     ros_memcpy(&entry->inst_config, entry_cfg, sizeof(comm_msg_inst_config));
     ros_memcpy(&entry->control, inst_ctrl, sizeof(struct session_inst_control));
+    ros_memset(&entry->stat, 0, sizeof(comm_msg_urr_stat_t));
 
     entry->valid = G_TRUE;
     ros_atomic32_add(&inst_table->use_entry_num, 1);
@@ -760,5 +750,55 @@ int64_t session_instance_init(uint32_t sess_num)
 
     LOG(SESSION, MUST, "session instance init success.");
     return size;
+}
+
+static inline void session_instance_stat_show(struct cli_def *cli, comm_msg_urr_stat_t *stat)
+{
+    cli_print(cli, "forward packets:    %lu", stat->forw_pkts);
+    cli_print(cli, "forward bytes:      %lu", stat->forw_bytes);
+    cli_print(cli, "drop packets:       %lu", stat->drop_pkts);
+    cli_print(cli, "drop bytes:         %lu", stat->drop_bytes);
+    cli_print(cli, "error count:        %lu", stat->err_cnt);
+}
+
+int session_instance_stats_show(struct cli_def *cli, int argc, char **argv)
+{
+    struct session_inst_entry *entry = NULL;
+    struct pdr_table_head *pdr_head = pdr_get_head();
+
+    if (argc < 1) {
+        cli_print(cli, "Parameters too few...\n");
+        goto help;
+    }
+
+    if (strcasecmp(argv[0], "all")) {
+        int32_t cur_index = -1;
+
+        cur_index = Res_GetAvailableInBand(pdr_head->pool_id, cur_index + 1, pdr_head->max_num);
+        while (-1 != (cur_index = Res_GetAvailableInBand(pdr_head->pool_id, cur_index + 1, pdr_head->max_num))) {
+            entry = session_instance_get_entry(cur_index);
+
+            cli_print(cli, "\n---------- instance index %d ----------", cur_index);
+            session_instance_stat_show(cli, &entry->stat);
+        }
+    } else if (strcasecmp(argv[0], "help")) {
+        goto help;
+    } else {
+        int index = atoi(argv[0]);
+
+        entry = session_instance_get_entry(index);
+
+        cli_print(cli, "\n---------- instance index %d ----------", index);
+        session_instance_stat_show(cli, &entry->stat);
+    }
+
+    return 0;
+
+help:
+    cli_print(cli, "\ninst_stat <instance index | all>");
+    cli_print(cli, "\te.g. inst_stat 1");
+    cli_print(cli, "\te.g. inst_stat all");
+
+    return 0;
 }
 

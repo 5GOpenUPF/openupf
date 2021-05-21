@@ -54,6 +54,11 @@ OpenUPF uses [DPDK](https://github.com/DPDK/dpdk.git) to forward packets to ache
 |   N     |(**MT-EDT**)SGW-U support of reporting the size of DL Data Packets.                                       |
 |   N     |(**CIOT**)UPF support of CIoT feature, e.g. small data packet rate enforcement.                           |
 |   N     |(**ETHAR**)UPF support of Ethernet PDU Session Anchor Relocation.                                         |
+|   N     |(**DDDS**)UPF support of reporting the first buffered / first discarded downlink data after buffering / directly dropped downlink data for downlink data delivery status notification.|
+|   N     |(**RDS**)UP function support of Reliable Data Service                                                     |
+|   N     |(**RTTWP**)UPF support of RTT measurements towards the UE Without PMF.                                    |
+|   N     |(**QUASF**)The UP function supports being provisioned in a URR with an Exempted Application ID for Quota Action or an Exempted SDF Filter for Quota Action which is to be used when the quota is exhausted.|
+|   N     |(**NSPOC**)UP function supports notifying start of Pause of Charging via user plane.                      |
 
 ## Summary
 

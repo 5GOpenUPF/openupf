@@ -52,22 +52,18 @@ CVMX_SHARED uint8_t *fp_fast_table_shadow_pool_free = NULL;
 CVMX_SHARED uint32_t fp_host_n3_local_ip;
 CVMX_SHARED uint8_t  fp_host_n3_local_ipv6[IPV6_ALEN];
 CVMX_SHARED uint32_t fp_net_n3_local_ip;
-CVMX_SHARED uint64_t fp_n3_local_mac;
 
 CVMX_SHARED uint32_t fp_host_n6_local_ip;
 CVMX_SHARED uint32_t fp_net_n6_local_ip;
 CVMX_SHARED uint8_t  fp_host_n6_local_ipv6[IPV6_ALEN];
-CVMX_SHARED uint64_t fp_n6_local_mac;
 
 CVMX_SHARED uint32_t fp_host_n4_local_ip;
 CVMX_SHARED uint32_t fp_net_n4_local_ip;
 CVMX_SHARED uint8_t  fp_host_n4_local_ipv6[IPV6_ALEN];
-CVMX_SHARED uint64_t fp_n4_local_mac;
 
 CVMX_SHARED uint32_t fp_host_n9_local_ip;
 CVMX_SHARED uint32_t fp_net_n9_local_ip;
 CVMX_SHARED uint8_t  fp_host_n9_local_ipv6[IPV6_ALEN];
-CVMX_SHARED uint64_t fp_n9_local_mac;
 
 CVMX_SHARED uint16_t fp_extension_type = 17516;
 CVMX_SHARED uint8_t  fp_head_enrich_enable = 1;
@@ -116,7 +112,7 @@ void fp_packet_stat_count(uint32_t stat_mod)
     ++fp2sp_first_pkt_stat[stat_mod][core_id];
 }
 
-static inline uint32_t fp_packet_stat_get(uint32_t stat_mod, uint8_t core_id)
+static inline uint32_t fp_packet_stat_get(uint32_t stat_mod, uint32_t core_id)
 {
     return fp2sp_first_pkt_stat[stat_mod][core_id];
 }
@@ -124,7 +120,7 @@ static inline uint32_t fp_packet_stat_get(uint32_t stat_mod, uint8_t core_id)
 uint8_t *fp_get_port_mac(uint8_t port)
 {
 #ifndef ENABLE_OCTEON_III
-    uint8_t *ret_mac = dpdk_get_mac(fp_port_to_index_public(port));
+    uint8_t *ret_mac = dpdk_get_mac(port);
 
     if (unlikely(NULL == ret_mac)) {
         exit(-1);
@@ -164,7 +160,7 @@ void fp_forward_pkt_to_sp(fp_packet_info *pkt_info, fp_fast_entry *entry,
     if (unlikely(ERROR == fp_send_to_chn_port(rte_pktmbuf_mtod((struct rte_mbuf *)pkt_info->arg, char *),
                     rte_pktmbuf_data_len((struct rte_mbuf *)pkt_info->arg)))) {
         LOG_TRACE(FASTPASS, ERR, trace_flag,
-            "forward ipv4 packet to sp port failed!");
+            "forward ipv4 packet to SMU failed!");
     }
 }
 
@@ -186,20 +182,20 @@ void fp_forward_pkt_buf_to_sp(char *buf, uint32_t len, fp_fast_entry *entry,
 
     /* Not found matched item, forward to sp */
     if (unlikely(ERROR == fp_send_to_chn_port(buf, len))) {
-        LOG_TRACE(FASTPASS, ERR, trace_flag, "forward ipv4 packet to sp port failed!");
+        LOG_TRACE(FASTPASS, ERR, trace_flag, "forward ipv4 packet to SMU failed!");
     }
 }
 
 int fp_phy_pkt_entry(char *buf, int len, uint16_t port_id, void *arg)
 {
     struct packet_desc  desc = {.buf = buf, .len = len, .offset = 0};
-    fp_packet_info      pkt_info = {.buf = buf, .len = len, .arg = arg};
+    fp_packet_info      pkt_info = {.buf = buf, .len = len, .arg = arg, .port_id = port_id};
 
-    /* 后续考虑绑定多个端口可以使用port_id参数作为判断条件 */
+    /**
+     *  Which port receives the message and forwards it back to which port
+     */
 
 #if (defined(ENABLE_DPDK_DEBUG))
-    dpdk_mbuf_record(((struct rte_mbuf *)arg)->buf_addr, __LINE__);
-
     if (unlikely(0 == len)) {
         LOG(FASTPASS, ERR, "ERROR: buf(%p), len: %d, arg(%p), core_id: %hu", buf, len, arg, fp_get_coreid());
         dpdk_dump_packet(buf, 64);
@@ -264,54 +260,6 @@ int fp_phy_pkt_entry(char *buf, int len, uint16_t port_id, void *arg)
 
     LOG(FASTPASS, RUNNING,
         "handle packet(buf %p, len %d) finished!\r\n", buf, len);
-
-    return 0;
-}
-
-int fp_phy_n4_pkt_entry(char *buf, int len, void *arg)
-{
-    struct packet_desc  desc = {.buf = buf, .len = len, .offset = 0};
-    fp_packet_info      pkt_info = {.buf = buf, .len = len, .arg = arg};
-
-    if (!fp_start_is_run()) {
-        fp_free_pkt(arg);
-        fp_packet_stat_count(COMM_MSG_FP_STAT_UNSUPPORT_PKT);
-        LOG(FASTPASS, ERR,
-            "recv buf %p, len %d, but system is not configured!", buf, len);
-        return -1;
-    }
-
-    if (unlikely(packet_dissect(&desc, &pkt_info.match_key) < 0)) {
-        LOG(FASTPASS, PERIOD, "packet dissect failed!");
-        fp_free_pkt(arg);
-        fp_packet_stat_count(COMM_MSG_FP_STAT_UNSUPPORT_PKT);
-        return -1;
-    }
-
-    /* Distinguish between Ethernet II and 802.3 */
-    if (likely(0 == FLOW_MASK_FIELD_ISSET(pkt_info.match_key.field_offset, FLOW_FIELD_ETHERNET_LLC))) {
-        /* Ethernet II should be >= 1536(0x0600) */
-
-        if (likely(FLOW_MASK_FIELD_ISSET(pkt_info.match_key.field_offset, FLOW_FIELD_L1_IPV4))) {
-            fp_pkt_ipv4_n4_entry(&pkt_info);
-        }
-        else if (FLOW_MASK_FIELD_ISSET(pkt_info.match_key.field_offset, FLOW_FIELD_L1_IPV6)) {
-            fp_pkt_ipv6_n4_entry(&pkt_info);
-        }
-        else {
-            fp_free_pkt(arg);
-            fp_packet_stat_count(COMM_MSG_FP_STAT_UNSUPPORT_PKT);
-            return 0;
-        }
-
-    }
-    else {
-        /* 802.3 should be <= 1500 */
-        fp_free_pkt(arg);
-    }
-
-    LOG(FASTPASS, RUNNING,
-        "handle n4 packet(buf %p, len %d) finished!\r\n", buf, len);
 
     return 0;
 }
@@ -903,7 +851,7 @@ int32_t fp_init_phaseII(void)
     ret = fp_fast_table_init(fp_config->fast_bucket_num,
                 fp_config->fast_num);
     if (ret < 0) {
-        LOG(FASTPASS, MUST, "port init failed(%ld)!", ret);
+        LOG(FASTPASS, MUST, "fast table init failed(%ld)!", ret);
         return -1;
     }
     total_mem += ret;
@@ -931,26 +879,22 @@ int32_t fp_init_phaseII(void)
     /* 4.Configure route pool */
     /* Don't support route parse on fastpass */
 
-    /* 5.Update local ip and mac */
+    /* 5.Update local ip and mac, All directions default to one port N3 */
     fp_net_n3_local_ip      = htonl(fp_config->upf_ip[EN_PORT_N3].ipv4);
     fp_host_n3_local_ip     = fp_config->upf_ip[EN_PORT_N3].ipv4;
 	memcpy(fp_host_n3_local_ipv6, fp_config->upf_ip[EN_PORT_N3].ipv6, IPV6_ALEN);
-    memcpy(((uint8_t *)(&fp_n3_local_mac)) + 2, fp_get_port_mac(EN_PORT_N3), ETH_ALEN);
 
     fp_net_n6_local_ip      = htonl(fp_config->upf_ip[EN_PORT_N6].ipv4);
     fp_host_n6_local_ip     = fp_config->upf_ip[EN_PORT_N6].ipv4;
 	memcpy(fp_host_n6_local_ipv6, fp_config->upf_ip[EN_PORT_N6].ipv6, IPV6_ALEN);
-    memcpy(((uint8_t *)(&fp_n6_local_mac)) + 2, fp_get_port_mac(EN_PORT_N6), ETH_ALEN);
 
 	fp_net_n4_local_ip      = htonl(fp_config->upf_ip[EN_PORT_N4].ipv4);
     fp_host_n4_local_ip     = fp_config->upf_ip[EN_PORT_N4].ipv4;
 	memcpy(fp_host_n4_local_ipv6, fp_config->upf_ip[EN_PORT_N4].ipv6, IPV6_ALEN);
-    memcpy(((uint8_t *)(&fp_n4_local_mac)) + 2, fp_get_port_mac(EN_PORT_N4), ETH_ALEN);
 
     fp_net_n9_local_ip      = htonl(fp_config->upf_ip[EN_PORT_N9].ipv4);
     fp_host_n9_local_ip     = fp_config->upf_ip[EN_PORT_N9].ipv4;
 	memcpy(fp_host_n9_local_ipv6, fp_config->upf_ip[EN_PORT_N9].ipv6, IPV6_ALEN);
-    memcpy(((uint8_t *)(&fp_n9_local_mac)) + 2, fp_get_port_mac(EN_PORT_N9), ETH_ALEN);
 
     LOG(FASTPASS, MUST,
         "------phase II init success(cost memory %ld M)------\n",
@@ -1049,10 +993,51 @@ void fp_deinit(void)
 
 int fp_ip_show(struct cli_def *cli,int argc, char **argv)
 {
-    cli_print(cli,"n3  port: %08x %lx\r\n",
-        fp_host_n3_local_ip, fp_n3_local_mac);
-    cli_print(cli,"n6  port: %08x %lx\r\n",
-        fp_host_n6_local_ip, fp_n6_local_mac);
+    char ipv4_str[256], ipv6_str[256];
+
+    /* N3 */
+    if (NULL == inet_ntop(AF_INET, &fp_net_n3_local_ip, ipv4_str, sizeof(ipv4_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    if (NULL == inet_ntop(AF_INET6, fp_host_n3_local_ipv6, ipv6_str, sizeof(ipv6_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    cli_print(cli,"N3       IPv4: %-20s IPv6: %s\r\n", ipv4_str, ipv6_str);
+
+    /* N4 */
+    if (NULL == inet_ntop(AF_INET, &fp_net_n4_local_ip, ipv4_str, sizeof(ipv4_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    if (NULL == inet_ntop(AF_INET6, fp_host_n4_local_ipv6, ipv6_str, sizeof(ipv6_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    cli_print(cli,"N4       IPv4: %-20s IPv6: %s\r\n", ipv4_str, ipv6_str);
+
+    /* N6 */
+    if (NULL == inet_ntop(AF_INET, &fp_net_n6_local_ip, ipv4_str, sizeof(ipv4_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    if (NULL == inet_ntop(AF_INET6, fp_host_n6_local_ipv6, ipv6_str, sizeof(ipv6_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    cli_print(cli,"N6       IPv4: %-20s IPv6: %s\r\n", ipv4_str, ipv6_str);
+
+    /* N9 */
+    if (NULL == inet_ntop(AF_INET, &fp_net_n9_local_ip, ipv4_str, sizeof(ipv4_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    if (NULL == inet_ntop(AF_INET6, fp_host_n9_local_ipv6, ipv6_str, sizeof(ipv6_str))) {
+        cli_print(cli, "inet_ntop failed, error: %s.", strerror(errno));
+        return -1;
+    }
+    cli_print(cli,"N9       IPv4: %-20s IPv6: %s\r\n", ipv4_str, ipv6_str);
 
     return 0;
 }
@@ -1162,6 +1147,7 @@ int fp_show_packet_stat(struct cli_def *cli,int argc, char **argv)
     if (argc > 0 && 0 == strncmp(argv[0], "clean", strlen("clean"))) {
         fp_clean_input_stat();
         memset(fp2sp_first_pkt_stat, 0, sizeof(fp2sp_first_pkt_stat));
+        dpdk_clear_stat();
     }
 
     return 0;
@@ -1255,9 +1241,9 @@ err:
     return -1;
 }
 
-int fp_check_signal_trace(uint32_t sip, uint32_t dip, uint16_t spt, uint16_t dpt, uint8_t pro)
+int fp_check_signal_trace(uint32_t sip, uint32_t dip)
 {
-    int cnt;
+    /*int cnt;
 
     for (cnt = 0; cnt < MAX_TRACE_FLOW_NUM; ++cnt) {
         if (fpu_sig_trace[cnt].valid &&
@@ -1273,7 +1259,7 @@ int fp_check_signal_trace(uint32_t sip, uint32_t dip, uint16_t spt, uint16_t dpt
 	if (fpu_sig_trace_ueip.ueip &&
         ((ntohl(sip) == fpu_sig_trace_ueip.ueip) || (ntohl(dip) == fpu_sig_trace_ueip.ueip))) {
 		return G_TRUE;
-	}
+	}*/
 
     return G_FALSE;
 }
@@ -1334,68 +1320,82 @@ int fp_stats_resource_info(struct cli_def *cli,int argc, char **argv)
     return 0;
 }
 
+static inline void fp_print_cblock(struct cli_def *cli, fp_cblk_entry *cblk)
+{
+    int print_len = 64; /* Default print length */
+    uint32_t cnt;
+    uint8_t *buf;
+
+    cli_print(cli,"cblk->lcore_id: %d\n", cblk->lcore_id);
+    cli_print(cli,"cblk->port:     %d\n", cblk->port);
+    cli_print(cli,"cblk->len:      %d\n", cblk->len);
+    cli_print(cli,"cblk->buf:      (%p)\n", cblk->buf);
+    cli_print(cli,"cblk->pkt:      (%p)\n", cblk->pkt);
+    cli_print(cli,"cblk->time:     %u\n\n", cblk->time);
+
+    buf = (uint8_t *)cblk->pkt;
+    if (cblk->len < print_len)
+        print_len = cblk->len & 0xFFFFFFF0;
+
+    cli_print(cli,"packet info:\n");
+    for (cnt = 0; cnt < print_len; cnt += 16) {
+        cli_print(cli,"%02x %02x %02x %02x %02x %02x %02x %02x    %02x %02x %02x %02x %02x %02x %02x %02x\n",
+            buf[cnt + 0], buf[cnt + 1], buf[cnt + 2], buf[cnt + 3],
+            buf[cnt + 4], buf[cnt + 5], buf[cnt + 6], buf[cnt + 7],
+            buf[cnt + 8], buf[cnt + 9], buf[cnt + 10], buf[cnt + 11],
+            buf[cnt + 12], buf[cnt + 13], buf[cnt + 14], buf[cnt + 15]);
+    }
+}
+
 int fp_show_cblock_info(struct cli_def *cli, int argc, char **argv)
 {
     fp_buff_pool *buff_head = fp_buff_pool_get();
     fp_cblk_entry *cblk;
 
     if (!fp_start_is_run()) {
-        printf("fpu not running.\r\n");
+        cli_print(cli, "fpu not running.\n");
         return 0;
     }
-    cli_print(cli,"                Maximum number        Use number        \n");
+    cli_print(cli, "                Maximum number        Use number        \n");
 
     /* cblock resource */
-    cli_print(cli,"cblk:            %-8u             %-8u\n", buff_head->cblk_max,
+    cli_print(cli, "cblk:            %-8u             %-8u\n", buff_head->cblk_max,
         Res_GetAlloced(buff_head->res_cblk));
 
     /* block resource */
-    cli_print(cli,"block:           %-8u             %-8u\n", buff_head->block_max,
+    cli_print(cli, "block:           %-8u             %-8u\n", buff_head->block_max,
         Res_GetAlloced(buff_head->res_block));
 
     if (argc > 0) {
-        int index = atoi(argv[0]);
-        int print_len = 50;
-        uint32_t cnt;
-        uint8_t *buf;
+        if (0 == strcmp(argv[0], "all")) {
+            int cur_index = -1;
 
-        if (0 == strncmp(argv[0], "help", 4)) {
+            while (-1 != (cur_index = Res_GetAvailableInBand(buff_head->res_cblk,
+                cur_index + 1, buff_head->cblk_max))) {
+
+                cblk = &buff_head->cblk[cur_index];
+
+                fp_print_cblock(cli, cblk);
+            }
+        } else if (0 == strncmp(argv[0], "help", 4)) {
             goto help;
-        }
+        } else {
+            int index = atoi(argv[0]);
 
-        if (index >= buff_head->cblk_max) {
-            cli_print(cli,"Index too large. Less than %u is required.\n", buff_head->cblk_max);
-            return -1;
-        }
-        cblk = &buff_head->cblk[index];
-        cli_print(cli,"cblk->lcore_id: %d\n", cblk->lcore_id);
-        cli_print(cli,"cblk->port:     %d\n", cblk->port);
-        cli_print(cli,"cblk->len:      %d\n", cblk->len);
-        cli_print(cli,"cblk->buf:      (%p)\n", cblk->buf);
-        cli_print(cli,"cblk->pkt:      (%p)\n", cblk->pkt);
-        cli_print(cli,"cblk->time:     %u\n\n", cblk->time);
+            if (index >= buff_head->cblk_max) {
+                cli_print(cli, "Index too large. Less than %u is required.\n", buff_head->cblk_max);
+                return -1;
+            }
+            cblk = &buff_head->cblk[index];
 
-        buf = (uint8_t *)cblk->pkt;
-        if (argc > 1) {
-            print_len = atoi(argv[1]) & 0xFFFFFFF0;
-        }
-        if (cblk->len < print_len)
-            print_len = cblk->len  & 0xFFFFFFF0;
-
-        cli_print(cli,"packet info:\n");
-        for (cnt = 0; cnt < print_len; cnt += 16) {
-            cli_print(cli,"%02x %02x %02x %02x %02x %02x %02x %02x    %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                buf[cnt + 0], buf[cnt + 1], buf[cnt + 2], buf[cnt + 3],
-                buf[cnt + 4], buf[cnt + 5], buf[cnt + 6], buf[cnt + 7],
-                buf[cnt + 8], buf[cnt + 9], buf[cnt + 10], buf[cnt + 11],
-                buf[cnt + 12], buf[cnt + 13], buf[cnt + 14], buf[cnt + 15]);
+            fp_print_cblock(cli, cblk);
         }
     }
 
     return 0;
 
 help:
-    cli_print(cli,"cblk [index|help] [print length]\n");
+    cli_print(cli, "cblk [index|help|all]\n");
     return 0;
 }
 
@@ -1432,36 +1432,6 @@ int fp_set_head_enrich_flag(struct cli_def *cli, int argc, char **argv)
 	}
 
 	return 0;
-}
-
-int fp_cli_start_sent_task(struct cli_def *cli, int argc, char **argv)
-{
-    return 0;
-}
-
-int fp_cli_stop_sent_task(struct cli_def *cli, int argc, char **argv)
-{
-    return 0;
-}
-
-int fp_cli_pkt_test_resend(struct cli_def *cli, int argc, char **argv)
-{
-    return 0;
-}
-
-int fp_cli_pkt_stat_start_task(struct cli_def *cli, int argc, char **argv)
-{
-    return 0;
-}
-
-int fp_cli_pkt_stat_stop_task(struct cli_def *cli, int argc, char **argv)
-{
-    return 0;
-}
-
-int fp_cli_pkt_stat_clear(struct cli_def *cli, int argc, char **argv)
-{
-    return 0;
 }
 
 uint32_t fp_get_capture2spu_switch(void)

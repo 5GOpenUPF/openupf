@@ -6,7 +6,7 @@
 #include "service.h"
 #include "session_audit.h"
 #include "session_msg.h"
-#include "predefine_rule_mgmt.h"
+#include "white_list.h"
 #include "sp_backend_mgmt.h"
 #include "sp_dns_cache.h"
 

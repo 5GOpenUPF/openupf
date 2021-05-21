@@ -183,7 +183,7 @@ int mar_insert(struct session_t *sess, void *parse_mar_arr,
     return 0;
 }
 
-int mar_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num)
+int mar_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num, uint32_t *fail_id)
 {
     struct mar_table_head *mar_head = mar_get_head();
     struct mar_table *mar_tbl = NULL;
@@ -203,6 +203,8 @@ int mar_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num)
 	    if (NULL == mar_tbl) {
 	        LOG(SESSION, ERR, "remove failed, not exist, id: %d.",
 				id_arr[index_cnt]);
+            if (fail_id)
+                *fail_id = id_arr[index_cnt];
             return -1;
 	    }
 	    Res_Free(mar_head->pool_id, 0, mar_tbl->index);

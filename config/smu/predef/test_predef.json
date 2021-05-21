@@ -1,0 +1,56 @@
+{
+    "create_pdr": [
+        {
+            "predefined_name": "fastpass_001",
+            "pdi": {
+                "source_interface": 0
+            },
+            "outer_header_removal": {
+                "outer_header_removal_description": 0,
+                "gtp_u_extension_header_deletion": 1
+            },
+            "far_id": 2147483649
+        },
+        {
+            "predefined_name": "fastpass_002",
+            "pdi": {
+                "source_interface": 1,
+                "ue_ip_address": [
+                    {
+                        "flags": 6,
+                        "ipv4_address": "10.8.125.21"
+                    }
+                ],
+                "sdf_filter": [
+                    {
+                        "flags": 256,
+                        "flow_description": "permit out ip from any to any"
+                    }
+                ]
+            },
+            "far_id": 2147483650
+        }
+    ],
+    "create_far": [
+        {
+            "far_id": 2147483649,
+            "apply_action": ["forw"],
+            "forwarding_parameters": {
+                "destination_interface": 1
+            }
+        },
+        {
+            "far_id": 2147483650,
+            "apply_action": ["forw"],
+            "forwarding_parameters": {
+                "destination_interface": 0,
+                "outer_header_creation": {
+                    "outer_header_creation_description": 256,
+                    "teid": 1280,
+                    "ipv4_address": "10.8.124.200",
+                    "port_number": 2152
+                }
+            }
+        }
+    ]
+}

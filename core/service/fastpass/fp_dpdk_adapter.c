@@ -23,17 +23,6 @@ extern CVMX_SHARED uint16_t fp_c_vlan_id[EN_PORT_BUTT], fp_s_vlan_id[EN_PORT_BUT
 extern CVMX_SHARED uint16_t fp_c_vlan_type[EN_PORT_BUTT], fp_s_vlan_type[EN_PORT_BUTT];
 
 
-static inline uint16_t fp_port_to_index(uint16_t port)
-{
-    /* The port value is converted to the DPDK port ID, port must less EN_PORT_BUTT */
-    return fp_dpdk_port_num == (uint16_t)EN_PORT_BUTT ? (uint16_t)port : 0;
-}
-
-inline uint16_t fp_port_to_index_public(uint16_t port)
-{
-    return fp_port_to_index(port);
-}
-
 inline uint32_t fp_get_coreid(void)
 {
     return rte_lcore_id();
@@ -47,15 +36,6 @@ inline uint64_t fp_get_cycle(void)
 inline uint64_t fp_get_freq(void)
 {
     return rte_get_tsc_hz();
-}
-
-inline void __fp_free_pkt(void *buf, int line)
-{
-#if (defined(ENABLE_DPDK_DEBUG))
-    dpdk_mbuf_del_record(((struct rte_mbuf *)buf)->buf_addr, line);
-#endif
-    /* if dpdk, free dpdk packet pointer */
-    dpdk_free_mbuf((struct rte_mbuf *)buf);
 }
 
 /* Forwards the pkt to host channel */
@@ -142,44 +122,14 @@ static inline void fp_outer_add_vlan(void *m, uint8_t port_type)
 #endif
 }
 
-inline void __fp_fwd_snd_to_n3_phy(void *m, const char *func, int line)
+inline void __fp_fwd_snd_to_phy(void *m, uint16_t port_id, const char *func, int line)
 {
 	/* dest addr */
     fp_be_copy_port_mac(EN_PORT_N3, rte_pktmbuf_mtod((struct rte_mbuf *)m, uint8_t *));
 
     fp_outer_add_vlan(m, EN_PORT_N3);
 
-    dpdk_send_packet(m, fp_port_to_index(EN_PORT_N3), func, line);
-}
-
-inline void __fp_fwd_snd_to_n6_phy(void *m, const char *func, int line)
-{
-	/* dest addr */
-    fp_be_copy_port_mac(EN_PORT_N6, rte_pktmbuf_mtod((struct rte_mbuf *)m, uint8_t *));
-
-    fp_outer_add_vlan(m, EN_PORT_N6);
-
-    dpdk_send_packet(m, fp_port_to_index(EN_PORT_N6), func, line);
-}
-
-inline void __fp_fwd_snd_to_n9_phy(void *m, const char *func, int line)
-{
-	/* dest addr */
-    fp_be_copy_port_mac(EN_PORT_N9, rte_pktmbuf_mtod((struct rte_mbuf *)m, uint8_t *));
-
-    fp_outer_add_vlan(m, EN_PORT_N9);
-
-    dpdk_send_packet(m, fp_port_to_index(EN_PORT_N9), func, line);
-}
-
-inline void __fp_fwd_snd_to_n4_phy(void *m, const char *func, int line)
-{
-	/* dest addr */
-    fp_be_copy_port_mac(EN_PORT_N4, rte_pktmbuf_mtod((struct rte_mbuf *)m, uint8_t *));
-
-    fp_outer_add_vlan(m, EN_PORT_N4);
-
-    dpdk_send_packet(m, fp_port_to_index(EN_PORT_N4), func, line);
+    dpdk_send_packet(m, port_id, func, line);
 }
 
 void fp_dpdk_add_cblk_buf(void *cblock)
@@ -198,104 +148,34 @@ void fp_dpdk_send_cblk_buf(uint32_t lcore_id)
     fp_cblk_entry *cblk;
     struct rte_mbuf *m;
 
-    if (fp_start_is_run()) {
+    if (likely(fp_start_is_run())) {
         ros_rwlock_write_lock(&fp_dpdk_queue.dpdk_tx_lock[lcore_id]);
         cblk = (fp_cblk_entry *)lstGet(&fp_dpdk_queue.dpdk_tx_lst[lcore_id]);
         while (NULL != cblk) {
             switch (cblk->port) {
-                case EN_PORT_N3:
-                    if (cblk->free) {
-                        /* Alloc buffer */
-                        m = dpdk_alloc_mbuf();
-                        if (unlikely(NULL == m)) {
-                            fp_free_pkt(cblk->buf);
-                            LOG(FASTPASS, ERR, "Alloc Mbuf fail.\r\n");
-                            break;
-                        }
-
-                        /* Copy content and set length */
-                        rte_memcpy(rte_pktmbuf_mtod(m, void *), cblk->pkt, cblk->len);
-                        rte_pktmbuf_pkt_len(m) = cblk->len;
-                        rte_pktmbuf_data_len(m) = cblk->len;
-
-                        fp_fwd_snd_to_n3_phy(m);
-                    } else {
-
-                        fp_fwd_snd_to_n3_phy(cblk->buf);
-                    }
-
-                    break;
-
-                case EN_PORT_N6:
-                    if (cblk->free) {
-                        /* Alloc buffer */
-                        m = dpdk_alloc_mbuf();
-                        if (unlikely(NULL == m)) {
-                            fp_free_pkt(cblk->buf);
-                            LOG(FASTPASS, ERR, "Alloc Mbuf fail.\r\n");
-                            break;
-                        }
-
-                        /* Copy content and set length */
-                        rte_memcpy(rte_pktmbuf_mtod(m, void *), cblk->pkt, cblk->len);
-                        rte_pktmbuf_pkt_len(m) = cblk->len;
-                        rte_pktmbuf_data_len(m) = cblk->len;
-
-                        fp_fwd_snd_to_n6_phy(m);
-                    } else {
-
-                        fp_fwd_snd_to_n6_phy(cblk->buf);
-                    }
-                    break;
-
-                case EN_PORT_N4:
-                    /* Recv from N4 */
-                    if (cblk->free) {
-                        /* Alloc buffer */
-                        m = dpdk_alloc_mbuf();
-                        if (unlikely(NULL == m)) {
-                            fp_free_pkt(cblk->buf);
-                            LOG(FASTPASS, ERR, "Alloc Mbuf fail.\r\n");
-                            break;
-                        }
-
-                        /* Copy content and set length */
-                        rte_memcpy(rte_pktmbuf_mtod(m, void *), cblk->pkt, cblk->len);
-                        rte_pktmbuf_pkt_len(m) = cblk->len;
-                        rte_pktmbuf_data_len(m) = cblk->len;
-
-                        fp_fwd_snd_to_n4_phy(m);
-                    } else {
-
-                        fp_fwd_snd_to_n4_phy(cblk->buf);
-                    }
-                    break;
-
-                case EN_PORT_N9:
-                    /* Recv from N9 */
-                    if (cblk->free) {
-                        /* Alloc buffer */
-                        m = dpdk_alloc_mbuf();
-                        if (unlikely(NULL == m)) {
-                            fp_free_pkt(cblk->buf);
-                            LOG(FASTPASS, ERR, "Alloc Mbuf fail.\r\n");
-                            break;
-                        }
-
-                        /* Copy content and set length */
-                        rte_memcpy(rte_pktmbuf_mtod(m, void *), cblk->pkt, cblk->len);
-                        rte_pktmbuf_pkt_len(m) = cblk->len;
-                        rte_pktmbuf_data_len(m) = cblk->len;
-
-                        fp_fwd_snd_to_n9_phy(m);
-                    } else {
-
-                        fp_fwd_snd_to_n9_phy(cblk->buf);
-                    }
+                case FP_DROP_PORT_ID:
+                    fp_free_pkt(cblk->buf);
                     break;
 
                 default:
-                    fp_free_pkt(cblk->buf);
+                    if (likely(cblk->free)) {
+                        /* Alloc buffer */
+                        m = dpdk_alloc_mbuf();
+                        if (unlikely(NULL == m)) {
+                            fp_free_pkt(cblk->buf);
+                            LOG(FASTPASS, ERR, "Alloc Mbuf fail.\r\n");
+                            break;
+                        }
+
+                        /* Copy content and set length */
+                        rte_memcpy(rte_pktmbuf_mtod(m, void *), cblk->pkt, cblk->len);
+                        rte_pktmbuf_pkt_len(m) = cblk->len;
+                        rte_pktmbuf_data_len(m) = cblk->len;
+
+                        fp_fwd_snd_to_phy(m, cblk->port);
+                    } else {
+                        fp_fwd_snd_to_phy(cblk->buf, cblk->port);
+                    }
                     break;
             }
 

@@ -111,8 +111,8 @@ static void session_gtpu_send_echo_req(struct session_gtpu_entry *gtpu_entry)
             ipv4_hdr->tos           = 0;
             ipv4_hdr->protocol      = IP_PRO_UDP;
             ipv4_hdr->tot_len       = 0;
-            ipv4_hdr->id            = (uint16_t)ros_get_tsc_hz();
-            ipv4_hdr->frag_off      = 0x0040;
+            ipv4_hdr->id            = (uint16_t)ros_rdtsc();
+            ipv4_hdr->frag_off      = 0;
             ipv4_hdr->ttl           = 64;
             ipv4_hdr->dest          = htonl(gtpu_entry->ip_addr.ipv4);
             ipv4_hdr->source        = htonl(upc_cfg->upf_ip_cfg[gtpu_entry->port].ipv4);
@@ -242,8 +242,8 @@ static int session_gtpu_send_echo_resp(struct filter_key *key)
                 ipv4_hdr->tos           = 0;
                 ipv4_hdr->protocol      = IP_PRO_UDP;
                 ipv4_hdr->tot_len       = 0; /* Finally, set it up */
-                ipv4_hdr->id            = (uint16_t)ros_get_tsc_hz();
-                ipv4_hdr->frag_off      = 0x0040;
+                ipv4_hdr->id            = (uint16_t)ros_rdtsc();
+                ipv4_hdr->frag_off      = 0;
                 ipv4_hdr->ttl           = 64;
                 ipv4_hdr->dest          = tmp_ipv4_hdr->source;
                 ipv4_hdr->source        = tmp_ipv4_hdr->dest;
@@ -401,7 +401,7 @@ static void *session_gtpu_send_request_task(void *arg)
         if (-1 == cur_index || cur_round >= SESSION_ECHO_PERIOD_TIMES) {
             if (cur_round < SESSION_ECHO_PERIOD_TIMES) {
                 /* 提前处理完了 */
-                LOG(SESSION, RUNNING, "Finished in advance, cur_round: %u, max_round: %u.",
+                LOG(SESSION, PERIOD, "Finished in advance, cur_round: %u, max_round: %u.",
                     cur_round, SESSION_ECHO_PERIOD_TIMES);
                 sleep((SESSION_ECHO_PERIOD_TIMES - cur_round) * SESSION_ECHO_PERIOD_INTERVAL);
             }
@@ -464,8 +464,8 @@ void session_gtpu_send_error_indication(struct filter_key *key)
                 ipv4_hdr->tos           = 0;
                 ipv4_hdr->protocol      = IP_PRO_UDP;
                 ipv4_hdr->tot_len       = 0; /* Finally, set it up */
-                ipv4_hdr->id            = (uint16_t)ros_get_tsc_hz();
-                ipv4_hdr->frag_off      = 0x0040;
+                ipv4_hdr->id            = (uint16_t)ros_rdtsc();
+                ipv4_hdr->frag_off      = 0;
                 ipv4_hdr->ttl           = 64;
                 ipv4_hdr->dest          = tmp_ipv4_hdr->source;
                 ipv4_hdr->source        = tmp_ipv4_hdr->dest;
@@ -936,8 +936,8 @@ int session_gtpu_end_marker(comm_msg_outh_cr_t *ohc)
 	            ipv4_hdr->protocol      = IP_PRO_UDP;
 	            ipv4_hdr->tot_len       = htons(sizeof(struct pro_gtp_hdr) +
 	                sizeof(struct pro_udp_hdr) + sizeof(struct pro_ipv4_hdr));
-	            ipv4_hdr->id            = (uint16_t)ros_get_tsc_hz();
-	            ipv4_hdr->frag_off      = 0x0040;
+	            ipv4_hdr->id            = (uint16_t)ros_rdtsc();
+	            ipv4_hdr->frag_off      = 0;
 	            ipv4_hdr->ttl           = 0xFF;
 	            ipv4_hdr->dest          = htonl(ohc->ipv4);
 	            ipv4_hdr->source        = htonl(upc_cfg->upf_ip_cfg[EN_PORT_N3].ipv4);

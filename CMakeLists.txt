@@ -17,9 +17,6 @@ set(PROJECT_VERSION_MINOR 1)
 set(PROJECT_VERSION_PATCH 0)
 set(PROJECT_VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
 
-# DPDK compilation mode "make" "ninja" or "exist", Using "Ninja" requires root privileges to install
-set(DPDK_COMPILE_MODE exist)
-
 # Set project name
 project(upf VERSION ${PROJECT_VERSION} LANGUAGES C)
 
@@ -31,6 +28,8 @@ SET(UPF_CORE_PATH ${UPF_ROOT_PATH}/core)
 SET(UPF_CONFIG_PATH ${UPF_ROOT_PATH}/config)
 SET(UPF_LIBS_PATH ${UPF_ROOT_PATH}/libs)
 SET(UPF_TEST_PATH ${UPF_ROOT_PATH}/test)
+SET(UPF_RESTFUL_PKGCFG_PATH ${UPF_INSTALL_PATH}/lib/pkgconfig)
+SET(UPF_DPDK_PKGCFG_PATH ${UPF_BUILD_PATH}/dpdk/install/lib/pkgconfig)
 
 # Compile files
 SET(UPF_HEADER_FILES "")
@@ -44,24 +43,23 @@ endif()
 
 set(CMAKE_MODULE_PATH "${UPF_LIBS_PATH};${CMAKE_MODULE_PATH}")
 if(${PROGRAM_NAME} MATCHES "fpu" OR ${PROGRAM_NAME} MATCHES "lbu")
-    if(${DPDK_COMPILE_MODE} MATCHES "make" OR ${DPDK_COMPILE_MODE} MATCHES "ninja")
-        include(libdpdk)
-    else()
-        set(LIBDPDK_INCLUDE_DIR ${UPF_BUILD_PATH}/dpdk/include)
-        set(LIBDPDK_LIBS_DIR ${UPF_BUILD_PATH}/dpdk/lib)
-    endif()
+    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DALLOW_EXPERIMENTAL_API -DCONFIG_FP_DPDK_PORT -DENABLE_DPDK_LIB")
+
+    set (ENV{PKG_CONFIG_PATH} "${PKG_CONFIG_PATH}:${UPF_DPDK_PKGCFG_PATH}")
+    find_package(PkgConfig REQUIRED)
+    pkg_search_module(PKG_DPDK REQUIRED libdpdk)
+elseif(${PROGRAM_NAME} MATCHES "smu")
+    set (ENV{PKG_CONFIG_PATH} "${PKG_CONFIG_PATH}:${UPF_RESTFUL_PKGCFG_PATH}")
+    find_package(PkgConfig REQUIRED)
+    pkg_search_module(PKG_ULFIUS REQUIRED libulfius)
+    pkg_search_module(PKG_ORCANIA REQUIRED liborcania)
 endif()
 
 # Set compile flag
 set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
-                        -DUSR_LITTLE_ENDIAN \
                         -D_GNU_SOURCE \
-                        -DCM_BACKTRACE \
-                        -DCM_ENABLE_ASSERT \
-                        -DUPF_VERSION=${PROJECT_VERSION} \
                         -DPRODUCT_IS_${PROGRAM_NAME} \
-                        -Wl,-rpath,/opt/upf/lib \
-                        -Wl,-rpath,/opt/upf/dpdk/lib64"
+                        -Wl,-rpath,/opt/upf/lib"
 )
 
 # Set installation directory
@@ -71,7 +69,7 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 message(STATUS "CMAKE_INSTALL_PREFIX is ${CMAKE_INSTALL_PREFIX}")
 
-add_definitions(-fPIC -g -O2 -m64 -pthread -march=native 
+add_definitions(-fPIC -g -O2 -pthread -march=native 
     -Wmaybe-uninitialized -Wimplicit 
     -Werror -Wall -Waddress -Wchar-subscripts 
     -Wenum-compare -Wimplicit-int -Wimplicit-function-declaration 

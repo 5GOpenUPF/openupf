@@ -16,7 +16,7 @@
 #include "session_check.h"
 #include "traffic_endpoint_mgmt.h"
 #include "pfd_mgmt.h"
-#include "predefine_rule_mgmt.h"
+#include "white_list.h"
 #include "upc_node.h"
 #include "session_msg.h"
 #include "urr_proc.h"
@@ -24,27 +24,9 @@
 #include "sp_backend_mgmt.h"
 #include "sp_dns_cache.h"
 #include "session_audit.h"
+#include "predefine_rule_mgmt.h"
 
 #include "local_parse.h"
-
-struct bar_table *bar_add_predefined(session_buffer_action_rule *parse_bar)
-{
-    struct bar_table *bar_tbl = NULL;
-
-    bar_tbl = bar_table_create_local(parse_bar->bar_id);
-    if (NULL == bar_tbl) {
-        LOG(SESSION, ERR, "bar table create failed, bar_id %u.",
-            parse_bar->bar_id);
-        return NULL;
-    }
-
-    ros_rwlock_write_lock(&bar_tbl->lock);// lock
-    bar_tbl->bar.notify_delay = parse_bar->notify_delay;
-    bar_tbl->bar.pkts_max = parse_bar->buffer_pkts_cnt;
-    ros_rwlock_write_unlock(&bar_tbl->lock);// unlock
-
-    return bar_tbl;
-}
 
 static int far_create_content_copy(struct far_table *local_far,
     session_far_create *parse_far, uint32_t node_index)
@@ -289,7 +271,7 @@ struct far_table *far_add(struct session_t *sess,
         uint32_t rm_id = parse_far->far_id;
 
         LOG(SESSION, ERR, "far create content copy failed.");
-        far_remove(sess, &rm_id, 1, NULL);
+        far_remove(sess, &rm_id, 1, NULL, NULL);
         *fail_id = rm_id;
         return NULL;
     }
@@ -309,51 +291,6 @@ struct far_table *far_add(struct session_t *sess,
     ros_rwlock_write_unlock(&far_tbl->lock);  /* unlock */
 
     parse_far->far_index = far_tbl->index;
-
-    return far_tbl;
-}
-
-struct far_table *far_add_predefined(session_far_create *parse_far_arr,uint32_t *fail_id)
-{
-    struct far_table *far_tbl = NULL;
-    session_far_create *parse_far = parse_far_arr;
-	comm_msg_far_config     *local_far_cfg = NULL;
-
-    /* create far table */
-    far_tbl = far_table_create_local(parse_far->far_id);
-    if (NULL == far_tbl) {
-        LOG(SESSION, ERR,
-        	"far table create failed, far_id %u.", parse_far->far_id);
-        *fail_id = parse_far->far_id;
-        return NULL;
-    }
-
-    ros_rwlock_write_lock(&far_tbl->lock);  /* lock */
-
-	if (0 > far_create_content_copy(far_tbl, parse_far,
-        0xffffffff)) {
-        ros_rwlock_write_unlock(&far_tbl->lock);  /* unlock */
-        uint32_t rm_id = parse_far->far_id;
-
-        LOG(SESSION, ERR, "far create content copy failed.");
-        *fail_id = rm_id;
-        return NULL;
-    }
-
-	if (parse_far->forw_param.member_flag.d.redirect_present) {
-		local_far_cfg = &far_tbl->far_cfg;
-
-        ros_memcpy(&local_far_cfg->forw_redirect, &parse_far->forw_param.redirect_addr.address,
-            sizeof(session_redirect_server));
-        local_far_cfg->choose.d.flag_redirect = parse_far->forw_param.redirect_addr.addr_type + 1;
-    }
-
-    if (far_tbl->far_cfg.choose.d.flag_header_enrich &&
-        EN_COMM_SRC_IF_ACCESS == far_tbl->far_cfg.forw_if) {
-        LOG(SESSION, ERR, "HEEU feature valid,"
-            " But forward interface is ACCESS.");
-    }
-    ros_rwlock_write_unlock(&far_tbl->lock);  /* unlock */
 
     return far_tbl;
 }
@@ -517,17 +454,13 @@ static void qer_content_copy(struct qer_table *qer_tbl,
         local_qer_cfg->flag.s.f_up = local_qer_priv->pkt_rate_status.flag.d.UL;
         local_qer_cfg->flag.s.f_dp = local_qer_priv->pkt_rate_status.flag.d.DL;
 
-        if (local_qer_priv->qer_ctrl_indic.d.NORD) {
-            local_qer_cfg->ul_pkt_max = local_qer_priv->pkt_rate_status.remain_ul_packets;
-            local_qer_cfg->dl_pkt_max = local_qer_priv->pkt_rate_status.remain_dl_packets;
-        }
+        local_qer_cfg->ul_pkt_max = local_qer_priv->pkt_rate_status.remain_ul_packets;
+        local_qer_cfg->dl_pkt_max = local_qer_priv->pkt_rate_status.remain_dl_packets;
 
-        if (local_qer_priv->qer_ctrl_indic.d.MOED) {
-            local_qer_cfg->ul_pkt_max = local_qer_priv->pkt_rate_status.remain_ul_packets +
-                local_qer_priv->pkt_rate_status.addit_remain_ul_packets;
-            local_qer_cfg->dl_pkt_max = local_qer_priv->pkt_rate_status.remain_dl_packets +
-                local_qer_priv->pkt_rate_status.addit_remain_dl_packets;
-        }
+        local_qer_cfg->ul_pkt_max = local_qer_priv->pkt_rate_status.remain_ul_packets +
+            local_qer_priv->pkt_rate_status.addit_remain_ul_packets;
+        local_qer_cfg->dl_pkt_max = local_qer_priv->pkt_rate_status.remain_dl_packets +
+            local_qer_priv->pkt_rate_status.addit_remain_dl_packets;
         /* 只发送整秒的有效时间值 */
         local_qer_cfg->valid_time = local_qer_priv->pkt_rate_status.rate_ctrl_status_time >> 32;
     }
@@ -593,28 +526,7 @@ struct qer_table *qer_add(struct session_t *sess,
     return qer_tbl;
 }
 
-struct qer_table *qer_add_predefined(session_qos_enforcement_rule *parse_qer_arr, uint32_t *fail_id)
-{
-    struct qer_table *qer_tbl = NULL;
-    session_qos_enforcement_rule *parse_qer = parse_qer_arr;
-
-    qer_tbl = qer_table_create_local(parse_qer->qer_id);
-    if (NULL == qer_tbl) {
-        LOG(SESSION, ERR, "qer table create failed, qer_id %u.",
-            parse_qer->qer_id);
-        *fail_id = parse_qer->qer_id;
-        return NULL;
-    }
-
-    ros_rwlock_write_lock(&qer_tbl->lock);/* lock */
-    qer_content_copy(qer_tbl, parse_qer);
-    ros_rwlock_write_unlock(&qer_tbl->lock);/* unlock */
-
-    return qer_tbl;
-}
-
-struct qer_table *qer_update(struct session_t *sess,
-    session_qos_enforcement_rule *parse_qer_arr,
+struct qer_table *qer_update(struct session_t *sess, session_qos_enforcement_rule *parse_qer_arr,
     uint32_t index, uint32_t *fail_id)
 {
     struct qer_table *qer_tbl = NULL;
@@ -851,7 +763,7 @@ struct urr_table *urr_add(struct session_t *sess,
 
         LOG(SESSION, ERR, "urr content copy failed, urr_id %u.",
             parse_urr->urr_id);
-        urr_remove(sess, &rm_id, 1, NULL);
+        urr_remove(sess, &rm_id, 1, NULL, NULL);
         *fail_id = rm_id;
 
         return NULL;
@@ -859,36 +771,6 @@ struct urr_table *urr_add(struct session_t *sess,
     ros_rwlock_write_unlock(&urr_tbl->lock);/* unlock */
 
     parse_urr->urr_index = urr_tbl->index;
-
-    return urr_tbl;
-}
-
-struct urr_table *urr_add_predefined(session_usage_report_rule *parse_urr_arr,uint32_t *fail_id)
-{
-    struct urr_table *urr_tbl = NULL;
-    session_usage_report_rule *parse_urr = parse_urr_arr;
-
-    urr_tbl = urr_table_create_local(parse_urr->urr_id);
-    if (NULL == urr_tbl) {
-        LOG(SESSION, ERR, "urr table create failed, urr_id %u.",
-            parse_urr->urr_id);
-        *fail_id = parse_urr->urr_id;
-        return NULL;
-    }
-
-	ros_rwlock_write_lock(&urr_tbl->lock);/* lock */
-	if (0 > urr_content_copy(&urr_tbl->urr, parse_urr, NULL)) {
-        ros_rwlock_write_unlock(&urr_tbl->lock);/* unlock */
-
-        uint32_t rm_id = parse_urr->urr_id;
-
-        LOG(SESSION, ERR, "urr content copy failed, urr_id %u.",
-            parse_urr->urr_id);
-
-        *fail_id = rm_id;
-        return NULL;
-    }
-	ros_rwlock_write_unlock(&urr_tbl->lock);/* unlock */
 
     return urr_tbl;
 }
@@ -912,7 +794,6 @@ struct urr_table *urr_update(struct session_t *sess,
         ros_rwlock_write_unlock(&urr_tbl->lock);/* unlock */
         LOG(SESSION, ERR, "urr content copy failed, urr_id %u.",
             parse_urr->urr_id);
-        urr_remove(sess, &parse_urr->urr_id, 1, NULL);
 
         return NULL;
     }
@@ -1090,8 +971,8 @@ static int pdr_create_content_copy(struct pdr_table *local_pdr_tbl,
         }
         /* network_instance */
         if (parse_pdr->pdi_content.member_flag.d.network_instance_present) {
-            ros_memcpy(&local_pdi->network_instance,
-                &parse_pdr->pdi_content.network_instance, NETWORK_INSTANCE_LEN);
+            ros_memcpy(local_pdi->network_instance,
+                parse_pdr->pdi_content.network_instance, NETWORK_INSTANCE_LEN);
         }
         /* ue_ipaddr */
         local_pdi->ue_ipaddr_num = parse_pdr->pdi_content.ue_ipaddr_num;
@@ -1117,8 +998,8 @@ static int pdr_create_content_copy(struct pdr_table *local_pdr_tbl,
         /* application_id */
         if (parse_pdr->pdi_content.member_flag.d.application_id_present) {
             local_pdi->application_id_present = 1;
-            ros_memcpy(&local_pdi->application_id,
-                &parse_pdr->pdi_content.application_id, MAX_APP_ID_LEN);
+            ros_memcpy(local_pdi->application_id,
+                parse_pdr->pdi_content.application_id, MAX_APP_ID_LEN);
         } else {
             local_pdi->application_id_present = 0;
         }
@@ -1197,6 +1078,7 @@ static int pdr_create_content_copy(struct pdr_table *local_pdr_tbl,
         }
         /* src_if_type */
         if (parse_pdr->pdi_content.member_flag.d.src_if_type_present) {
+            local_pdi->src_if_type_present = 1;
             local_pdi->src_if_type.value =
                 parse_pdr->pdi_content.src_if_type.value;
         }
@@ -1216,8 +1098,6 @@ static int pdr_create_content_copy(struct pdr_table *local_pdr_tbl,
     }
     /* urr_id_arr */
     if (parse_pdr->urr_id_number > 0) {
-        uint8_t cnt = 0;
-
         local_pdr->urr_list_number = parse_pdr->urr_id_number;
         for (cnt = 0; cnt < parse_pdr->urr_id_number; ++cnt) {
             local_pdr->urr_id_array[cnt] = parse_pdr->urr_id_array[cnt];
@@ -1225,17 +1105,20 @@ static int pdr_create_content_copy(struct pdr_table *local_pdr_tbl,
     }
     /* qer_id_arr */
     if (parse_pdr->qer_id_number > 0) {
-        uint8_t cnt = 0;
-
         local_pdr->qer_list_number = parse_pdr->qer_id_number;
         for (cnt = 0; cnt < parse_pdr->qer_id_number; ++cnt) {
             local_pdr->qer_id_array[cnt] = parse_pdr->qer_id_array[cnt];
         }
     }
+    /* Activate Predefined Rules */
+    if (parse_pdr->act_pre_number > 0) {
+        local_pdr->act_pre_number = parse_pdr->act_pre_number;
+        ros_memcpy(local_pdr->act_pre_arr, parse_pdr->act_pre_arr,
+            sizeof(session_act_predef_rules) * local_pdr->act_pre_number);
+    }
     /* act_time */
     if (parse_pdr->member_flag.d.act_time_present) {
-        if (G_FALSE ==
-            upc_node_features_validity_query(UF_DPDRA)) {
+        if (G_FALSE == upc_node_features_validity_query(UF_DPDRA)) {
             LOG(SESSION, ERR,
                 "DPDRA feature not support, activation time invalid.");
             return -1;
@@ -1245,8 +1128,7 @@ static int pdr_create_content_copy(struct pdr_table *local_pdr_tbl,
     }
     /* deact_time */
     if (parse_pdr->member_flag.d.deact_time_present) {
-        if (G_FALSE ==
-            upc_node_features_validity_query(UF_DPDRA)) {
+        if (G_FALSE == upc_node_features_validity_query(UF_DPDRA)) {
             LOG(SESSION, ERR,
                 "DPDRA feature not support, deactivation time invalid.");
             return -1;
@@ -1269,120 +1151,12 @@ static int pdr_create_content_copy(struct pdr_table *local_pdr_tbl,
     return 0;
 }
 
-static int pdr_create_content_copy_local(struct pdr_table *local_pdr_tbl,
-    session_pdr_create *parse_pdr)
-{
-    struct pkt_detection_rule *local_pdr = &local_pdr_tbl->pdr;
-    uint8_t cnt;
-    struct pkt_detection_info *local_pdi = &local_pdr->pdi_content;
-
-    /* pdr_id */
-    local_pdr->pdr_id = parse_pdr->pdr_id;
-    /* precedence */
-    if (parse_pdr->member_flag.d.precedence_present) {
-        local_pdr->precedence = parse_pdr->precedence;
-    }
-    /* pdi_content */
-    if (parse_pdr->member_flag.d.pdi_content_present) {
-        /* si */
-        local_pdi->si = parse_pdr->pdi_content.si;
-        /* local_fteid */
-        if (parse_pdr->pdi_content.member_flag.d.local_fteid_present) {
-            local_pdi->local_fteid_num = 1;
-            ros_memcpy(&local_pdi->local_fteid[0].local_fteid,
-                &parse_pdr->pdi_content.local_fteid, sizeof(session_f_teid));
-            local_pdi->local_fteid[0].pdr_tbl = local_pdr_tbl;
-        }
-        /* network_instance */
-        if (parse_pdr->pdi_content.member_flag.d.network_instance_present) {
-            ros_memcpy(&local_pdi->network_instance,
-                &parse_pdr->pdi_content.network_instance, NETWORK_INSTANCE_LEN);
-        }
-        /* ue_ipaddr */
-        local_pdi->ue_ipaddr_num = parse_pdr->pdi_content.ue_ipaddr_num;
-        if (parse_pdr->pdi_content.ue_ipaddr_num) {
-            for (cnt = 0; cnt < parse_pdr->pdi_content.ue_ipaddr_num; ++cnt) {
-                ros_memcpy(&local_pdi->ue_ipaddr[cnt].ueip,
-                    &parse_pdr->pdi_content.ue_ipaddr[cnt], sizeof(session_ue_ip));
-                local_pdi->ue_ipaddr[cnt].pdr_tbl = local_pdr_tbl;
-            }
-        }
-
-        /* application_id */
-        if (parse_pdr->pdi_content.member_flag.d.application_id_present) {
-            local_pdi->application_id_present = 1;
-            ros_memcpy(&local_pdi->application_id,
-                &parse_pdr->pdi_content.application_id, MAX_APP_ID_LEN);
-        } else {
-            local_pdi->application_id_present = 0;
-        }
-        /* eth_pdu_ses_info */
-        if (parse_pdr->pdi_content.member_flag.d.eth_pdu_ses_info_present) {
-            local_pdi->eth_pdu_ses_info.value =
-                parse_pdr->pdi_content.eth_pdu_ses_info.value;
-        }
-        /* qfi_arr */
-        if (parse_pdr->pdi_content.qfi_number > 0) {
-            local_pdi->qfi_number = parse_pdr->pdi_content.qfi_number;
-            for (cnt = 0; cnt < parse_pdr->pdi_content.qfi_number; ++cnt) {
-                local_pdi->qfi_array[cnt] = parse_pdr->pdi_content.qfi_array[cnt];
-            }
-        }
-
-
-        /* src_if_type */
-        if (parse_pdr->pdi_content.member_flag.d.src_if_type_present) {
-            local_pdi->src_if_type.value =
-                parse_pdr->pdi_content.src_if_type.value;
-        }
-    }
-    /* OHR */
-    if (parse_pdr->member_flag.d.OHR_present) {
-        local_pdr->outer_header_removal.ohr_flag = 1;
-        local_pdr->outer_header_removal.type =
-            parse_pdr->outer_header_removal.type;
-        local_pdr->outer_header_removal.flag =
-            parse_pdr->outer_header_removal.gtp_u_exten;
-    }
-    /* far_id */
-    if (parse_pdr->member_flag.d.far_id_present) {
-        local_pdr->far_present = 1;
-        local_pdr->far_id = parse_pdr->far_id;
-    }
-    /* urr_id_arr */
-    if (parse_pdr->urr_id_number > 0) {
-        uint8_t cnt = 0;
-
-        local_pdr->urr_list_number = parse_pdr->urr_id_number;
-        for (cnt = 0; cnt < parse_pdr->urr_id_number; ++cnt) {
-            local_pdr->urr_id_array[cnt] = parse_pdr->urr_id_array[cnt];
-        }
-    }
-    /* qer_id_arr */
-    if (parse_pdr->qer_id_number > 0) {
-        uint8_t cnt = 0;
-
-        local_pdr->qer_list_number = parse_pdr->qer_id_number;
-        for (cnt = 0; cnt < parse_pdr->qer_id_number; ++cnt) {
-            local_pdr->qer_id_array[cnt] = parse_pdr->qer_id_array[cnt];
-        }
-    }
-
-    /* mar_id */
-    if (parse_pdr->member_flag.d.mar_id_present) {
-        local_pdr->mar_present = 1;
-        local_pdr->mar_id = parse_pdr->mar_id;
-    }
-
-    return 0;
-}
-
 static int pdr_update_content_copy(struct pdr_table *local_pdr_tbl,
     session_pdr_update *parse_pdr, struct session_t *sess)
 {
     struct pkt_detection_rule *local_pdr = &local_pdr_tbl->pdr;
-    uint8_t cnt;
     struct pkt_detection_info *local_pdi = &local_pdr->pdi_content;
+    uint8_t cnt;
 
     /* pdr_id */
     local_pdr->pdr_id = parse_pdr->pdr_id;
@@ -1403,13 +1177,11 @@ static int pdr_update_content_copy(struct pdr_table *local_pdr_tbl,
         }
         /* network_instance */
         if (parse_pdr->pdi_content.member_flag.d.network_instance_present) {
-            ros_memcpy(&local_pdr->pdi_content.network_instance,
-                &parse_pdr->pdi_content.network_instance, NETWORK_INSTANCE_LEN);
+            ros_memcpy(local_pdr->pdi_content.network_instance,
+                parse_pdr->pdi_content.network_instance, NETWORK_INSTANCE_LEN);
         }
         /* ue_ipaddr */
         if (parse_pdr->pdi_content.ue_ipaddr_num) {
-            uint8_t cnt;
-
             local_pdr->pdi_content.ue_ipaddr_num = parse_pdr->pdi_content.ue_ipaddr_num;
             for (cnt = 0; cnt < parse_pdr->pdi_content.ue_ipaddr_num; ++cnt) {
                 ros_memcpy(&local_pdr->pdi_content.ue_ipaddr[cnt].ueip,
@@ -1432,8 +1204,8 @@ static int pdr_update_content_copy(struct pdr_table *local_pdr_tbl,
         /* application_id */
         if (parse_pdr->pdi_content.member_flag.d.application_id_present) {
             local_pdi->application_id_present = 1;
-            ros_memcpy(&local_pdr->pdi_content.application_id,
-                &parse_pdr->pdi_content.application_id, MAX_APP_ID_LEN);
+            ros_memcpy(local_pdr->pdi_content.application_id,
+                parse_pdr->pdi_content.application_id, MAX_APP_ID_LEN);
         }
         /* eth_pdu_ses_info */
         if (parse_pdr->pdi_content.member_flag.d.eth_pdu_ses_info_present) {
@@ -1442,8 +1214,6 @@ static int pdr_update_content_copy(struct pdr_table *local_pdr_tbl,
         }
         /* qfi_arr */
         if (parse_pdr->pdi_content.qfi_number > 0) {
-            uint8_t cnt = 0;
-
             local_pdr->pdi_content.qfi_number = parse_pdr->pdi_content.qfi_number;
             for (cnt = 0; cnt < parse_pdr->pdi_content.qfi_number; ++cnt) {
                 local_pdr->pdi_content.qfi_array[cnt] =
@@ -1602,6 +1372,7 @@ static int pdr_update_content_copy(struct pdr_table *local_pdr_tbl,
         }
         /* src_if_type */
         if (parse_pdr->pdi_content.member_flag.d.src_if_type_present) {
+            local_pdi->src_if_type_present = 1;
             local_pdr->pdi_content.src_if_type.value =
                 parse_pdr->pdi_content.src_if_type.value;
         }
@@ -1618,8 +1389,6 @@ static int pdr_update_content_copy(struct pdr_table *local_pdr_tbl,
     }
     /* urr_id_arr */
     if (parse_pdr->urr_id_number > 0) {
-        uint8_t cnt = 0;
-
         local_pdr->urr_list_number = parse_pdr->urr_id_number;
         for (cnt = 0; cnt < parse_pdr->urr_id_number; ++cnt) {
             local_pdr->urr_id_array[cnt] = parse_pdr->urr_id_array[cnt];
@@ -1627,11 +1396,20 @@ static int pdr_update_content_copy(struct pdr_table *local_pdr_tbl,
     }
     /* qer_id_arr */
     if (parse_pdr->qer_id_number > 0) {
-        uint8_t cnt = 0;
-
         local_pdr->qer_list_number = parse_pdr->qer_id_number;
         for (cnt = 0; cnt < parse_pdr->qer_id_number; ++cnt) {
             local_pdr->qer_id_array[cnt] = parse_pdr->qer_id_array[cnt];
+        }
+    }
+    /* Activate Predefined Rules */
+    if (parse_pdr->act_pre_number > 0) {
+        if (local_pdr->act_pre_number == 0) {
+            local_pdr->act_pre_number = parse_pdr->act_pre_number;
+            ros_memcpy(local_pdr->act_pre_arr, parse_pdr->act_pre_arr,
+                sizeof(session_act_predef_rules) * local_pdr->act_pre_number);
+        } else {
+            LOG(SESSION, ERR, "Predefined rules are already active and cannot be activated repeatedly.");
+            return -1;
         }
     }
     /* act_time */
@@ -1715,314 +1493,578 @@ static int eth_filter_insert(struct dl_list *eth_list_head,
     return 0;
 }
 
-int predefine_pdr_copyto_pdr(session_pdr_member_flags *member_flag,uint8_t *pfname,
-	session_packet_detection_info *pdi_content_in,struct pdr_table *pdr_tbl,struct session_t *sess)
+static int pdr_predefined_content_copy(struct pdr_table *local_pdr_tbl,
+    session_pdr_create *parse_pdr)
 {
-	struct predefine_table *pf_tbl = NULL;
-	struct pdr_table    *pf_pdr_tbl = NULL;
-	/*struct dl_list *pos = NULL;
-    struct dl_list *next = NULL;
-	struct sdf_filter_entry *sdfFilter = NULL;
-    struct eth_filter_entry *ethFilter = NULL;
-	struct pkt_detection_info *pdi_content = NULL;*/
-	struct qer_table *qer_tbl = NULL;
-	struct urr_table *urr_tbl = NULL;
-	uint8_t i = 0,j = 0;
+    struct pkt_detection_rule *local_pdr = &local_pdr_tbl->pdr;
+    uint8_t cnt;
+    struct pkt_detection_info *local_pdi = &local_pdr->pdi_content;
 
-	if(pfname == NULL)
-	{
-		LOG(SESSION, ERR, "predefine_pdr_copyto_pdr pfname is NULL");
-    	return -1;
-	}
-
-	if((pf_tbl=pf_rule_table_search(pfname)) == NULL)
-	{
-		LOG(SESSION, ERR, "pf_rule_table_search failed, pfname[%s]",pfname);
-    	return -1;
-	}
-
-	LOG(SESSION, RUNNING, "pdi_content.si:%d [%d %d]",pdi_content_in->si,pf_tbl->pdr_index[0],pf_tbl->pdr_index[1]);
-	if(pdi_content_in->si == 0)//接入侧
-	{
-		if((pf_pdr_tbl = pdr_get_table(pf_tbl->pdr_index[0])) == NULL)
-		{
-			LOG(SESSION, ERR, "pdr_get_table failed, pdr_index %u.",pf_tbl->pdr_index[0]);
-        	return -1;
-		}
-	}
-	else
-	{
-		if((pf_pdr_tbl = pdr_get_table(pf_tbl->pdr_index[1])) == NULL)
-		{
-			LOG(SESSION, ERR, "pdr_get_table failed, pdr_index %u.",pf_tbl->pdr_index[0]);
-        	return -1;
-		}
-	}
-
-	//如果pdr表里面没有携带far，则使用预定义的far
-	if(pdr_tbl->pdr.far_present == 0)
-	{
-		pdr_tbl->pdr.far_present = pf_pdr_tbl->pdr.far_present;
-		pdr_tbl->pdr.far_id = pf_pdr_tbl->pdr.far_id;
-		pdr_tbl->pdr_pri.far_index = pf_pdr_tbl->pdr_pri.far_index;
-	}
-
-	if(pdr_tbl->pdr.mar_present == 0)
-	{
-		pdr_tbl->pdr.mar_present = pf_pdr_tbl->pdr.mar_present;
-		pdr_tbl->pdr.mar_id = pf_pdr_tbl->pdr.mar_id;
-		pdr_tbl->pdr_pri.mar_index = pf_pdr_tbl->pdr_pri.mar_index;
-	}
-
-	if(member_flag->d.OHR_present == 0)
-		ros_memcpy(&pdr_tbl->pdr.outer_header_removal,&pf_pdr_tbl->pdr.outer_header_removal,sizeof(comm_msg_outh_rm_t));
-
-	if(pdr_tbl->pdr.urr_list_number == 0)
-	{
-		ros_memcpy(&pdr_tbl->pdr.urr_id_array[pdr_tbl->pdr.urr_list_number],
-			&pf_pdr_tbl->pdr.urr_id_array[0],sizeof(uint32_t)*(pf_pdr_tbl->pdr.urr_list_number));
-		pdr_tbl->pdr.urr_list_number += pf_pdr_tbl->pdr.urr_list_number;
-
-		//把本地urr表插入到session里面
-		for(i=0;i<pf_pdr_tbl->pdr.urr_list_number && i<MAX_URR_NUM;i++)
-		{
-			for(j=0;j<pf_tbl->urr_num && j<MAX_PF_RULE_URR_TABLE;j++)
-			{
-				if(pf_pdr_tbl->pdr.urr_id_array[i] == pf_tbl->urr_id[j])
-				{
-					if((urr_tbl=urr_get_table(pf_tbl->urr_index[j])))
-					{
-						LOG(SESSION, RUNNING, "rbtree_insert session:[%x],index:[%d]",pf_pdr_tbl->pdr.urr_id_array[i],
-							urr_tbl->index);
-						ros_rwlock_write_lock(&sess->lock);// lock
-						urr_tbl->sess = sess;
-						urr_container_init(urr_tbl->index);//修改urr的上报方式后，每次引用都要初始化
-						if (rbtree_insert(&sess->session.urr_root, &urr_tbl->urr_node,
-					        &pf_pdr_tbl->pdr.urr_id_array[i], urr_id_compare) < 0) {
-					        ros_rwlock_write_unlock(&sess->lock);// unlock
-					        LOG(SESSION, ERR,
-					            "urr insert failed, id: %u.", pf_pdr_tbl->pdr.urr_id_array[i]);
-							continue;
-					    }
-						ros_rwlock_write_unlock(&sess->lock);// unlock
-					}
-				}
-			}
-		}
-	}
-
-	if(pdr_tbl->pdr.qer_list_number == 0)
-	{
-		ros_memcpy(&pdr_tbl->pdr.qer_id_array[pdr_tbl->pdr.qer_list_number],
-			&pf_pdr_tbl->pdr.qer_id_array[0],sizeof(uint32_t)*(pf_pdr_tbl->pdr.qer_list_number));
-		pdr_tbl->pdr.qer_list_number += pf_pdr_tbl->pdr.qer_list_number;
-		//把本地qer表插入到session里面
-		for(i=0;i<pf_pdr_tbl->pdr.qer_list_number && i<MAX_QER_NUM;i++)
-		{
-			for(j=0;j<pf_tbl->qer_num && j<MAX_PF_RULE_QER_TABLE;j++)
-			{
-				if(pf_pdr_tbl->pdr.qer_id_array[i] == pf_tbl->qer_id[j])
-				{
-					if((qer_tbl=qer_get_table(pf_tbl->qer_index[j])))
-					{
-						LOG(SESSION, RUNNING, "rbtree_insert session:[%x] index:[%d]",pf_pdr_tbl->pdr.qer_id_array[i],qer_tbl->index);
-						ros_rwlock_write_lock(&sess->lock);// lock
-						if (rbtree_insert(&sess->session.qer_root, &qer_tbl->qer_node,
-					        &pf_pdr_tbl->pdr.qer_id_array[i], qer_id_compare_externel) < 0) {
-					        ros_rwlock_write_unlock(&sess->lock);// unlock
-					        LOG(SESSION, ERR,
-					            "qer insert failed, id: %u.", pf_pdr_tbl->pdr.qer_id_array[i]);
-							continue;
-					    }
-						ros_rwlock_write_unlock(&sess->lock);// unlock
-					}
-				}
-			}
-		}
-	}
-
-	/* application_id */
-	if(pdi_content_in->member_flag.d.application_id_present == 0)
-	{
-		pdr_tbl->pdr.pdi_content.application_id_present = pf_pdr_tbl->pdr.pdi_content.application_id_present;
-		ros_memcpy(&pdr_tbl->pdr.pdi_content.application_id,&pf_pdr_tbl->pdr.pdi_content.application_id, MAX_APP_ID_LEN);
-	}
-
-	//filter一般是在pdr里面带下来，而不是预定义里面配置，暂时去掉
-	/*pdi_content = &pf_pdr_tbl->pdr.pdi_content;
-	if ((pdi_content_in->eth_filter_num == 0) && (pdi_content->filter_type == FILTER_ETH)) {
-		pdr_tbl->pdr.pdi_content.filter_type = FILTER_ETH;
-		dl_list_init(&pdr_tbl->pdr.pdi_content.filter_list);
-    	dl_list_for_each_safe(pos, next, &pdi_content->filter_list) {
-        	ethFilter = (struct eth_filter_entry *)container_of(pos,
-                             	struct eth_filter_entry, eth_filter_node);
-			dl_list_add_tail(&pdr_tbl->pdr.pdi_content.filter_list, &ethFilter->eth_filter_node);
-			pdr_local_eth_filter_insert_pdr(&pdr_tbl->pdr.pdi_content.filter_list, &ethFilter->eth_cfg);
+    /* pdi_content */
+    if (parse_pdr->member_flag.d.pdi_content_present) {
+        /* si */
+        //local_pdi->si = parse_pdr->pdi_content.si;
+        /* network_instance */
+        if (parse_pdr->pdi_content.member_flag.d.network_instance_present) {
+            ros_memcpy(&local_pdi->network_instance,
+                parse_pdr->pdi_content.network_instance, NETWORK_INSTANCE_LEN);
         }
-    } else if ((pdi_content_in->sdf_filter_num == 0) && (pdi_content->filter_type == FILTER_SDF)) {
-    	pdr_tbl->pdr.pdi_content.filter_type = FILTER_SDF;
-		dl_list_init(&pdr_tbl->pdr.pdi_content.filter_list);
-        dl_list_for_each_safe(pos, next, &pdi_content->filter_list) {
-            sdfFilter = (struct sdf_filter_entry *)container_of(pos,
-                                 struct sdf_filter_entry, sdf_filter_node);
-			dl_list_add_tail(&pdr_tbl->pdr.pdi_content.filter_list, &sdfFilter->sdf_filter_node);
-			sdf_filter_create(&pdr_tbl->pdr.pdi_content.filter_list, &sdfFilter->sdf_cfg);
+        /* application_id */
+        if (parse_pdr->pdi_content.member_flag.d.application_id_present) {
+            local_pdi->application_id_present = 1;
+            ros_memcpy(local_pdi->application_id,
+                parse_pdr->pdi_content.application_id, MAX_APP_ID_LEN);
+        } else {
+            local_pdi->application_id_present = 0;
         }
-    }*/
+        /* eth_pdu_ses_info */
+        if (parse_pdr->pdi_content.member_flag.d.eth_pdu_ses_info_present) {
+            local_pdi->eth_pdu_ses_info.value =
+                parse_pdr->pdi_content.eth_pdu_ses_info.value;
+        }
+        /* framed_route */
+        if (parse_pdr->pdi_content.framed_route_num > 0) {
+            if (G_FALSE == upc_node_features_validity_query(UF_FRRT)) {
+                LOG(SESSION, ERR,
+                    "FRRT feature not support, framed route invalid.");
+                return -1;
+            } else {
+                uint8_t fr_cnt = 0, fr_num = 0;
+                struct pdr_framed_route *fr_v4 = NULL;
+                session_framed_route *parse_fr = NULL;
 
-	pf_tbl->activate = 1;
-	/*在预定义表里面记录下哪些pdr引用了这张预定义表，
-	   用于去激活时删除pdr和inst表*/
-	pf_tbl->quote_pdr_index[pf_tbl->quote_pdr_num++] = pdr_tbl->index;
+                fr_num = parse_pdr->pdi_content.framed_route_num;
+                fr_v4 = local_pdi->framed_ipv4_route;
+                parse_fr = parse_pdr->pdi_content.framed_route;
 
-	return 0;
+                local_pdi->framed_ipv4_route_num = fr_num;
+                for (fr_cnt = 0; fr_cnt < fr_num; ++fr_cnt) {
+                    fr_v4[fr_cnt].pdr_tbl = local_pdr_tbl;
+                    fr_v4[fr_cnt].route.dest_ip = parse_fr[fr_cnt].dest_ip;
+                    fr_v4[fr_cnt].route.ip_mask = parse_fr[fr_cnt].ip_mask;
+                    fr_v4[fr_cnt].route.gateway = parse_fr[fr_cnt].gateway;
+                    fr_v4[fr_cnt].route.metrics = parse_fr[fr_cnt].metrics;
+                }
+            }
+        }
+        /* framed_routing */
+        if (parse_pdr->pdi_content.member_flag.d.framed_routing_present) {
+            if (G_FALSE == upc_node_features_validity_query(UF_FRRT)) {
+                LOG(SESSION, ERR,
+                    "FRRT feature not support, framed route invalid.");
+                return -1;
+            } else {
+                local_pdi->framed_routing = parse_pdr->pdi_content.framed_routing;
+            }
+        }
+        /* framed_route_ipv6 */
+        if (parse_pdr->pdi_content.framed_ipv6_route_num > 0) {
+            if (G_FALSE == upc_node_features_validity_query(UF_FRRT)) {
+                LOG(SESSION, ERR,
+                    "FRRT feature not support, framed route invalid.");
+                return -1;
+            } else {
+                uint8_t fr_cnt = 0, fr_num = 0;
+                struct pdr_framed_route_ipv6 *fr_v6 = NULL;
+                session_framed_route_ipv6 *parse_fr = NULL;
+
+                fr_num = parse_pdr->pdi_content.framed_ipv6_route_num;
+                fr_v6 = local_pdi->framed_ipv6_route;
+                parse_fr = parse_pdr->pdi_content.framed_ipv6_route;
+
+                local_pdi->framed_ipv6_route_num = fr_num;
+                for (fr_cnt = 0; fr_cnt < fr_num; ++fr_cnt) {
+                    fr_v6[fr_cnt].pdr_tbl = local_pdr_tbl;
+                    ros_memcpy(&fr_v6[fr_cnt].route, &parse_fr[fr_cnt],
+                        sizeof(session_framed_route_ipv6));
+                }
+            }
+        }
+        /* src_if_type */
+        if (parse_pdr->pdi_content.member_flag.d.src_if_type_present) {
+            local_pdi->src_if_type_present = 1;
+            local_pdi->src_if_type.value =
+                parse_pdr->pdi_content.src_if_type.value;
+        }
+    }
+    /* OHR */
+    if (parse_pdr->member_flag.d.OHR_present) {
+        local_pdr->outer_header_removal.ohr_flag = 1;
+        local_pdr->outer_header_removal.type =
+            parse_pdr->outer_header_removal.type;
+        local_pdr->outer_header_removal.flag =
+            parse_pdr->outer_header_removal.gtp_u_exten;
+    }
+    /* far_id */
+    if (0 == local_pdr->far_present && parse_pdr->member_flag.d.far_id_present) {
+        local_pdr->far_present = 1;
+        local_pdr->far_id = parse_pdr->far_id;
+    }
+    /* urr_id_arr */
+    if (parse_pdr->urr_id_number > 0) {
+        if ((parse_pdr->urr_id_number + local_pdr->urr_list_number) > MAX_URR_NUM) {
+            LOG(SESSION, ERR, "The number of URRs exceeds the limit.");
+            return -1;
+        }
+
+        for (cnt = 0; cnt < parse_pdr->urr_id_number; ++cnt) {
+            local_pdr->urr_id_array[local_pdr->urr_list_number + cnt] = parse_pdr->urr_id_array[cnt];
+        }
+        local_pdr->urr_list_number = parse_pdr->urr_id_number;
+    }
+    /* qer_id_arr */
+    if (parse_pdr->qer_id_number > 0) {
+        if ((parse_pdr->qer_id_number + local_pdr->qer_list_number) > MAX_QER_NUM) {
+            LOG(SESSION, ERR, "The number of QERs exceeds the limit.");
+            return -1;
+        }
+
+        for (cnt = 0; cnt < parse_pdr->qer_id_number; ++cnt) {
+            local_pdr->qer_id_array[local_pdr->qer_list_number + cnt] = parse_pdr->qer_id_array[cnt];
+        }
+        local_pdr->qer_list_number = parse_pdr->qer_id_number;
+    }
+    /* act_time */
+    if (parse_pdr->member_flag.d.act_time_present) {
+        if (G_FALSE == upc_node_features_validity_query(UF_DPDRA)) {
+            LOG(SESSION, ERR,
+                "DPDRA feature not support, activation time invalid.");
+            return -1;
+        } else {
+            local_pdr->activation_time = parse_pdr->activation_time;
+        }
+    }
+    /* deact_time */
+    if (parse_pdr->member_flag.d.deact_time_present) {
+        if (G_FALSE == upc_node_features_validity_query(UF_DPDRA)) {
+            LOG(SESSION, ERR,
+                "DPDRA feature not support, deactivation time invalid.");
+            return -1;
+        } else {
+            local_pdr->deactivation_time = parse_pdr->deactivation_time;
+        }
+    }
+    /* mar_id */
+    if (parse_pdr->member_flag.d.mar_id_present) {
+        local_pdr->mar_present = 1;
+        local_pdr->mar_id = parse_pdr->mar_id;
+    }
+
+    return 0;
 }
 
-struct pdr_table *pdr_add(struct session_t *sess,
-    session_pdr_create *parse_pdr_arr, uint32_t index, uint32_t *fail_id)
+static int pdr_table_copy(struct pdr_table *dest_pdr_tbl, struct pdr_table *src_pdr_tbl)
 {
-    struct pdr_table    *pdr_tbl = NULL;
-    session_pdr_create *parse_pdr = &parse_pdr_arr[index];
+    struct pkt_detection_rule *dest_pdr = &dest_pdr_tbl->pdr;
+    struct pkt_detection_rule *src_pdr = &src_pdr_tbl->pdr;
+    struct pkt_detection_info *dest_pdi = &dest_pdr->pdi_content;
+    struct pkt_detection_info *src_pdi = &src_pdr->pdi_content;
+    uint8_t cnt;
+
+    /* precedence */
+    dest_pdr->precedence = src_pdr->precedence;
+
+    /* pdi_content */
+    /* si */
+    dest_pdi->si = src_pdi->si;
+
+    /* dest_fteid */
+    dest_pdi->local_fteid_num = src_pdi->local_fteid_num;
+    for (cnt = 0; cnt < src_pdi->local_fteid_num; ++cnt) {
+        ros_memcpy(&dest_pdi->local_fteid[cnt].local_fteid,
+            &src_pdr->pdi_content.local_fteid[cnt].local_fteid, sizeof(session_f_teid));
+        dest_pdi->local_fteid[cnt].pdr_tbl = dest_pdr_tbl;
+    }
+    /* network_instance */
+    if (strlen(src_pdi->network_instance)) {
+        strcpy(dest_pdi->network_instance, src_pdi->network_instance);
+    }
+    /* ue_ipaddr */
+    dest_pdi->ue_ipaddr_num = src_pdi->ue_ipaddr_num;
+    for (cnt = 0; cnt < src_pdi->ue_ipaddr_num; ++cnt) {
+        ros_memcpy(&dest_pdi->ue_ipaddr[cnt].ueip,
+            &src_pdi->ue_ipaddr[cnt].ueip, sizeof(session_ue_ip));
+        dest_pdi->ue_ipaddr[cnt].pdr_tbl = dest_pdr_tbl;
+    }
+    /* traffic_endpoint_id */
+    dest_pdi->traffic_endpoint_num = src_pdi->traffic_endpoint_num;
+    if (src_pdi->traffic_endpoint_num) {
+        if (G_FALSE == upc_node_features_validity_query(UF_PDIU)) {
+            LOG(SESSION, ERR,
+                "PDIU feature not support, traffic endpoint id invalid.");
+            return -1;
+        }
+        memcpy(dest_pdi->traffic_endpoint_id,
+            src_pdi->traffic_endpoint_id, src_pdi->traffic_endpoint_num);
+    }
+    /* application_id */
+    if (src_pdi->application_id_present) {
+        dest_pdi->application_id_present = 1;
+        strcpy(dest_pdi->application_id, src_pdi->application_id);
+    } else {
+        dest_pdi->application_id_present = 0;
+    }
+    /* eth_pdu_ses_info */
+    dest_pdi->eth_pdu_ses_info.value = src_pdi->eth_pdu_ses_info.value;
+    /* qfi_arr */
+    dest_pdi->qfi_number = src_pdi->qfi_number;
+    for (cnt = 0; cnt < src_pdi->qfi_number; ++cnt) {
+        dest_pdi->qfi_array[cnt] = src_pdi->qfi_array[cnt];
+    }
+    /* framed_route */
+    if (src_pdi->framed_ipv4_route_num > 0) {
+        uint8_t fr_cnt = 0, fr_num = 0;
+        struct pdr_framed_route *fr_v4 = NULL;
+        struct pdr_framed_route *parse_fr = NULL;
+
+        fr_num = src_pdi->framed_ipv4_route_num;
+        fr_v4 = dest_pdi->framed_ipv4_route;
+        parse_fr = src_pdi->framed_ipv4_route;
+
+        dest_pdi->framed_ipv4_route_num = fr_num;
+        for (fr_cnt = 0; fr_cnt < fr_num; ++fr_cnt) {
+            fr_v4[fr_cnt].pdr_tbl = dest_pdr_tbl;
+            fr_v4[fr_cnt].route.dest_ip = parse_fr[fr_cnt].route.dest_ip;
+            fr_v4[fr_cnt].route.ip_mask = parse_fr[fr_cnt].route.ip_mask;
+            fr_v4[fr_cnt].route.gateway = parse_fr[fr_cnt].route.gateway;
+            fr_v4[fr_cnt].route.metrics = parse_fr[fr_cnt].route.metrics;
+        }
+    }
+    /* framed_routing */
+    dest_pdi->framed_routing = src_pdi->framed_routing;
+    /* framed_route_ipv6 */
+    if (src_pdi->framed_ipv6_route_num > 0) {
+        uint8_t fr_cnt = 0, fr_num = 0;
+        struct pdr_framed_route_ipv6 *fr_v6 = NULL;
+        struct pdr_framed_route_ipv6 *parse_fr = NULL;
+
+        fr_num = src_pdi->framed_ipv6_route_num;
+        fr_v6 = dest_pdi->framed_ipv6_route;
+        parse_fr = src_pdi->framed_ipv6_route;
+
+        dest_pdi->framed_ipv6_route_num = fr_num;
+        for (fr_cnt = 0; fr_cnt < fr_num; ++fr_cnt) {
+            fr_v6[fr_cnt].pdr_tbl = dest_pdr_tbl;
+            ros_memcpy(&fr_v6[fr_cnt].route, &parse_fr[fr_cnt].route,
+                sizeof(session_framed_route_ipv6));
+        }
+    }
+    /* src_if_type */
+    if (src_pdi->src_if_type_present) {
+        dest_pdi->src_if_type_present = 1;
+        dest_pdi->src_if_type.value = src_pdi->src_if_type.value;
+    }
+
+    /* OHR */
+    if (src_pdr->outer_header_removal.ohr_flag) {
+        dest_pdr->outer_header_removal.ohr_flag = 1;
+        dest_pdr->outer_header_removal.type = src_pdr->outer_header_removal.type;
+        dest_pdr->outer_header_removal.flag = src_pdr->outer_header_removal.flag;
+    }
+    /* far_id */
+    if (src_pdr->far_present) {
+        dest_pdr->far_present = 1;
+        dest_pdr->far_id = src_pdr->far_id;
+    }
+    /* urr_id_arr */
+    if (src_pdr->urr_list_number > 0) {
+        dest_pdr->urr_list_number = src_pdr->urr_list_number;
+        for (cnt = 0; cnt < src_pdr->urr_list_number; ++cnt) {
+            dest_pdr->urr_id_array[cnt] = src_pdr->urr_id_array[cnt];
+        }
+    }
+    /* qer_id_arr */
+    if (src_pdr->qer_list_number > 0) {
+        dest_pdr->qer_list_number = src_pdr->qer_list_number;
+        for (cnt = 0; cnt < src_pdr->qer_list_number; ++cnt) {
+            dest_pdr->qer_id_array[cnt] = src_pdr->qer_id_array[cnt];
+        }
+    }
+    /* Activate Predefined Rules */
+    /* It was already inserted when the PDR was created */
+    /*if (src_pdr->act_pre_number > 0) {
+        dest_pdr->act_pre_number = src_pdr->act_pre_number;
+        ros_memcpy(dest_pdr->act_pre_arr, src_pdr->act_pre_arr,
+            sizeof(session_act_predef_rules) * dest_pdr->act_pre_number);
+    }*/
+    /* act_time */
+    dest_pdr->activation_time = src_pdr->activation_time;
+    /* deact_time */
+    dest_pdr->deactivation_time = src_pdr->deactivation_time;
+    /* mar_id */
+    if (src_pdr->mar_present) {
+        dest_pdr->mar_present = 1;
+        dest_pdr->mar_id = src_pdr->mar_id;
+    }
+
+    return 0;
+}
+
+int pdr_predefined_activate(struct session_t *sess, struct pdr_table *common_pdr, char *predef_name)
+{
+    struct pdr_table *pdr_tbl = NULL;
+    predefined_pdr_entry *pdr_entry;
+    session_pdr_create *predef_pdr;
+    uint8_t erase_predef_rules = 0;
+
+    if (NULL == sess || NULL == common_pdr || NULL == predef_name) {
+        LOG(SESSION, ERR, "Abnormal parameters, sess(%p), common_pdr(%p), predef_pdr(%p).",
+            sess, common_pdr, predef_name);
+        return -1;
+    }
+
+    pdr_entry = predef_rules_search(predef_name);
+    if (NULL == pdr_entry) {
+        LOG(SESSION, ERR, "Activate pre-defined rules failed, no such name: %s",
+            predef_name);
+        return -1;
+    }
+    predef_pdr = &pdr_entry->pdr_cfg;
 
     /* create pdr table, maybe search at first */
-    pdr_tbl = pdr_table_create(sess, parse_pdr->pdr_id);
+    pdr_tbl = pdr_table_create_to_pdr_table(sess, common_pdr, predef_name);
     if (NULL == pdr_tbl) {
-        LOG(SESSION, ERR, "pdr table create failed, pdr_id %u.",
-            parse_pdr->pdr_id);
-        *fail_id = parse_pdr->pdr_id;
-        return NULL;
+        LOG(SESSION, ERR, "PDR table create failed, predefined name: %s", predef_name);
+        return -1;
     }
 
     ros_rwlock_write_lock(&pdr_tbl->lock); /* lock */
-	if (0 > pdr_create_content_copy(pdr_tbl, parse_pdr, sess)) {
+	if (0 > pdr_table_copy(pdr_tbl, common_pdr)) {
         ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
-        uint16_t rm_id = parse_pdr->pdr_id;
-
         LOG(SESSION, ERR, "pdr create content copy failed.");
-        pdr_remove(sess, &rm_id, 1, NULL, NULL);
-        *fail_id = rm_id;
 
-        return NULL;
+        goto cleanup;
     }
-	dl_list_init(&pdr_tbl->pdr.pdi_content.filter_list);
-    ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
+    /* Filling pre-defined rules */
+    if (0 > pdr_predefined_content_copy(pdr_tbl, predef_pdr)) {
+        ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
+        LOG(SESSION, ERR, "pdr create content copy failed.");
 
-	LOG(SESSION, RUNNING, "pdr_add , act_pre_number %d.",parse_pdr->act_pre_number);
+        goto cleanup;
+    }
+
+    if (0 > predef_rules_generate(sess, predef_name)) {
+        ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
+        LOG(SESSION, ERR, "Generate pre-defined rules failed.");
+
+        goto cleanup;
+    }
+    ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
+    erase_predef_rules = 1;
 
     /* Pre acquisition far index */
     if (pdr_tbl->pdr.far_present) {
         uint32_t search_id = pdr_tbl->pdr.far_id;
-
         struct far_table *far_tbl = far_table_search(sess, search_id);
         if (NULL == far_tbl) {
-            uint16_t rm_id = pdr_tbl->pdr.pdr_id;
-
             LOG(SESSION, ERR, "search far table failed, far id: %u.",
                 search_id);
 
-            if (-1 == pdr_remove(sess, &rm_id, 1, NULL, NULL)) {
-                LOG(SESSION, ERR,
-                    "pdr remove failed, pdr id: %d.", rm_id);
-            }
-            *fail_id = rm_id;
-            return NULL;
+            goto cleanup;
         }
         pdr_tbl->pdr_pri.far_index = far_tbl->index;
     }
 
     if (pdr_tbl->pdr.mar_present) {
         uint32_t search_id = pdr_tbl->pdr.mar_id;
-
         struct mar_table *mar_tbl = mar_table_search(sess, search_id);
         if (NULL == mar_tbl) {
-            uint16_t rm_id = pdr_tbl->pdr.pdr_id;
             LOG(SESSION, ERR, "search mar table failed, mar id: %u.",
                 search_id);
 
-            if (-1 == pdr_remove(sess, &rm_id, 1, NULL, NULL)) {
-                LOG(SESSION, ERR,
-                    "pdr remove failed, pdr id: %d.", rm_id);
-            }
-            *fail_id = rm_id;
-            return NULL;
+            goto cleanup;
         }
         pdr_tbl->pdr_pri.mar_index = mar_tbl->index;
     }
 
-	if (0 < parse_pdr->pdi_content.sdf_filter_num) {
+	if (0 < predef_pdr->pdi_content.sdf_filter_num) {
+        pdr_tbl->pdr.pdi_content.filter_type = FILTER_SDF;
+        if (0 > sdf_filter_insert(&pdr_tbl->pdr.pdi_content.filter_list,
+            predef_pdr->pdi_content.sdf_filter,
+            predef_pdr->pdi_content.sdf_filter_num)) {
+            LOG(SESSION, ERR, "insert sdf filter failed.");
+
+            goto cleanup;
+        }
+    } else if (0 < predef_pdr->pdi_content.eth_filter_num) {
+        pdr_tbl->pdr.pdi_content.filter_type = FILTER_ETH;
+        if (0 > eth_filter_insert(&pdr_tbl->pdr.pdi_content.filter_list,
+            predef_pdr->pdi_content.eth_filter,
+            predef_pdr->pdi_content.eth_filter_num)) {
+            LOG(SESSION, ERR, "insert eth filter failed.");
+
+            goto cleanup;
+        }
+    }
+    //predef_pdr->pdr_index = pdr_tbl->index;
+
+    if (-1 == pdr_set_active(pdr_tbl)) {
+        LOG(SESSION, ERR, "PDR set active failed, predefined name: %s", predef_name);
+    }
+
+    LOG(SESSION, ERR, "Activate predefined PDR predefined name: %s", predef_name);
+    pdr_table_show(pdr_tbl);
+
+    return 0;
+
+cleanup:
+
+    if (-1 == pdr_remove_predefined_pdr(sess, common_pdr, predef_name)) {
+        LOG(SESSION, ERR, "PDR cleanup failed, predefined name: %s", predef_name);
+    }
+
+    if (erase_predef_rules) {
+        if (0 > predef_rules_erase(sess, predef_name)) {
+            LOG(SESSION, ERR, "Erase pre-defined rules failed.");
+        }
+    }
+
+    return -1;
+}
+
+int pdr_predefined_deactivate(struct session_t *sess, struct pdr_table *root_pdr, char *predef_name)
+{
+    if (NULL == sess || NULL == root_pdr || NULL == predef_name) {
+        LOG(SESSION, ERR, "Abnormal parameters, sess(%p), root_pdr(%p), predef_name(%p).",
+            sess, root_pdr, predef_name);
+        return -1;
+    }
+
+    /* create pdr table, maybe search at first */
+    if (-1 == pdr_remove_predefined_pdr(sess, root_pdr, predef_name)) {
+        LOG(SESSION, DEBUG, "Predefined PDR delete failed, predefined name: %s",
+            predef_name);
+        /* Keep going */
+    }
+
+    if (0 > predef_rules_erase(sess, predef_name)) {
+        LOG(SESSION, DEBUG, "Erase predefined rules failed.");
+        /* Keep going */
+    }
+
+    return 0;
+}
+
+struct pdr_table *pdr_add(struct session_t *sess,
+    session_pdr_create *parse_pdr_arr, uint32_t index, uint32_t *fail_id)
+{
+    struct pdr_table *pdr_tbl = NULL;
+    session_pdr_create *parse_pdr = &parse_pdr_arr[index];
+    uint16_t rm_pdr_id;
+    uint8_t cnt;
+
+    /* create pdr table, maybe search at first */
+    pdr_tbl = pdr_table_create(sess, parse_pdr->pdr_id);
+    if (NULL == pdr_tbl) {
+        LOG(SESSION, ERR, "pdr table create failed, pdr_id %u.", parse_pdr->pdr_id);
+        *fail_id = parse_pdr->pdr_id;
+        return NULL;
+    }
+
+    ros_rwlock_write_lock(&pdr_tbl->lock); /* lock */
+    if (0 > pdr_create_content_copy(pdr_tbl, parse_pdr, sess)) {
+        ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
+        LOG(SESSION, ERR, "pdr create content copy failed.");
+
+        goto cleanup;
+    }
+    ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
+
+    /* Activate pre-defined rules */
+    for (cnt = 0; cnt < parse_pdr->act_pre_number; ++cnt) {
+        LOG(SESSION, ERR, "Activate pre-defined rules name: %s",
+            parse_pdr->act_pre_arr[cnt].rules_name);
+        if (0 > pdr_predefined_activate(sess, pdr_tbl, parse_pdr->act_pre_arr[cnt].rules_name)) {
+            LOG(SESSION, ERR, "Activate pre-defined PDR fail, name: %s",
+                parse_pdr->act_pre_arr[cnt].rules_name);
+            goto cleanup;
+        }
+    }
+
+    /* Pre acquisition far index */
+    if (pdr_tbl->pdr.far_present) {
+        uint32_t search_id = pdr_tbl->pdr.far_id;
+        struct far_table *far_tbl = far_table_search(sess, search_id);
+        if (NULL == far_tbl) {
+            LOG(SESSION, ERR, "search far table failed, far id: %u.",
+                search_id);
+
+            goto cleanup;
+        }
+        pdr_tbl->pdr_pri.far_index = far_tbl->index;
+    }
+
+    if (pdr_tbl->pdr.mar_present) {
+        uint32_t search_id = pdr_tbl->pdr.mar_id;
+        struct mar_table *mar_tbl = mar_table_search(sess, search_id);
+        if (NULL == mar_tbl) {
+            LOG(SESSION, ERR, "search mar table failed, mar id: %u.",
+                search_id);
+
+            goto cleanup;
+        }
+        pdr_tbl->pdr_pri.mar_index = mar_tbl->index;
+    }
+
+    if (0 < parse_pdr->pdi_content.sdf_filter_num) {
         pdr_tbl->pdr.pdi_content.filter_type = FILTER_SDF;
         if (0 > sdf_filter_insert(&pdr_tbl->pdr.pdi_content.filter_list,
             parse_pdr->pdi_content.sdf_filter,
             parse_pdr->pdi_content.sdf_filter_num)) {
-            uint16_t rm_pdr_id = pdr_tbl->pdr.pdr_id;
-
             LOG(SESSION, ERR, "insert sdf filter failed.");
-            if (-1 == pdr_remove(sess, &rm_pdr_id, 1, NULL, NULL)) {
-                LOG(SESSION, ERR,
-                    "pdr remove failed, pdr id: %d.", rm_pdr_id);
-            }
-            *fail_id = rm_pdr_id;
 
-            return NULL;
+            goto cleanup;
         }
     } else if (0 < parse_pdr->pdi_content.eth_filter_num) {
         pdr_tbl->pdr.pdi_content.filter_type = FILTER_ETH;
         if (0 > eth_filter_insert(&pdr_tbl->pdr.pdi_content.filter_list,
             parse_pdr->pdi_content.eth_filter,
             parse_pdr->pdi_content.eth_filter_num)) {
-            uint16_t rm_pdr_id = pdr_tbl->pdr.pdr_id;
-
             LOG(SESSION, ERR, "insert eth filter failed.");
-            if (-1 == pdr_remove(sess, &rm_pdr_id, 1, NULL, NULL)) {
-                LOG(SESSION, ERR,
-                    "pdr remove failed, pdr id: %d.", rm_pdr_id);
-            }
-            *fail_id = rm_pdr_id;
 
-            return NULL;
+            goto cleanup;
+        }
+    }
+    parse_pdr->pdr_index = pdr_tbl->index;
+
+    if (pdr_tbl->pdr.act_pre_number == 0) {
+        if (-1 == pdr_set_active(pdr_tbl)) {
+            LOG(SESSION, ERR, "pdr set active failed, pdr id: %d.",
+                pdr_tbl->pdr.pdr_id);
+        }
+    } else {
+        LOG(SESSION, RUNNING, "Include activation predefined rules.");
+    }
+
+    return pdr_tbl;
+
+cleanup:
+    rm_pdr_id = pdr_tbl->pdr.pdr_id;
+
+    if (-1 == pdr_remove(sess, &rm_pdr_id, 1, NULL, NULL, NULL)) {
+        LOG(SESSION, ERR, "pdr remove failed, pdr id: %d.", rm_pdr_id);
+    }
+    *fail_id = rm_pdr_id;
+
+    for (cnt = 0; cnt < parse_pdr->act_pre_number; ++cnt) {
+        if (0 > pdr_predefined_deactivate(sess, pdr_tbl, parse_pdr->act_pre_arr[cnt].rules_name)) {
+            LOG(SESSION, ERR, "Deactivate pre-defined PDR fail, name: %s",
+                parse_pdr->act_pre_arr[cnt].rules_name);
         }
     }
 
-	if (parse_pdr->act_pre_number > 0) {
-		/*找出同一名字的预定义表，根据pdr的源端口取上行
-		还是下行pdr，然后填充新创建的pdr表*/
-		//暂时只考虑激活一张预定义表的情况
-		LOG(SESSION, RUNNING, "pfrule [%s].",parse_pdr->act_pre_arr[0].rules_name);
-		if(predefine_pdr_copyto_pdr(&parse_pdr->member_flag,(uint8_t *)parse_pdr->act_pre_arr[0].rules_name,
-			&parse_pdr->pdi_content,pdr_tbl,sess)<0)
-		{
-            uint16_t rm_id = pdr_tbl->pdr.pdr_id;
-
-            LOG(SESSION, ERR, "predefine_pdr_copyto_pdr failed, rules_name: %s, si:%d",
-                parse_pdr->act_pre_arr[0].rules_name,parse_pdr->pdi_content.si);
-
-            if (-1 == pdr_remove(sess, &rm_id, 1, NULL, NULL)) {
-                LOG(SESSION, ERR,
-                    "pdr remove failed, pdr id: %d.", rm_id);
-            }
-            *fail_id = rm_id;
-            return NULL;
-	    }
-		pdr_tbl->pdr.act_pre_number = parse_pdr->act_pre_number;
-		memcpy(pdr_tbl->pdr.act_pre_arr,parse_pdr->act_pre_arr,
-			    sizeof(session_act_predef_rules)*ACTIVATE_PREDEF_RULE_NUM);
-		LOG(SESSION, RUNNING, "pdr_add predefine success, act_pre_number:%d",pdr_tbl->pdr.act_pre_number);
-	}
-
-    parse_pdr->pdr_index = pdr_tbl->index;
-
-    return pdr_tbl;
+    return NULL;
 }
 
+
+/* Transaction consistency is not implemented in the process of rule modification */
 struct pdr_table *pdr_update(struct session_t *sess,
     session_pdr_update *parse_pdr_arr, uint32_t index, uint32_t *fail_id)
 {
     struct pdr_table *pdr_tbl = NULL;
-	struct pdr_table *pf_pdr_tbl = NULL;
-	struct predefine_table *pf_rule_tbl = NULL;
     session_pdr_update *parse_pdr = &parse_pdr_arr[index];
     uint8_t pdr_map_changed = 0;
-	uint16_t	i;
+	uint8_t cnt;
 
     pdr_tbl = pdr_table_search(sess, parse_pdr->pdr_id);
     if (NULL == pdr_tbl) {
@@ -2047,7 +2089,7 @@ struct pdr_table *pdr_update(struct session_t *sess,
         parse_pdr->pdi_content.traffic_endpoint_num ||
         parse_pdr->pdi_content.sdf_filter_num)) {
         LOG(SESSION, DEBUG, "PDI content changed.");
-        /* PDI修改的几种情况需要删除已有fast表:
+        /* Several modification situations of PDI need to delete existing fast table:
         *   1) f-teid changed
         *   2) ueip changed and Source interface changed to DL
         *   3) framed route changed
@@ -2066,35 +2108,43 @@ struct pdr_table *pdr_update(struct session_t *sess,
         pdr_set_deactive_timer_cb(NULL, (uint64_t)pdr_tbl);
     }
 
-	//去激活预定义表时先删除inst表，保留pdr表。
-	LOG(SESSION, RUNNING, "pdr update deact_pre_number[%d] [%s] ",parse_pdr->deact_pre_number,parse_pdr->deact_pre_arr[0].rules_name);
-	if (parse_pdr->deact_pre_number > 0 && parse_pdr->deact_pre_number < ACTIVATE_PREDEF_RULE_NUM) {
-		for (i = 0; i<parse_pdr->deact_pre_number; i++)
-		{
-            pf_rule_tbl = pf_rule_table_search((uint8_t *)parse_pdr->deact_pre_arr[i].rules_name);
-			if (NULL != pf_rule_tbl)
-			{
-				LOG(SESSION, RUNNING, "pdr update quote_pdr_num[%d] [%d %d] ",pf_rule_tbl->quote_pdr_num,pf_rule_tbl->quote_pdr_index[0],
-					pf_rule_tbl->quote_pdr_index[1]);
-				for (i = 0; i<pf_rule_tbl->quote_pdr_num && i < MAX_PF_RULE_QUOTE_PDR_TABLE; i++)
-				{
-                    pf_pdr_tbl = pdr_get_table(pf_rule_tbl->quote_pdr_index[i]);
-					if (NULL != pf_pdr_tbl)
-					{
-						pdr_set_deactive_timer_cb(NULL, (uint64_t)pf_pdr_tbl);;
-					}
-				}
-				pf_rule_tbl->activate = 0;
-			}
-		}
-	}
+	/* Deactivate predefined PDR */
+    if (0 == pdr_tbl->pdr.act_pre_number && parse_pdr->deact_pre_number > 0) {
+        LOG(SESSION, ERR, "Failed to deactivate the predefined rule. There is no activated predefined rule.");
+    } else {
+        session_act_predef_rules act_pre_arr[ACTIVATE_PREDEF_RULE_NUM];
+        uint8_t act_remainder = 0;
+        uint8_t act_predef_cnt;
+
+        ros_memcpy(act_pre_arr, pdr_tbl->pdr.act_pre_arr,
+            sizeof(session_act_predef_rules) * pdr_tbl->pdr.act_pre_number);
+        for (cnt = 0; cnt < parse_pdr->deact_pre_number; ++cnt) {
+            if (0 > pdr_predefined_deactivate(sess, pdr_tbl, parse_pdr->deact_pre_arr[cnt].rules_name)) {
+                LOG(SESSION, ERR, "Deactivate pre-defined PDR fail, name: %s",
+                    parse_pdr->deact_pre_arr[cnt].rules_name);
+            } else {
+                for (act_predef_cnt = 0; act_predef_cnt < pdr_tbl->pdr.act_pre_number; ++act_predef_cnt) {
+                    if (0 == strcmp(act_pre_arr[act_predef_cnt].rules_name,
+                        parse_pdr->deact_pre_arr[cnt].rules_name)) {
+                        act_pre_arr[act_predef_cnt].rules_name[0] = 0;
+                    }
+                }
+            }
+        }
+        for (act_predef_cnt = 0; act_predef_cnt < pdr_tbl->pdr.act_pre_number; ++act_predef_cnt) {
+            if (strlen(act_pre_arr[act_predef_cnt].rules_name) > 0) {
+                strcpy(pdr_tbl->pdr.act_pre_arr[act_remainder++].rules_name,
+                    act_pre_arr[act_predef_cnt].rules_name);
+            }
+        }
+        pdr_tbl->pdr.act_pre_number = act_remainder;
+    }
 
     ros_rwlock_write_lock(&pdr_tbl->lock); /* lock */
     if (0 > pdr_update_content_copy(pdr_tbl, parse_pdr, sess)) {
         ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
         LOG(SESSION, ERR, "pdr update content copy failed.");
-        *fail_id = parse_pdr->pdr_id;
-        return NULL;
+        goto fail;
     }
     ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
 
@@ -2106,8 +2156,7 @@ struct pdr_table *pdr_update(struct session_t *sess,
             LOG(SESSION, ERR, "search far table failed, far id: %u.",
                 search_id);
 
-            *fail_id = pdr_tbl->pdr.pdr_id;
-            return NULL;
+            goto fail;
         }
         pdr_tbl->pdr_pri.far_index = far_tbl->index;
     }
@@ -2120,24 +2169,22 @@ struct pdr_table *pdr_update(struct session_t *sess,
             LOG(SESSION, ERR, "search mar table failed, mar id: %u.",
                 search_id);
 
-            *fail_id = pdr_tbl->pdr.pdr_id;
-            return NULL;
+            goto fail;
         }
         pdr_tbl->pdr_pri.mar_index = mar_tbl->index;
     }
 
-	if(parse_pdr->act_pre_number)
-	{
-		if(predefine_pdr_copyto_pdr(&parse_pdr->member_flag,(uint8_t *)parse_pdr->act_pre_arr[0].rules_name,
-			&parse_pdr->pdi_content,pdr_tbl,sess)<0)
-		{
-			LOG(SESSION, ERR, "predefine_pdr_copyto_pdr failed, rules_name: %s, si:%d",
-				parse_pdr->act_pre_arr[0].rules_name,parse_pdr->pdi_content.si);
-
-			*fail_id = pdr_tbl->pdr.pdr_id;
-			return NULL;
-		}
-	}
+    /* Activate predefined PDR */
+    for (cnt = 0; cnt < parse_pdr->act_pre_number; ++cnt) {
+        LOG(SESSION, ERR, "Activate pre-defined rules name: %s",
+            parse_pdr->act_pre_arr[cnt].rules_name);
+        if (0 > pdr_predefined_activate(sess, pdr_tbl, parse_pdr->act_pre_arr[cnt].rules_name)) {
+            LOG(SESSION, ERR, "Activate pre-defined PDR fail, name: %s",
+                parse_pdr->act_pre_arr[cnt].rules_name);
+            /* In this case, rollback should be considered */
+            goto fail;
+        }
+    }
 
     if (pdr_map_changed) {
         if (0 > pdr_set_active(pdr_tbl)) {
@@ -2148,6 +2195,11 @@ struct pdr_table *pdr_update(struct session_t *sess,
     parse_pdr->pdr_index = pdr_tbl->index;
 
     return pdr_tbl;
+
+fail:
+
+    *fail_id = parse_pdr->pdr_id;
+    return NULL;
 }
 
 static void mar_create_content_copy(struct mar_private *local_mar,
@@ -2448,7 +2500,7 @@ struct traffic_endpoint_table * traffic_endpoint_update(struct session_t *sess,
     if (parse_te->member_flag.d.redundant_transmission_present) {
         te_tbl->te.member_flag.d.redundant_transmission_present = 1;
         ros_memcpy(&te_tbl->te.redundant_transmission_param, &parse_te->redundant_transmission_param,
-            sizeof(session_redundant_trans_param_in_pdi));
+            sizeof(session_redundant_transmission_detection_param));
     }
     if (parse_te->ue_ipaddr_num) {
         te_tbl->te.ue_ipaddr_num = parse_te->ue_ipaddr_num;
@@ -2525,50 +2577,6 @@ struct traffic_endpoint_table * traffic_endpoint_update(struct session_t *sess,
     return te_tbl;
 }
 
-static inline void session_print_upuresponse(session_emd_response *res)
-{
-	LOG(SESSION, RUNNING, "res->local_seid\t\t0x%lx", res->local_seid);
-	LOG(SESSION, RUNNING, "res->cp_seid\t\t0x%lx", res->cp_seid);
-	LOG(SESSION, RUNNING, "res->cause\t\t%d", res->cause);
-
-    if (res->cause > 1) {
-        switch (res->failed_rule_id.rule_type) {
-            case 0:
-                LOG(SESSION, RUNNING, "failed rule type\tPDR");
-                break;
-
-            case 1:
-                LOG(SESSION, RUNNING, "failed rule type\tFAR");
-                break;
-
-            case 2:
-                LOG(SESSION, RUNNING, "failed rule type\tQER");
-                break;
-
-            case 3:
-                LOG(SESSION, RUNNING, "failed rule type\tURR");
-                break;
-
-            case 4:
-                LOG(SESSION, RUNNING, "failed rule type\tBAR");
-                break;
-
-            case 5:
-                LOG(SESSION, RUNNING, "failed rule type\tMAR");
-                break;
-
-            default:
-                LOG(SESSION, ERR, "unkonw fauled rule type %d",
-                    res->failed_rule_id.rule_type);
-                break;
-        }
-
-        LOG(SESSION, RUNNING, "failed rule id\t%d",
-            res->failed_rule_id.rule_id);
-    }
-    LOG(SESSION, RUNNING, "done.\n");
-}
-
 void session_inactivity_timer_cb(void *timer, uint64_t para)
 {
 	struct session_t *sess = (struct session_t *)para;
@@ -2581,358 +2589,6 @@ void session_inactivity_timer_cb(void *timer, uint64_t para)
 	   	}
 
 	}
-}
-
-int session_predefine_rule_delete(uint8_t *predefine_name,uint32_t pf_index)
-{
-	struct predefine_table *pf_rule_tbl = NULL;
-
-	if(predefine_name == NULL && pf_index == 0xffffffff)
-	{
-		LOG(SESSION, ERR, "predefine_name is NULL && pf_index == 0xffffffff, can't delete predefine rule table!");
-		return -1;
-	}
-
-	if(predefine_name)
-	{
-		if((pf_rule_tbl = pf_rule_table_search(predefine_name)) == NULL)
-		{
-			LOG(SESSION, ERR, "pf_rule_table_search failed[%s].",predefine_name);
-			return -1;
-		}
-	}
-	else
-	{
-		pf_rule_tbl = pf_rule_table_get(pf_index);
-	}
-
-	/*if(pf_rule_tbl->activate)
-	{
-		LOG(SESSION, ERR, "predefine table[%s] is activated, can't delete!",pf_rule_tbl->predefine_name);
-		return -1;
-	}*/
-
-	if(pf_rule_tbl->bar_num > 0)
-	{
-		bar_table_delete_local(pf_rule_tbl->bar_index);
-	}
-
-	if(pf_rule_tbl->far_num > 0)
-	{
-		far_table_delete_local(pf_rule_tbl->far_index,pf_rule_tbl->far_num);
-	}
-
-	if(pf_rule_tbl->qer_num > 0)
-	{
-		qer_table_delete_local(pf_rule_tbl->qer_index,pf_rule_tbl->qer_num);
-	}
-
-	if(pf_rule_tbl->urr_num > 0)
-	{
-		urr_table_delete_local(pf_rule_tbl->urr_index,pf_rule_tbl->urr_num);
-	}
-
-	if(pf_rule_tbl->pdr_num > 0)
-	{
-		pdr_table_delete_local(pf_rule_tbl->pdr_index,pf_rule_tbl->pdr_num);
-	}
-
-	pf_rule_table_delete(pf_rule_tbl->index);
-
-	return 0;
-}
-
-int session_predefine_rule_create(session_content_create *session_content)
-{
-	uint32_t fail_id,pf_rule_id;
-	uint32_t index_arr[MAX_FAR_NUM],index_cnt = 0;
-	uint32_t success_cnt = 0,i=0;
-	//uint32_t sdf_index;
-	struct far_table *far_tbl = NULL;
-	struct qer_table *qer_tbl = NULL;
-	struct predefine_table *pf_rule_tbl = NULL;
-	struct urr_table *urr_tbl = NULL;
-	struct bar_table *bar_tbl = NULL;
-	struct pdr_table *pdr_tbl = NULL;
-
-	LOG(SESSION, RUNNING, "session_predefine_rule_create:%p",session_content);
-	if(session_content == NULL)
-	{
-		LOG(SESSION, ERR, "sess_content is NULL, can't create predefine rule table!");
-		return -1;
-	}
-
-	if((pf_rule_id = pf_rule_table_create()) < 0)
-	{
-		LOG(SESSION, ERR, "pf_rule_table_create failed.");
-		return -1;
-	}
-	else
-	{
-		LOG(SESSION, RUNNING, "pf_rule_table_create success: %d",pf_rule_id);
-		pf_rule_tbl = pf_rule_table_get(pf_rule_id);
-	}
-
-	if(pf_rule_tbl == NULL)
-	{
-		LOG(SESSION, ERR, "pf_rule_table_get failed.");
-		return -1;
-	}
-
-	//创建bar表
-	LOG(SESSION, RUNNING, "bar:%d",session_content->member_flag.d.bar_present);
-	if(session_content->member_flag.d.bar_present)
-	{
-		if((bar_tbl=bar_add_predefined(&session_content->bar)) == NULL)
-		{
-			LOG(SESSION, ERR, "bar_add_predefined failed.");
-			session_predefine_rule_delete(NULL,pf_rule_id);
-			return -1;
-		}
-		else
-		{
-			bar_tbl->bar.time_max = 0;
-			index_arr[0]=bar_tbl->index;
-			index_cnt = 1;
-			if (-1 == bar_fp_add_or_mod(index_arr, index_cnt, 1, MB_SEND2BE_BROADCAST_FD)) {
-	            LOG(SESSION, ERR, "bar_fp_add_or_modexternal failed.");
-				session_predefine_rule_delete(NULL,pf_rule_id);
-				return -1;
-	        }
-			ros_rwlock_write_lock(&pf_rule_tbl->lock);  /* lock */
-			pf_rule_tbl->bar_id =  bar_tbl->bar.bar_id;
-			pf_rule_tbl->bar_index = bar_tbl->index;
-			pf_rule_tbl->bar_num = 1;
-			ros_rwlock_write_unlock(&pf_rule_tbl->lock);  /* unlock */
-		}
-	}
-
-	//创建far表
-	LOG(SESSION, RUNNING, "far_num:%d",session_content->far_num);
-	if(session_content->far_num > 0)
-	{
-		success_cnt = 0;
-		for (index_cnt = 0; index_cnt < session_content->far_num; ++index_cnt)
-		{
-			if((far_tbl=far_add_predefined(&session_content->far_arr[index_cnt],&fail_id)) == NULL)
-			{
-				LOG(SESSION, ERR, "far_add_predefined failed.");
-				session_predefine_rule_delete(NULL,pf_rule_id);
-				return -1;
-			}
-			else
-			{
-				if (far_tbl->far_priv.bar_id_present) {
-		            ros_rwlock_write_lock(&far_tbl->lock);  /* lock */
-		            far_tbl->far_cfg.choose.d.section_bar = 1;
-		            far_tbl->far_cfg.bar_index = bar_tbl->index;
-		            ros_rwlock_write_unlock(&far_tbl->lock);  /* unlock */
-		        }
-
-				//在fpu模块中创建far表。fpu和spu中的far表的index是一样的。
-				index_arr[success_cnt]=far_tbl->index;
-				success_cnt++;
-
-				ros_rwlock_write_lock(&pf_rule_tbl->lock);  /* lock */
-				pf_rule_tbl->far_id[index_cnt] = far_tbl->far_cfg.far_id;
-				pf_rule_tbl->far_index[index_cnt] = far_tbl->index;
-				ros_rwlock_write_unlock(&pf_rule_tbl->lock);  /* unlock */
-			}
-		}
-		pf_rule_tbl->far_num = session_content->far_num;
-		if (-1 == far_fp_add_or_mod(index_arr, success_cnt, 1, MB_SEND2BE_BROADCAST_FD)) {
-            LOG(SESSION, ERR, "fp add|mod far failed.");
-			session_predefine_rule_delete(NULL,pf_rule_id);
-			return -1;
-        }
-	}
-
-	//创建qer表
-	LOG(SESSION, RUNNING, "qer_num:%d",session_content->qer_num);
-	if(session_content->qer_num > 0)
-	{
-		success_cnt = 0;
-		for (index_cnt = 0; index_cnt < session_content->qer_num; ++index_cnt)
-		{
-			if((qer_tbl=qer_add_predefined(&session_content->qer_arr[index_cnt],&fail_id)) == NULL)
-			{
-				LOG(SESSION, ERR, "qer_add_predefined failed.");
-				session_predefine_rule_delete(NULL,pf_rule_id);
-				return -1;
-			}
-			else
-			{
-				index_arr[success_cnt]=qer_tbl->index;
-				success_cnt++;
-
-				ros_rwlock_write_lock(&pf_rule_tbl->lock);  /* lock */
-				pf_rule_tbl->qer_id[index_cnt] = session_content->qer_arr[index_cnt].qer_id;
-				pf_rule_tbl->qer_index[index_cnt] = qer_tbl->index;
-				ros_rwlock_write_unlock(&pf_rule_tbl->lock);  /* unlock */
-			}
-		}
-		pf_rule_tbl->qer_num = session_content->qer_num;
-		if (-1 == qer_fp_add_or_mod(index_arr, success_cnt, 1, MB_SEND2BE_BROADCAST_FD)) {
-            LOG(SESSION, ERR, "fp add|mod qer failed.");
-			session_predefine_rule_delete(NULL,pf_rule_id);
-			return -1;
-        }
-	}
-
-	//创建urr表
-	LOG(SESSION, RUNNING, "urr_num:%d",session_content->urr_num);
-	if(session_content->urr_num > 0)
-	{
-		for (index_cnt = 0; index_cnt < session_content->urr_num; ++index_cnt)
-		{
-			if((urr_tbl=urr_add_predefined(&session_content->urr_arr[index_cnt],&fail_id)) == NULL)
-			{
-				LOG(SESSION, ERR, "urr_add_predefined failed.");
-				session_predefine_rule_delete(NULL,pf_rule_id);
-				return -1;
-			}
-			else
-			{
-				urr_tbl->container.mon_cfg.mon_time = urr_tbl->urr.mon_time;
-		        ros_memcpy(&urr_tbl->container.mon_cfg.sub_vol_thres,
-		            &urr_tbl->urr.vol_thres, sizeof(comm_msg_urr_volume_t));
-		        ros_memcpy(&urr_tbl->container.mon_cfg.sub_vol_quota,
-		            &urr_tbl->urr.vol_quota, sizeof(comm_msg_urr_volume_t));
-		        urr_tbl->container.mon_cfg.sub_tim_thres =
-		            urr_tbl->urr.tim_thres;
-		        urr_tbl->container.mon_cfg.sub_tim_quota =
-		            urr_tbl->urr.tim_quota;
-		        urr_tbl->container.mon_cfg.sub_eve_thres =
-		            urr_tbl->urr.eve_thres;
-		        urr_tbl->container.mon_cfg.sub_eve_quota =
-		            urr_tbl->urr.eve_quota;
-
-				LOG(SESSION, RUNNING,
-		            "urr_tbl->index = %d!",urr_tbl->index);
-				LOG(SESSION, RUNNING,
-					"mon_time = %u!",
-		            urr_tbl->container.mon_cfg.mon_time);
-		        LOG(SESSION, RUNNING,
-		            "sub_vol_thres flag = %d!",
-		            urr_tbl->container.mon_cfg.sub_vol_thres.flag.value);
-		        LOG(SESSION, RUNNING,
-		            "sub_vol_thres total = %lu!",
-		            urr_tbl->container.mon_cfg.sub_vol_thres.total);
-		        LOG(SESSION, RUNNING,
-		            "sub_vol_thres down = %lu!",
-		            urr_tbl->container.mon_cfg.sub_vol_thres.downlink);
-		        LOG(SESSION, RUNNING,
-		            "sub_vol_thres up = %lu!",
-		            urr_tbl->container.mon_cfg.sub_vol_thres.uplink);
-		        LOG(SESSION, RUNNING,
-		            "sub_tim_thres = %u!",
-		            urr_tbl->container.mon_cfg.sub_tim_thres);
-				urr_container_init(urr_tbl->index);
-
-				ros_rwlock_write_lock(&pf_rule_tbl->lock);  /* lock */
-				pf_rule_tbl->urr_id[index_cnt] = urr_tbl->urr.urr_id;
-				pf_rule_tbl->urr_index[index_cnt] = urr_tbl->index;
-				ros_rwlock_write_unlock(&pf_rule_tbl->lock);  /* unlock */
-			}
-		}
-		pf_rule_tbl->urr_num = session_content->urr_num;
-	}
-
-	//创建pdr表
-	LOG(SESSION, RUNNING, "pdr_num:%d",session_content->pdr_num);
-	if(session_content->pdr_num > 0)
-	{
-		//预定义规则表里面只允许两张pdr表，上下行各一张
-		for (index_cnt = 0; index_cnt < 2; ++index_cnt)
-		{
-		    if (NULL == (pdr_tbl = pdr_table_create_local(session_content->pdr_arr[index_cnt].pdr_id))) {
-		        LOG(SESSION, ERR, "pdr table create failed, pdr_id %u.",
-		            session_content->pdr_arr[index_cnt].pdr_id);
-		        session_predefine_rule_delete(NULL,pf_rule_id);
-				return -1;
-		    }
-			ros_rwlock_write_lock(&pdr_tbl->lock); /* lock */
-			if (0 > pdr_create_content_copy_local(pdr_tbl, &session_content->pdr_arr[index_cnt])) {
-		        ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
-
-		        LOG(SESSION, ERR, "pdr create content copy failed.");
-		        session_predefine_rule_delete(NULL,pf_rule_id);
-				return -1;
-		    }
-			dl_list_init(&pdr_tbl->pdr.pdi_content.filter_list);
-		    ros_rwlock_write_unlock(&pdr_tbl->lock); /* unlock */
-
-			if(session_content->pdr_arr[index_cnt].pdi_content.si == 0)
-			{
-				//数组0记录接入侧
-				pf_rule_tbl->pdr_id[0] = pdr_tbl->pdr.pdr_id;
-				pf_rule_tbl->pdr_index[0] = pdr_tbl->index;
-				pf_rule_tbl->pdr_num++;
-			}
-			else
-			{
-				pf_rule_tbl->pdr_id[1] = pdr_tbl->pdr.pdr_id;
-				pf_rule_tbl->pdr_index[1] = pdr_tbl->index;
-				pf_rule_tbl->pdr_num++;
-			}
-
-			 /* Pre acquisition far index */
-		    if (pdr_tbl->pdr.far_present) {
-				uint32_t search_id = pdr_tbl->pdr.far_id;
-				for(i=0;i<pf_rule_tbl->far_num && i<MAX_FAR_NUM;i++)
-				{
-					if(pf_rule_tbl->far_id[i] == search_id)
-						break;
-				}
-				if(i == pf_rule_tbl->far_num)
-				{
-					LOG(SESSION, ERR, "search far table failed, far id: %u.",
-                	search_id);
-					session_predefine_rule_delete(NULL,pf_rule_id);
-					return -1;
-				}
-		        pdr_tbl->pdr_pri.far_index = pf_rule_tbl->far_index[i];
-		    }
-
-			if (0 < session_content->pdr_arr[index_cnt].pdi_content.sdf_filter_num) {
-		        pdr_tbl->pdr.pdi_content.filter_type = FILTER_SDF;
-		        if (0 > sdf_filter_insert(&pdr_tbl->pdr.pdi_content.filter_list,
-		            session_content->pdr_arr[index_cnt].pdi_content.sdf_filter,
-		            session_content->pdr_arr[index_cnt].pdi_content.sdf_filter_num)) {
-
-		            LOG(SESSION, ERR, "insert sdf filter failed.");
-		            session_predefine_rule_delete(NULL,pf_rule_id);
-					return -1;
-		        }
-		    } else if (0 < session_content->pdr_arr[index_cnt].pdi_content.eth_filter_num) {
-		        pdr_tbl->pdr.pdi_content.filter_type = FILTER_ETH;
-		        if (0 > eth_filter_insert(&pdr_tbl->pdr.pdi_content.filter_list,
-		            session_content->pdr_arr[index_cnt].pdi_content.eth_filter,
-		            session_content->pdr_arr[index_cnt].pdi_content.eth_filter_num)) {
-
-		            LOG(SESSION, ERR, "insert eth filter failed.");
-		            session_predefine_rule_delete(NULL,pf_rule_id);
-					return -1;
-		        }
-		    }
-		}
-	}
-
-	strcpy((char *)(pf_rule_tbl->predefine_name),(char *)session_content->pdr_arr[0].act_pre_arr[0].rules_name);
-
-	LOG(SESSION, RUNNING, "predefine_name:%s",pf_rule_tbl->predefine_name);
-	LOG(SESSION, RUNNING, "index:%d",pf_rule_tbl->index);
-	LOG(SESSION, RUNNING, "pdr_num:%d",pf_rule_tbl->pdr_num);
-	LOG(SESSION, RUNNING, "pdr1:[%d %d] pdr2:[%d %d]",pf_rule_tbl->pdr_id[0],pf_rule_tbl->pdr_index[0],
-		pf_rule_tbl->pdr_id[1],pf_rule_tbl->pdr_index[1]);
-	LOG(SESSION, RUNNING, "far_num:%d",pf_rule_tbl->far_num);
-	LOG(SESSION, RUNNING, "far1:[%d %d] far2:[%d %d]",pf_rule_tbl->far_id[0],pf_rule_tbl->far_index[0],
-		pf_rule_tbl->far_id[1],pf_rule_tbl->far_index[1]);
-	LOG(SESSION, RUNNING, "inuse:%d",pf_rule_tbl->inuse);
-	LOG(SESSION, RUNNING, "activate:%d",pf_rule_tbl->activate);
-
-	return 0;
-
 }
 
 void rules_sum_check(uint32_t ret_fp, struct FSM_t fsm[], uint32_t rule)

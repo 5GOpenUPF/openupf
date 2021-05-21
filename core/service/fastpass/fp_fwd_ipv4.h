@@ -24,8 +24,6 @@ void fp_pkt_inner_ipv4_proc(fp_packet_info *pkt_info);
 
 void fp_pkt_ipv4_entry(fp_packet_info *pkt_info);
 
-void fp_pkt_ipv4_n4_entry(fp_packet_info *pkt_info);
-
 
 #ifdef __cplusplus
 }

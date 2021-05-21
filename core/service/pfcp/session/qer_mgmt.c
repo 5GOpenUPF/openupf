@@ -21,7 +21,7 @@ void qer_table_show(struct qer_table *qer_tbl)
 {
     LOG(SESSION, RUNNING, "--------------qer--------------");
     LOG(SESSION, RUNNING, "index: %u", qer_tbl->index);
-    LOG(SESSION, RUNNING, "qer id: %u", qer_tbl->qer_priv.qer_id);
+    LOG(SESSION, RUNNING, "qer id: 0x%08x", qer_tbl->qer_priv.qer_id);
     LOG(SESSION, RUNNING, "corr id: %u", qer_tbl->qer_priv.qer_corr_id);
     LOG(SESSION, RUNNING, "uplink gate status: %d", qer_tbl->qer.ul_gate);
     LOG(SESSION, RUNNING, "downlink gate status: %d", qer_tbl->qer.dl_gate);
@@ -182,35 +182,6 @@ struct qer_table *qer_table_create(struct session_t *sess, uint32_t id)
     return qer_tbl;
 }
 
-struct qer_table *qer_table_create_local(uint32_t id)
-{
-    struct qer_table_head *qer_head = qer_get_head();
-    struct qer_table *qer_tbl = NULL;
-    uint32_t key = 0, index = 0, qer_id = id;
-
-    if (G_FAILURE == Res_Alloc(qer_head->pool_id, &key, &index,
-        EN_RES_ALLOC_MODE_OC)) {
-        LOG(SESSION, ERR,
-            "create failed, Resource exhaustion, pool id: %d.",
-            qer_head->pool_id);
-        return NULL;
-    }
-
-    qer_tbl = qer_get_table(index);
-    if (!qer_tbl) {
-        Res_Free(qer_head->pool_id, key, index);
-        LOG(SESSION, ERR, "Entry index error, index: %u.", index);
-        return NULL;
-    }
-    memset(&qer_tbl->qer, 0, sizeof(comm_msg_qer_config));
-    memset(&qer_tbl->qer_priv, 0, sizeof(struct qer_private));
-    qer_tbl->qer_priv.qer_id = qer_id;
-
-    ros_atomic32_add(&qer_head->use_num, 1);
-
-    return qer_tbl;
-}
-
 inline void qer_config_hton(comm_msg_qer_config *qer_cfg)
 {
     qer_cfg->ul_mbr = htonll(qer_cfg->ul_mbr);
@@ -330,38 +301,7 @@ int qer_insert(struct session_t *sess, void *parse_qer_arr,
     return 0;
 }
 
-int qer_table_delete_local(uint32_t *arr, uint8_t index_num)
-{
-	struct qer_table *qer_tbl = NULL;
-    struct qer_table_head *qer_head = qer_get_head();
-	uint32_t index_arr[MAX_QER_NUM], index_cnt = 0;
-    uint32_t success_cnt = 0;
-
-	if (NULL == arr) {
-        LOG(SESSION, ERR, "qer remove failed, arr(%p)",arr);
-        return -1;
-    }
-
-    for (index_cnt = 0; index_cnt < index_num; ++index_cnt) {
-		qer_tbl = qer_get_table(arr[index_cnt]);
-
-	    Res_Free(qer_head->pool_id, 0, qer_tbl->index);
-	    ros_atomic32_sub(&qer_head->use_num, 1);
-
-		index_arr[success_cnt] = qer_tbl->index;
-		++success_cnt;
-	}
-
-	if (success_cnt) {
-	    if (-1 == rules_fp_del(index_arr, success_cnt, EN_COMM_MSG_UPU_QER_DEL, MB_SEND2BE_BROADCAST_FD)) {
-	        LOG(SESSION, ERR, "fp del failed.");
-	    }
-	}
-
-    return 0;
-}
-
-int qer_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr)
+int qer_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr, uint32_t *fail_id)
 {
     struct qer_table *qer_tbl = NULL;
     struct qer_table_head *qer_head = qer_get_head();
@@ -381,6 +321,8 @@ int qer_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_
 	    if (NULL == qer_tbl) {
 	        LOG(SESSION, ERR, "remove failed, not exist, id: %u.",
 				id_arr[index_cnt]);
+            if (fail_id)
+                *fail_id = id_arr[index_cnt];
             return -1;
 	    }
 	    Res_Free(qer_head->pool_id, 0, qer_tbl->index);
@@ -462,12 +404,6 @@ int qer_clear(struct session_t *sess,
     qer_tbl = (struct qer_table *)rbtree_first(&sess->session.qer_root);
     while (NULL != qer_tbl) {
         id = qer_tbl->qer_priv.qer_id;
-		//取qer_id最高位，如果是1则表示是预定义规则，不需要删除
-		if(((id & 0x80000000)>>31))
-		{
-			qer_tbl = (struct qer_table *)rbtree_next(&qer_tbl->qer_node);
-			continue;
-		}
 
         qer_tbl = (struct qer_table *)rbtree_delete(&sess->session.qer_root,
             &id, qer_id_compare);

@@ -126,7 +126,7 @@ static PFCP_CAUSE_TYPE pfcp_parse_entity_ip_address(session_cp_pfcp_entity_ip_ad
     return res_cause;
 }
 
-static PFCP_CAUSE_TYPE pfcp_parse_remote_gtpu_peer(session_remote_gtpu_peer *remote_gtpu,
+PFCP_CAUSE_TYPE pfcp_parse_remote_gtpu_peer(session_remote_gtpu_peer *remote_gtpu,
     uint8_t* buffer, uint16_t *buf_pos, int buf_max, uint16_t obj_len)
 {
     PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
@@ -616,30 +616,105 @@ static void pfcp_encode_ueip_addr_pool_info(uint8_t* resp_buffer, uint16_t *buf_
         struct ueip_pool_table *ueip_table = ueip_pool_mgmt_get();
         uint8_t pool_id_len;
 
-        tlv_encode_type(resp_buffer, buf_pos, UPF_UE_IP_ADDRESS_POOL_INFORMATION);
-        ie_pos = *buf_pos;
-        tlv_encode_length(resp_buffer, buf_pos, 0);
-        ie_len = *buf_pos;
-        for (cnt = 0; cnt < ueip_table->ip_pool_num; ++cnt) {
+         for (cnt = 0; cnt < ueip_table->ip_pool_num; ++cnt) {
+            tlv_encode_type(resp_buffer, buf_pos, UPF_UE_IP_ADDRESS_POOL_INFORMATION);
+            ie_pos = *buf_pos;
+            tlv_encode_length(resp_buffer, buf_pos, 0);
+            ie_len = *buf_pos;
+
             /* Encode UE IP address Pool Identity */
             pool_id_len = strlen(ueip_table->pool_arr[cnt].pool_name);
             tlv_encode_type(resp_buffer, buf_pos, UPF_UE_IP_ADDRESS_POOL_IDENTITY);
-            tlv_encode_length(resp_buffer, buf_pos,
-                sizeof(uint16_t) + pool_id_len);
+            tlv_encode_length(resp_buffer, buf_pos, sizeof(uint16_t) + pool_id_len);
             tlv_encode_uint16_t(resp_buffer, buf_pos, pool_id_len);
             tlv_encode_binary(resp_buffer, buf_pos,
                 pool_id_len, (uint8_t *)ueip_table->pool_arr[cnt].pool_name);
+
+            /* Encode Network Instance */
+            /*if (pool_info->network_instance_present) {
+                tlv_encode_type(resp_buffer, buf_pos, UPF_NETWORK_INSTANCE);
+                tlv_encode_length(resp_buffer, buf_pos, strlen(pool_info->network_instance));
+                tlv_encode_binary(resp_buffer, buf_pos,
+                    strlen(pool_info->network_instance), pool_info->network_instance);
+            }*/
+
+            /* Encode S-NSSAI */
+            /* Several IEs with the same IE type may be present to represent multiple S-NSSAIs. */
+            {
+                session_s_nssai s_nssai = {.sst = 0x12, .sd = 0x25};
+
+                tlv_encode_type(resp_buffer, buf_pos, UPF_S_NSSAI);
+                tlv_encode_length(resp_buffer, buf_pos, sizeof(session_s_nssai));
+                tlv_encode_uint8_t(resp_buffer, buf_pos, s_nssai.sst);
+                tlv_encode_int_3b(resp_buffer, buf_pos, s_nssai.sd);
+            }
+
+            /* Encode IP version */
+            tlv_encode_type(resp_buffer, buf_pos, UPF_IP_VERSION);
+            tlv_encode_length(resp_buffer, buf_pos, 1);
+            tlv_encode_uint8_t(resp_buffer, buf_pos, ueip_table->pool_arr[cnt].ip_info.ip_ver);
+
+            ie_len = *buf_pos - ie_len;
+            tlv_encode_length(resp_buffer, &ie_pos, ie_len);
         }
+    }
+}
 
-        /*if (pool_info->network_instance_present) {
-            tlv_encode_type(resp_buffer, buf_pos, UPF_NETWORK_INSTANCE);
-            tlv_encode_length(resp_buffer, buf_pos, strlen(pool_info->network_instance));
+static void pfcp_encode_ueip_addr_usage_info(uint8_t* resp_buffer, uint16_t *buf_pos)
+{
+    session_up_features up_features = {.value = upc_get_up_features()};
+    uint8_t cnt;
+    uint16_t ie_pos = 0, ie_len = 0;
+
+    if (up_features.d.UEIP) {
+        struct ueip_pool_table *ueip_table = ueip_pool_mgmt_get();
+        uint8_t pool_id_len;
+
+         for (cnt = 0; cnt < ueip_table->ip_pool_num; ++cnt) {
+            tlv_encode_type(resp_buffer, buf_pos, UPF_UE_IP_ADDRESS_USAGE_INFORMATION);
+            ie_pos = *buf_pos;
+            tlv_encode_length(resp_buffer, buf_pos, 0);
+            ie_len = *buf_pos;
+
+            /* Encode UE IP Address Usage Sequence Number */
+            tlv_encode_type(resp_buffer, buf_pos, UPF_SEQUENCE_NUMBER);
+            tlv_encode_length(resp_buffer, buf_pos, sizeof(uint32_t));
+            tlv_encode_uint32_t(resp_buffer, buf_pos, 112);
+
+            /* Encode UE IP Address Usage Metric */
+            tlv_encode_type(resp_buffer, buf_pos, UPF_METRIC);
+            tlv_encode_length(resp_buffer, buf_pos, sizeof(uint8_t));
+            tlv_encode_uint8_t(resp_buffer, buf_pos, 100);
+
+            /* Encode Validity Timer */
+            tlv_encode_type(resp_buffer, buf_pos, UPF_VALIDITY_TIMER);
+            tlv_encode_length(resp_buffer, buf_pos, sizeof(uint16_t));
+            tlv_encode_uint16_t(resp_buffer, buf_pos, 10);
+
+            /* Encode Number of UE IP Addresses */
+            tlv_encode_type(resp_buffer, buf_pos, UPF_NUMBER_OF_UE_IP_ADDRESSES);
+            tlv_encode_length(resp_buffer, buf_pos, 5);
+            tlv_encode_uint8_t(resp_buffer, buf_pos, ueip_table->pool_arr[cnt].ip_info.ip_ver);
+            tlv_encode_uint32_t(resp_buffer, buf_pos,
+                ros_atomic32_read(&ueip_table->pool_arr[cnt].use_num));
+
+            /* Encode Network Instance */
+            /*tlv_encode_type(resp_buffer, buf_pos, UPF_NETWORK_INSTANCE);
+            tlv_encode_length(resp_buffer, buf_pos, strlen(ueip_table->pool_arr[cnt].pool_name));
             tlv_encode_binary(resp_buffer, buf_pos,
-                strlen(pool_info->network_instance), pool_info->network_instance);
-        }*/
+                strlen(ueip_table->pool_arr[cnt].pool_name), ueip_table->pool_arr[cnt].pool_name);*/
 
-        ie_len = *buf_pos - ie_len;
-        tlv_encode_length(resp_buffer, &ie_pos, ie_len);
+            /* Encode UE IP address Pool Identity */
+            pool_id_len = strlen(ueip_table->pool_arr[cnt].pool_name);
+            tlv_encode_type(resp_buffer, buf_pos, UPF_UE_IP_ADDRESS_POOL_IDENTITY);
+            tlv_encode_length(resp_buffer, buf_pos, sizeof(uint16_t) + pool_id_len);
+            tlv_encode_uint16_t(resp_buffer, buf_pos, pool_id_len);
+            tlv_encode_binary(resp_buffer, buf_pos,
+                pool_id_len, (uint8_t *)ueip_table->pool_arr[cnt].pool_name);
+
+            ie_len = *buf_pos - ie_len;
+            tlv_encode_length(resp_buffer, &ie_pos, ie_len);
+        }
     }
 }
 
@@ -786,7 +861,7 @@ void pfcp_parse_association_setup_request(uint8_t* buffer,
     uint8_t sync_blk_exist = FALSE;
     uint32_t sync_blk_index;
     uint16_t buf_pos = buf_pos1, last_pos = 0;
-    uint8_t  m_nodeid = G_FALSE, m_recover_time = G_FALSE;
+    uint8_t  m_nodeid = G_FALSE, m_recover_time = G_FALSE, session_retention = G_FALSE;
     uint16_t obj_type, obj_len;
     upc_node_cb                 *node_cb = NULL;
     PFCP_CAUSE_TYPE             res_cause = SESS_REQUEST_ACCEPTED;
@@ -808,7 +883,7 @@ void pfcp_parse_association_setup_request(uint8_t* buffer,
 
                 if (obj_len > PFCP_MAX_NODE_ID_LEN) {
                     LOG(UPC, ERR, "Node id length reaches the upper limit.");
-                    res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                    res_cause = SESS_INVALID_LENGTH;
                     break;
                 }
                 tlv_decode_binary(buffer, &buf_pos, obj_len, (uint8_t *)&assoc_setup.node_id);
@@ -824,20 +899,30 @@ void pfcp_parse_association_setup_request(uint8_t* buffer,
 
             case UPF_RECOVERY_TIME_STAMP:
                 /* Declear supported mandatory option */
-                m_recover_time = G_TRUE;
+                if (sizeof(uint32_t) == obj_len) {
+                    m_recover_time = G_TRUE;
+                    assoc_setup.recov_time = tlv_decode_uint32_t(buffer, &buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint32_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
 
-                assoc_setup.recov_time = tlv_decode_uint32_t(buffer, &buf_pos);
-
-                LOG(UPC, RUNNING,
-                    "decode recover time stamp, value %x",
+                LOG(UPC, RUNNING, "decode recover time stamp, value %x",
                     assoc_setup.recov_time);
                 break;
 
             case UPF_CP_FUNCTION_FEATURES:
-                assoc_setup.cp_features.value = tlv_decode_uint8_t(buffer, &buf_pos);
+                if (sizeof(uint16_t) == obj_len) {
+                    assoc_setup.cp_features.value = tlv_decode_uint16_t(buffer, &buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint16_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
 
                 LOG(UPC, RUNNING,
-                    "decode cp feature, value %02x", assoc_setup.cp_features.value);
+                    "decode cp feature, value %04x", assoc_setup.cp_features.value);
                 break;
 
             case UPF_ALTERNATIVE_SMF_IP_ADDRESS:
@@ -867,6 +952,7 @@ void pfcp_parse_association_setup_request(uint8_t* buffer,
                 break;
 
             case UPF_PFCP_SESSION_RETENTION_INFORMATION:
+                session_retention = G_TRUE;
                 res_cause = pfcp_parse_retention_info(&assoc_setup.retention_information,
                      buffer, &buf_pos, buf_max);
                 break;
@@ -895,6 +981,11 @@ void pfcp_parse_association_setup_request(uint8_t* buffer,
                         "The number of alternative smf ip address reaches the upper limit.");
                     res_cause = SESS_NO_RESOURCES_AVAILABLE;
                 }
+                break;
+
+            case UPF_NF_INSTANCE_ID:
+                /* This IE only exists if the message is sent by UPF */
+                PFCP_MOVE_FORWORD(buf_pos, obj_len);
                 break;
 
             default:
@@ -975,7 +1066,7 @@ fast_response:
     upc_fill_ip_udp_hdr(resp_buffer, &resp_pos, sa);
 
     pfcp_build_association_setup_response(resp_buffer, &resp_pos, res_cause, pkt_seq,
-        sa->sa_family == AF_INET ? UPF_NODE_TYPE_IPV4 : UPF_NODE_TYPE_IPV6);
+        sa->sa_family == AF_INET ? UPF_NODE_TYPE_IPV4 : UPF_NODE_TYPE_IPV6, session_retention);
 
     if (0 > upc_buff_send2smf(resp_buffer, resp_pos, sa)) {
         LOG(UPC, ERR, "Send packet to SMF failed.");
@@ -998,7 +1089,7 @@ void pfcp_parse_association_setup_response(uint8_t* buffer,
     uint8_t  cause;
     PFCP_CAUSE_TYPE res_cause = SESS_REQUEST_ACCEPTED;
     uint16_t obj_type, obj_len;
-    upc_node_cb                 *node_cb = NULL;
+    upc_node_cb *node_cb = NULL;
     session_association_setup assoc_setup = {{0}};
 
     LOG(UPC, RUNNING, "buf_pos %d, buf_max %d", buf_pos, buf_max);
@@ -1006,7 +1097,6 @@ void pfcp_parse_association_setup_response(uint8_t* buffer,
     /* Parse packet */
     last_pos = buf_pos;
     while (buf_pos < buf_max) {
-
         obj_type = tlv_decode_type(buffer, &buf_pos, buf_max);
         obj_len  = tlv_decode_length(buffer, &buf_pos, buf_max);
 
@@ -1033,30 +1123,45 @@ void pfcp_parse_association_setup_response(uint8_t* buffer,
 
             case UPF_CAUSE:
                 /* Declear supported mandatory option */
-                m_cause = G_TRUE;
+                if (sizeof(uint8_t) == obj_len) {
+                    m_cause = G_TRUE;
 
-                /* Parse cause */
-                cause = tlv_decode_uint8_t(buffer, &buf_pos);
-
-                LOG(UPC, RUNNING, "decode cause, value %02x", cause);
+                    /* Parse cause */
+                    cause = tlv_decode_uint8_t(buffer, &buf_pos);
+                    LOG(UPC, RUNNING, "decode cause, value %02x", cause);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
                 break;
 
             case UPF_RECOVERY_TIME_STAMP:
                 /* Declear supported mandatory option */
-                m_recover_time = G_TRUE;
+                if (sizeof(uint16_t) == obj_len) {
+                    m_recover_time = G_TRUE;
+                    assoc_setup.recov_time = tlv_decode_uint32_t(buffer, &buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint16_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
 
-                assoc_setup.recov_time = tlv_decode_uint32_t(buffer, &buf_pos);
-
-                LOG(UPC, RUNNING,
-                    "decode recover time stamp, value %x",
+                LOG(UPC, RUNNING, "decode recover time stamp, value %x",
                     assoc_setup.recov_time);
                 break;
 
             case UPF_CP_FUNCTION_FEATURES:
-                assoc_setup.cp_features.value = tlv_decode_uint8_t(buffer, &buf_pos);
+                if (sizeof(uint16_t) == obj_len) {
+                    assoc_setup.cp_features.value = tlv_decode_uint16_t(buffer, &buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint16_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
 
                 LOG(UPC, RUNNING,
-                    "decode cp feature, value %02x", assoc_setup.cp_features.value);
+                    "decode cp feature, value %04x", assoc_setup.cp_features.value);
                 break;
 
             case UPF_ALTERNATIVE_SMF_IP_ADDRESS:
@@ -1095,6 +1200,19 @@ void pfcp_parse_association_setup_response(uint8_t* buffer,
                     LOG(UPC, ERR,
                         "The number of alternative smf ip address reaches the upper limit.");
                     res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_SMF_SET_ID:
+                assoc_setup.smf_set_id.spare = tlv_decode_uint8_t(buffer, &buf_pos);
+                if ((obj_len - 1) <= FQDN_LEN) {
+                    tlv_decode_binary(buffer, &buf_pos, obj_len - 1,
+                        (uint8_t *)assoc_setup.smf_set_id.fqdn);
+                    assoc_setup.smf_set_id.fqdn[obj_len - 1] = '\0';
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be Less than %d.",
+                        obj_len - 1, FQDN_LEN);
+                    res_cause = SESS_INVALID_LENGTH;
                 }
                 break;
 
@@ -1208,17 +1326,29 @@ void pfcp_parse_association_update_request(uint8_t* buffer,
                 break;
 
             case UPF_PFCPAUREQ_FLAGS:
-                assoc_update.pfcpau_req_flag.value = tlv_decode_uint8_t(buffer, &buf_pos);
+                if (sizeof(uint8_t) == obj_len) {
+                    assoc_update.pfcpau_req_flag.value = tlv_decode_uint8_t(buffer, &buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
 
                 LOG(UPC, RUNNING,
                     "decode aureq, value %02x", assoc_update.pfcpau_req_flag.value);
                 break;
 
             case UPF_CP_FUNCTION_FEATURES:
-                assoc_update.cp_features.value = tlv_decode_uint8_t(buffer, &buf_pos);
+                if (sizeof(uint16_t) == obj_len) {
+                    assoc_update.cp_features.value = tlv_decode_uint16_t(buffer, &buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint16_t));
+                    res_cause = SESS_INVALID_LENGTH;
+                }
 
                 LOG(UPC, RUNNING,
-                    "decode cp feature, value %02x", assoc_update.cp_features.value);
+                    "decode cp feature, value %04x", assoc_update.cp_features.value);
                 break;
 
             case UPF_ALTERNATIVE_SMF_IP_ADDRESS:
@@ -1231,6 +1361,19 @@ void pfcp_parse_association_update_request(uint8_t* buffer,
                     LOG(UPC, ERR,
                         "The number of alternative smf ip address reaches the upper limit.");
                     res_cause = SESS_NO_RESOURCES_AVAILABLE;
+                }
+                break;
+
+            case UPF_SMF_SET_ID:
+                assoc_update.smf_set_id.spare = tlv_decode_uint8_t(buffer, &buf_pos);
+                if ((obj_len - 1) <= FQDN_LEN) {
+                    tlv_decode_binary(buffer, &buf_pos, obj_len - 1,
+                        (uint8_t *)assoc_update.smf_set_id.fqdn);
+                    assoc_update.smf_set_id.fqdn[obj_len - 1] = '\0';
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be Less than %d.",
+                        obj_len - 1, FQDN_LEN);
+                    res_cause = SESS_INVALID_LENGTH;
                 }
                 break;
 
@@ -1259,6 +1402,7 @@ void pfcp_parse_association_update_request(uint8_t* buffer,
                     res_cause = SESS_NO_RESOURCES_AVAILABLE;
                 }
                 break;
+
             default:
                 LOG(UPC, ERR, "IE type %d, not support, skip it.", obj_type);
                 //res_cause = SESS_SERVICE_NOT_SUPPORTED;
@@ -1407,21 +1551,31 @@ void pfcp_parse_association_update_response(uint8_t* buffer,
                 break;
 
             case UPF_CAUSE:
-                /* Declear supported mandatory option */
-                m_cause = G_TRUE;
+                if (sizeof(uint8_t) == obj_len) {
+                    /* Declear supported mandatory option */
+                    m_cause = G_TRUE;
 
-                /* Parse cause */
-                cause = tlv_decode_uint8_t(buffer, &buf_pos);
+                    /* Parse cause */
+                    cause = tlv_decode_uint8_t(buffer, &buf_pos);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint8_t));
+                    PFCP_MOVE_FORWORD(buf_pos, obj_len);
+                }
 
                 LOG(UPC, RUNNING, "decode cause, value %02x", cause);
                 break;
 
             case UPF_CP_FUNCTION_FEATURES:
-                assoc_update.cp_features.value = tlv_decode_uint8_t(buffer, &buf_pos);
-                assoc_update.member_flag.d.cp_features_present = TRUE;
-
-                LOG(UPC, RUNNING,
-                    "decode cp feature, value %02x", assoc_update.cp_features.value);
+                if (sizeof(uint16_t) == obj_len) {
+                    assoc_update.cp_features.value = tlv_decode_uint8_t(buffer, &buf_pos);
+                    assoc_update.member_flag.d.cp_features_present = TRUE;
+                    LOG(UPC, RUNNING, "decode cp feature, value %04x", assoc_update.cp_features.value);
+                } else {
+                    LOG(UPC, ERR, "obj_len: %d abnormal, Should be %lu.",
+                        obj_len, sizeof(uint16_t));
+                    PFCP_MOVE_FORWORD(buf_pos, obj_len);
+                }
                 break;
 
             default:
@@ -1721,6 +1875,14 @@ void pfcp_build_association_setup_request(upc_node_cb *node)
     tlv_encode_length(resp_buffer, &buf_pos, 16);
     tlv_encode_binary(resp_buffer, &buf_pos, 16, node->guid.value);
 
+    /* Encode PFCPASReq-Flags */
+    /* Need to support IPUPS */
+    if (0) {
+        tlv_encode_type(resp_buffer, &buf_pos, UPF_PFCPASREQ_FLAGS);
+        tlv_encode_length(resp_buffer, &buf_pos, 1);
+        tlv_encode_uint8_t(resp_buffer, &buf_pos, 1);
+    }
+
     pfcp_client_set_header_length(resp_buffer, msg_hdr_pos, buf_pos);
 
     upc_buff_send2smf(resp_buffer, buf_pos, &node->peer_sa);
@@ -1729,7 +1891,7 @@ void pfcp_build_association_setup_request(upc_node_cb *node)
 }
 
 void pfcp_build_association_setup_response(uint8_t *resp_buffer,
-    uint16_t *buf_pos, uint8_t res_cause, uint32_t pkt_seq, uint8_t node_type)
+    uint16_t *buf_pos, uint8_t res_cause, uint32_t pkt_seq, uint8_t node_type, uint8_t sess_retention)
 {
     uint16_t msg_hdr_pos = *buf_pos;
 
@@ -1759,6 +1921,14 @@ void pfcp_build_association_setup_response(uint8_t *resp_buffer,
     tlv_encode_type(resp_buffer, buf_pos, UPF_NF_INSTANCE_ID);
     tlv_encode_length(resp_buffer, buf_pos, 16);
     tlv_encode_binary(resp_buffer, buf_pos, 16, upc_upf_guid_get());
+
+    /* Encode PFCPASRsp-Flags */
+    /* Need to support IPUPS */
+    if (sess_retention) {
+        tlv_encode_type(resp_buffer, buf_pos, UPF_PFCPASRSP_FLAGS);
+        tlv_encode_length(resp_buffer, buf_pos, 1);
+        tlv_encode_uint8_t(resp_buffer, buf_pos, 1);
+    }
 
     /* Filling msg header length */
     pfcp_client_set_header_length(resp_buffer, msg_hdr_pos, *buf_pos);
@@ -1817,6 +1987,9 @@ void pfcp_build_association_update_request(upc_node_cb *node, uint8_t rel_flag,
     /* Encode UE IP address Pool Information */
     pfcp_encode_ueip_addr_pool_info(resp_buffer, &buf_pos);
 
+    /* Encode UE IP Address Usage Information */
+    pfcp_encode_ueip_addr_usage_info(resp_buffer, &buf_pos);
+
     pfcp_client_set_header_length(resp_buffer, msg_hdr_pos, buf_pos);
 
     upc_buff_send2smf(resp_buffer, buf_pos, &node->peer_sa);
@@ -1841,6 +2014,9 @@ void pfcp_build_association_update_response(uint8_t* resp_buffer,
     /* Encode cause */
     pfcp_encode_cause(resp_buffer, buf_pos, res_cause);
     LOG(UPC, RUNNING, "encode cause %d.", res_cause);
+
+    /* Encode UE IP Address Usage Information */
+    pfcp_encode_ueip_addr_usage_info(resp_buffer, buf_pos);
 
     /* Filling msg header length */
     pfcp_client_set_header_length(resp_buffer, msg_hdr_pos, *buf_pos);

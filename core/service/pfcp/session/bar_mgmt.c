@@ -110,7 +110,7 @@ struct bar_table *bar_table_create(struct session_t *sess, uint8_t id)
     uint8_t bar_id = id;
 
     if (NULL == sess) {
-        LOG(SESSION, ERR, "sess is NULL.");
+        LOG(SESSION, ERR, "Abnormal parameter, sess(%p)", sess);
         return NULL;
     }
 
@@ -142,35 +142,6 @@ struct bar_table *bar_table_create(struct session_t *sess, uint8_t id)
         return NULL;
     }
     ros_rwlock_write_unlock(&sess->lock);// unlock
-
-    ros_atomic32_add(&bar_head->use_num, 1);
-
-    return bar_tbl;
-}
-
-struct bar_table *bar_table_create_local(uint8_t id)
-{
-    struct bar_table_head *bar_head = bar_get_head();
-    struct bar_table *bar_tbl = NULL;
-    uint32_t key = 0, index = 0;
-    uint8_t bar_id = id;
-
-    if (G_FAILURE == Res_Alloc(bar_head->pool_id, &key, &index,
-        EN_RES_ALLOC_MODE_OC)) {
-        LOG(SESSION, ERR,
-            "create failed, Resource exhaustion, pool id: %d.",
-            bar_head->pool_id);
-        return NULL;
-    }
-
-    bar_tbl = bar_get_table(index);
-    if (!bar_tbl) {
-        Res_Free(bar_head->pool_id, key, index);
-        LOG(SESSION, ERR, "Entry index error, index: %u.", index);
-        return NULL;
-    }
-    memset(&bar_tbl->bar, 0, sizeof(comm_msg_bar_config));
-    bar_tbl->bar.bar_id = bar_id;
 
     ros_atomic32_add(&bar_head->use_num, 1);
 
@@ -300,20 +271,6 @@ int bar_insert(struct session_t *sess, session_buffer_action_rule *parse_bar)
     return 0;
 }
 
-int bar_table_delete_local(uint32_t index)
-{
-	struct bar_table_head *bar_head = bar_get_head();
-
-	Res_Free(bar_head->pool_id, 0, index);
-	ros_atomic32_sub(&bar_head->use_num, 1);
-
-	if (-1 == rules_fp_del(&index, 1, EN_COMM_MSG_UPU_BAR_DEL, MB_SEND2BE_BROADCAST_FD)) {
-		LOG(SESSION, ERR, "Tell FPU delete BAR failed.");
-		return -1;
-	}
-	return 0;
-}
-
 int bar_remove(struct session_t *sess, uint8_t bar_id, uint32_t *bar_index)
 {
     struct bar_table *bar_tbl = NULL;
@@ -321,7 +278,7 @@ int bar_remove(struct session_t *sess, uint8_t bar_id, uint32_t *bar_index)
     uint8_t id = bar_id;
 
     if (NULL == sess) {
-        LOG(SESSION, ERR, "bar remove failed, sess(%p).", sess);
+        LOG(SESSION, ERR, "Abnormal parameter, sess(%p).", sess);
         return -1;
     }
 

@@ -3,89 +3,75 @@
  SPDX-License-Identifier: Apache-2.0
  ***************************************************************/
 
-#ifndef __PFRULE_MGMT_H
-#define __PFRULE_MGMT_H
+#ifndef __PREDEFINED_RULE_MGMT_H
+#define __PREDEFINED_RULE_MGMT_H
 
-//预定义规则表宏
-#define MAX_PF_RULE_TABLE 1000
-#define MAX_PF_RULE_NAME_LEN 64
-#define MAX_PF_RULE_PDR_TABLE 2
-#define MAX_PF_RULE_FAR_TABLE 6
-#define MAX_PF_RULE_QER_TABLE 6
-#define MAX_PF_RULE_URR_TABLE 6
-#define MAX_PF_RULE_QUOTE_PDR_TABLE 100
+#define MAX_PREDEFINED_RULES_NUM            100
 
-//白名单表宏
-#define MAX_WHITE_LIST_TABLE 1000
-#define MAX_WHITE_LIST_HOST_LEN 256
+typedef struct tag_predefined_pdr_entry {
+    struct rb_node                  node;
+    session_pdr_create              pdr_cfg;
+    ros_rwlock_t                    lock;
+    uint32_t                        index;
+} predefined_pdr_entry;
 
-//预定义规则表
-struct predefine_table {
-	uint32_t	index;
-	uint8_t		predefine_name[MAX_PF_RULE_NAME_LEN];
-	uint32_t	pdr_id[MAX_PF_RULE_PDR_TABLE];
-	uint32_t	pdr_index[MAX_PF_RULE_PDR_TABLE];
-	uint32_t	pdr_num;
-	uint32_t	bar_id;
-	uint32_t	bar_index;
-	uint32_t	bar_num;
-	uint32_t	far_id[MAX_PF_RULE_FAR_TABLE];
-	uint32_t	far_index[MAX_PF_RULE_FAR_TABLE];
-	uint32_t	far_num;
-	uint32_t	qer_id[MAX_PF_RULE_QER_TABLE];
-	uint32_t	qer_index[MAX_PF_RULE_QER_TABLE];
-	uint32_t	qer_num;
-	uint32_t	urr_id[MAX_PF_RULE_URR_TABLE];
-	uint32_t	urr_index[MAX_PF_RULE_URR_TABLE];
-	uint32_t	urr_num;
-	uint32_t	quote_pdr_index[MAX_PF_RULE_QUOTE_PDR_TABLE];
-	uint32_t	quote_pdr_num;
-	ros_rwlock_t lock;
-	uint8_t		inuse;
-	uint8_t		activate;
-};
+typedef struct tag_predefined_far_entry {
+    struct rb_node                  node;
+    session_far_create              far_cfg;
+    ros_rwlock_t                    lock;
+    uint32_t                        index;
+} predefined_far_entry;
 
-struct pf_rule_table_head {
-    struct predefine_table *pf_table;
-    uint32_t                max_num;
-    ros_atomic32_t          use_num;
-    ros_rwlock_t            lock;
-    uint16_t                pool_id;
-};
+typedef struct tag_predefined_urr_entry {
+    struct rb_node                  node;
+    session_usage_report_rule       urr_cfg;
+    ros_rwlock_t                    lock;
+    uint32_t                        index;
+} predefined_urr_entry;
 
-//白名单表
-struct white_list_table {
-	struct rb_node         node;
-	uint32_t                index;
-	char					host[MAX_WHITE_LIST_HOST_LEN];
-	uint32_t                ip;
-	ros_rwlock_t            lock;
-	uint32_t                head_enrich_flag;//头增强时要增加哪些字段
-	uint8_t					flag;//1代表host，0代表iP
-};
+typedef struct tag_predefined_qer_entry {
+    struct rb_node                  node;
+    session_qos_enforcement_rule    qer_cfg;
+    ros_rwlock_t                    lock;
+    uint32_t                        index;
+} predefined_qer_entry;
 
-struct white_list_table_head {
-    struct white_list_table *wl_table;
-	struct rb_root      	ip_root;
-    struct rb_root      	host_root;
-    uint32_t                max_num;
-    ros_atomic32_t          use_num;
-    ros_rwlock_t            lock;
-    uint16_t                pool_id;
-};
 
-extern int64_t pf_rule_table_init(uint32_t pf_rule_num);
-extern struct predefine_table *pf_rule_table_get(uint32_t index);
-extern uint32_t pf_rule_table_create(void);
-extern struct predefine_table *pf_rule_table_search(uint8_t *rule_name);
-extern int pf_rule_table_show(struct cli_def *cli, int argc, char **argv);
-extern uint32_t pf_rule_table_delete(uint32_t index);
-extern uint32_t pf_rule_table_clear(void);
+typedef struct tag_predefined_rules_table {
+    uint32_t                        max_pdr_num;
+    uint32_t                        max_far_num;
+    uint32_t                        max_urr_num;
+    uint32_t                        max_qer_num;
 
-extern int64_t white_list_table_init(uint32_t pf_rule_num);
-extern struct white_list_table *white_list_table_get(uint32_t index);
-extern int cli_white_list(struct cli_def *cli, int argc, char **argv);
-extern struct white_list_table *white_list_entry_search(char *host,uint32_t ipaddr,uint8_t flag);
+    predefined_pdr_entry            *pdr_arr;
+    predefined_far_entry            *far_arr;
+    predefined_urr_entry            *urr_arr;
+    predefined_qer_entry            *qer_arr;
 
+    struct rb_root                  pdr_root; /* for create pdr */
+    struct rb_root                  far_root; /* for create far */
+    struct rb_root                  urr_root; /* for create urr */
+    struct rb_root                  qer_root; /* for create qer */
+
+    ros_rwlock_t                    pdr_lock;
+    ros_rwlock_t                    far_lock;
+    ros_rwlock_t                    urr_lock;
+    ros_rwlock_t                    qer_lock;
+    uint16_t                        pdr_pool_id;
+    uint16_t                        far_pool_id;
+    uint16_t                        urr_pool_id;
+    uint16_t                        qer_pool_id;
+} predefined_rules_table;
+
+predefined_rules_table *predef_get_table_public(void);
+
+predefined_pdr_entry *predef_rules_search(char *predef_name);
+int predef_rules_generate(struct session_t *sess, char *predef_name);
+int predef_rules_erase(struct session_t *sess, char *predef_name);
+
+int predef_rules_add(session_content_create *sess);
+int predef_rules_del(session_content_create *sess);
+
+int64_t predef_rules_table_init(uint32_t rules_num);
 
 #endif

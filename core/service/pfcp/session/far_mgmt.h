@@ -47,9 +47,7 @@ int far_fp_add_or_mod(uint32_t *index_arr, uint32_t index_num, uint8_t is_add, i
 int far_insert(struct session_t *sess, session_far_create *parse_far_arr,
     uint32_t far_num, uint32_t *fail_id);
 struct far_table *far_table_create(struct session_t *sess, uint32_t id);
-struct far_table *far_table_create_local(uint32_t id);
-int far_table_delete_local(uint32_t *arr, uint8_t index_num);
-int far_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr);
+int far_remove(struct session_t *sess, uint32_t *id_arr, uint8_t id_num, uint32_t *ret_index_arr, uint32_t *fail_id);
 int far_clear(struct session_t *sess,
 	uint8_t fp_sync, struct session_rules_index * rules);
 struct far_table *far_table_search(struct session_t *sess, uint32_t id);

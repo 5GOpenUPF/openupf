@@ -8,17 +8,18 @@
 
 #include "service.h"
 
-static void sighandler(int sig)
+__maybe_unused static void sighandler(int sig)
 {
     switch (sig) {
         case SIGINT:
-            printf("Termination of proceedings.\n");
+        case SIGTERM:
+            LOG(ROS, MUST, "Termination of proceedings.\n");
 
             service_deinit();
             cli_exit();
             ros_exit();
             log_exit();
-            exit(1);
+            exit(0);
 
         default:
             break;
@@ -30,6 +31,7 @@ int main(int argc, char **argv)
     struct pcf_file *conf;
 
     signal(SIGINT, sighandler);
+    signal(SIGTERM, sighandler);
 
     conf = pcf_conf_read(UPU_ENV_NAME);
     if (!conf) {
@@ -61,12 +63,6 @@ int main(int argc, char **argv)
         return 1;
     }
     pcf_conf_free(conf);
-
-    if (cli_parse_argv(argc, argv) == G_SUCCESS) {
-        ros_exit();
-        log_exit();
-        return 0;
-    }
 
     cli_init();
 

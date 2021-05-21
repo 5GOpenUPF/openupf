@@ -38,7 +38,7 @@ static void trans_make_header(void *buf)
     /* set mac header */
     memcpy(eth->source, localmac, ETH_ALEN);
     memcpy(eth->dest, peermac, ETH_ALEN);
-    eth->eth_type = SERVICE_PROTO;
+    eth->eth_type = TRANS_PROTO;
 
     /* set msg header */
     msg_hdr = (comm_msg_header_t *)(eth + 1);

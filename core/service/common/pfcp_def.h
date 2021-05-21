@@ -176,7 +176,7 @@ typedef enum
     UPF_FRAMED_ROUTE                                    = 153,
     UPF_FRAMED_ROUTING                                  = 154,
     UPF_FRAMED_IPV6_ROUTE                               = 155,
-    UPF_EVENT_TIME_STAMP_                               = 156,
+    UPF_TIME_STAMP                                      = 156,
     UPF_AVERAGING_WINDOW                                = 157,
     UPF_PAGING_POLICY_INDICATOR                         = 158,
     UPF_APN_DNN                                         = 159,
@@ -220,9 +220,9 @@ typedef enum
     UPF_DS_TT_PORT_NUMBER                                   = 196,
     UPF_NW_TT_PORT_NUMBER                                   = 197,
     UPF_TSN_BRIDGE_ID                                       = 198,
-    UPF_PORT_MGMT_INFO_FOR_TSC_IE_WITHIN_PFCP_SESSION_MODIFICATION_REQUEST = 199,
-    UPF_PORT_MGMT_INFO_FOR_TSC_IE_WITHIN_PFCP_SESSION_MODIFICATION_RESPONSE = 200,
-    UPF_PORT_MGMT_INFO_FOR_TSC_IE_WITHIN_PFCP_SESSION_REPORT_REQUEST = 201,
+    UPF_TSC_MGMT_INFO_IE_WITHIN_PFCP_SESSION_MODIFICATION_REQUEST = 199,
+    UPF_TSC_MGMT_INFO_IE_WITHIN_PFCP_SESSION_MODIFICATION_RESPONSE = 200,
+    UPF_TSC_MGMT_INFO_IE_WITHIN_PFCP_SESSION_REPORT_REQUEST = 201,
     UPF_PORT_MANAGEMENT_INFORMATION_CONTAINER               = 202,
     UPF_CLOCK_DRIFT_CONTROL_INFORMATION                     = 203,
     UPF_REQUESTED_CLOCK_DRIFT_INFORMATION                   = 204,
@@ -278,12 +278,31 @@ typedef enum
     UPF_ETHERNET_CONTEXT_INFORMATION                        = 254,
     UPF_REDUNDANT_TRANSMISSION_PARAMETERS                   = 255,
     UPF_UPDATED_PDR                                         = 256,
+    UPF_S_NSSAI                                             = 257,
+    UPF_IP_VERSION                                          = 258,
+    UPF_PFCPASREQ_FLAGS                                     = 259,
+    UPF_DATA_STATUS                                         = 260,
+    UPF_PROVIDE_RDS_CONFIGURATION_INFORMATION               = 261,
+    UPF_RDS_CONFIGURATION_INFORMATION                       = 262,
+    UPF_QUERY_PACKET_RATE_STATUS_IE_WITHIN_PFCP_SESSION_MODIFICATION_REQUEST = 263,
+    UPF_PACKET_RATE_STATUS_REPORT_IE_WITHIN_PFCP_SESSION_MODIFICATION_RESPONSE = 264,
+    UPF_MPTCP_APPLICABLE_INDICATION                         = 265,
+    UPF_BRIDGE_MANAGEMENT_INFORMATION_CONTAINER             = 266,
+    UPF_UE_IP_ADDRESS_USAGE_INFORMATION                     = 267,
+    UPF_NUMBER_OF_UE_IP_ADDRESSES                           = 268,
+    UPF_VALIDITY_TIMER                                      = 269,
+    UPF_REDUNDANT_TRANSMISSION_FORWARDING_PARAMETERS        = 270,
+    UPF_TRANSPORT_DELAY_REPORTING                           = 271,
+    UPF_PARTIAL_FAILURE_INFORMATION_FOR_SESS_EST_RESP       = 272,
+    UPF_PARTIAL_FAILURE_INFORMATION_FOR_SESS_MOD_RESP       = 273,
+    UPF_OFFENDING_IE_INFORMATION                            = 274,
+    UPF_RAT_TYPE                                            = 275,
 
 
-    /* 257 to 32767 spare. For future use.
+    /* 276 to 32767 spare. For future use.
     *  32768 to 65535 Reserved for vendor specific IEs
     */
-    UPF_RAT_TYPE                                            = 36001,
+    UPF_VENDOR_RAT_TYPE                                     = 36001,
     UPF_USER_LOCATION_INFO                                  = 36006,
 
 }EN_PFCP_OBJ_TYPE;
@@ -299,17 +318,17 @@ typedef enum {
 typedef struct  tag_pfcp_msg_header
 {
 #if BYTE_ORDER == BIG_ENDIAN
-    uint8_t             version :3;     /* version */
-    uint8_t             spare   :2;     /* spare */
-    uint8_t             fo      :1;     /* FO flag */
-    uint8_t             mp      :1;     /* mp flag */
-    uint8_t             s       :1;     /* seif flag */
+    uint8_t             version :3;     /* Version */
+    uint8_t             spare   :2;     /* Spare */
+    uint8_t             fo      :1;     /* Follow On flag */
+    uint8_t             mp      :1;     /* Message Priority flag */
+    uint8_t             s       :1;     /* SEID flag */
 #else
-    uint8_t             s       :1;     /* seif flag */
-    uint8_t             mp      :1;     /* mp flag */
-    uint8_t             fo      :1;     /* FO flag */
-    uint8_t             spare   :2;     /* spare */
-    uint8_t             version :3;     /* version */
+    uint8_t             s       :1;     /* SEID flag */
+    uint8_t             mp      :1;     /* Message Priority flag */
+    uint8_t             fo      :1;     /* Follow On flag */
+    uint8_t             spare   :2;     /* Spare */
+    uint8_t             version :3;     /* Version */
 #endif
     uint8_t             msg_type;
     uint16_t            msg_len;

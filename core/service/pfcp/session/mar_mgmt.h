@@ -47,7 +47,7 @@ struct mar_table_head *mar_get_head(void);
 void mar_table_show(struct mar_table *mar_tbl);
 int mar_insert(struct session_t *sess, void *parse_mar_arr,
     uint32_t mar_num, uint32_t *fail_id);
-int mar_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num);
+int mar_remove(struct session_t *sess, uint16_t *id_arr, uint8_t id_num, uint32_t *fail_id);
 int mar_modify(struct session_t *sess, void *parse_mar_arr,
     uint32_t mar_num, uint32_t *fail_id);
 int mar_get(uint32_t index, session_mar_create *mar);

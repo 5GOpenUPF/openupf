@@ -7,9 +7,9 @@
 #include "util.h"
 #include "platform.h"
 #include "ros.h"
-//#include <ctype.h>
 #include <sys/prctl.h>
-//#include <dirent.h>
+#include <linux/sockios.h>
+#include <linux/ethtool.h>
 
 
 #if (defined(PRODUCT_IS_fpu) || defined(PRODUCT_IS_lbu))
@@ -25,17 +25,18 @@ uint64_t rte_rdtsc(void)
 }
 #endif
 
-#define UPF_VERSION_ENV         "UPF_VERSION"
+#define UPF_VERSION_MAJOR   0
+#define UPF_VERSION_MINOR   1
+#define UPF_VERSION_PATCH   0
 
 uint32_t ros_app_run_time = 0;
 uint32_t ros_boottime = 0;
 pthread_t ros_checktime_thread;
 
 extern int dpdk_show_stat(FILE *f);
-extern int dpdk_clear_stat(void);
 extern int dpdk_show_mac( FILE *f);
 extern int dpdk_show_mempool(uint32_t ulCoreId, FILE *f);
-extern int dpdk_show_info(FILE *f,uint32_t ulFlag);
+extern int dpdk_show_info(FILE *f);
 
 void ros_set_task_name(const char *format, ...)
 {
@@ -213,6 +214,41 @@ int ros_get_if_mac_addr(char *if_name, uint8_t *mac)
     }
 
     return -1;
+}
+
+/**
+ *  Get the link status of the network card
+ *
+ * @param if_name
+ *   Network interface name.
+ * @return
+ *  - 0 link up.
+ *  - -1 link down.
+ */
+int ros_get_if_link_status(const char *if_name)
+{
+    int skfd;
+    struct ifreq ifr;
+    struct ethtool_value edata;
+
+    edata.cmd = ETHTOOL_GLINK;
+    edata.data = 0;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, if_name, sizeof(ifr.ifr_name) - 1);
+    ifr.ifr_data = (char *)&edata;
+
+    skfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (skfd == 0)
+        return -1;
+
+    if (ioctl(skfd, SIOCETHTOOL, &ifr) == -1) {
+        LOG(ROS, ERR, "ioctl fail:%s", strerror(errno));
+        close(skfd);
+        return -1;
+    }
+    close(skfd);
+
+    return edata.data == 1 ? G_TRUE : G_FALSE;
 }
 
 uint64_t ros_init(struct pcf_file *conf)
@@ -512,28 +548,12 @@ int cli_get_time(struct cli_def *cli,int argc, char **argv)
 
 int cli_show_version(struct cli_def *cli,int argc, char *argv[])
 {
-	cli_print(cli, "Version:0.15");
-	return 0;
-}
-
-int git_version(struct cli_def *cli, int argc, char **argv)
-{
-    char *ver_info;
-
-    ver_info = pcf_get_env(UPF_VERSION_ENV);
-    if (NULL == ver_info) {
-        return -1;
-    }
-
-	cli_print(cli, "UPF version %s\n", ver_info);
+    cli_print(cli, "UPF version: v%d.%d.%d\n", UPF_VERSION_MAJOR, UPF_VERSION_MINOR, UPF_VERSION_PATCH);
 
     return 0;
 }
 
 /* Common command */
-cli_register_cmd(time, cli_get_time);
-cli_register_cmd(version, git_version);
-
 int ros_show_mempool(struct cli_def *cli,int argc, char *argv[])
 {
 #if (defined(PRODUCT_IS_fpu))
@@ -564,20 +584,8 @@ int ros_show_mac(struct cli_def *cli,int argc, char *argv[])
 
 int ros_show_info(struct cli_def *cli,int argc, char *argv[])
 {
-#if (defined(PRODUCT_IS_fpu))
-    uint32_t ulFlag = 0;
-    if ((argc == 1) && (*argv[0] == '?' || strcmp(argv[0],"help") == 0))
-    {
-        return 0;
-    }
-
-    if(argc)
-    {
-        //ulFlag = (uint32_t)atol(argv[0]);
-        sscanf(argv[0],"%x",&ulFlag);
-        cli_print(cli,"ulFlag=%x \n",ulFlag);
-    }
-    dpdk_show_info(cli->client,ulFlag);
+#if (defined(PRODUCT_IS_fpu) || defined(PRODUCT_IS_lbu))
+    dpdk_show_info(cli->client);
 #endif
     return 0;
 }
@@ -623,7 +631,7 @@ void ros_random_uuid(uint8_t *uuid)
     const uint8_t h[4] = {0x8, 0x9, 0xa, 0xb};
     uint8_t cnt, tmp, rand_value;
 
-    for( cnt = 0; cnt < 16; ++cnt) {
+    for (cnt = 0; cnt < 16; ++cnt) {
         rand_value = rand() % 255;
         switch(cnt) {
             case 6:
@@ -641,10 +649,6 @@ void ros_random_uuid(uint8_t *uuid)
 }
 
 /* Common command */
-cli_register_cmd(time, cli_get_time);
-cli_register_cmd(version, git_version);
-cli_register_cmd(timer_status, ros_timer_resource_status);
-cli_register_cmd(rqueue, rqueue_test);
 #if (defined(PRODUCT_IS_fpu))
 int cli_show_dpdk_stat(struct cli_def *cli, int argc, char **argv)
 {
@@ -737,30 +741,8 @@ int fp_get_start_config_show(struct cli_def *cli,int argc, char **argv)
     return 0;
 }
 
-cli_register_cmd(status, fp_show_packet_stat);
-cli_register_cmd(sig_trace, fp_conf_signal_trace);
-cli_register_cmd(sig_trace_ueip, fp_show_signal_trace_ueip);
-cli_register_cmd(show_fast, fast_get_show);
-cli_register_cmd(show_inst, inst_get_show);
-cli_register_cmd(show_far, far_get_show);
-cli_register_cmd(show_bar, bar_get_show);
-cli_register_cmd(show_qer, qer_get_show);
-cli_register_cmd(config, fp_get_start_config_show);
-cli_register_cmd(show_ip, fp_ip_show);
-cli_register_cmd(res_status, fp_stats_resource_info);
-cli_register_cmd(show_cblk, fp_show_cblock_info);
-
 #endif
 
-
-#if (defined(PRODUCT_IS_stub))
-
-cli_register_cmd(assoc, stub_build_assoc);
-cli_register_cmd(session, stub_build_session_pkt);
-cli_register_cmd(pfd, stub_build_pfd);
-cli_register_cmd(sess_perf, stub_session_test);
-cli_register_cmd(show_recv_stat, stub_show_recv_stat);
-#endif
 
 /* UPC command */
 #if (defined(PRODUCT_IS_smu))
@@ -887,28 +869,6 @@ int cli_set_hb_time(struct cli_def * cli, int argc, char * * argv)
 	return 0;
 }
 
-int cli_pf_rule(struct cli_def *cli, int argc, char **argv)
-{
-	extern int upc_node_create_pf_rule(char *act,char *pf_rule_name);
-
-	if(argc < 2){
-        cli_print(cli,"\r\nPlease input add/del and pf_rule_name.\r\n");
-        return 0;
-    }
-
-	if(strcmp(argv[0],"add") && strcmp(argv[0],"del"))
-	{
-        cli_print(cli,"\r\nPlease input add/del and pf_rule_name.\r\n");
-        return 0;
-    }
-
-	upc_node_create_pf_rule(argv[0],argv[1]);
-
-	cli_print(cli,"\r\ncli_pf_rule[%s][%s]\r\n",argv[0],argv[1]);
-
-	return 0;
-}
-
 int cli_user_sig_trace(struct cli_def *cli, int argc, char **argv)
 {
 	extern int upc_set_sig_trace(struct cli_def *cli, char *sig_type,char *user_id);
@@ -936,22 +896,6 @@ int cli_user_sig_trace(struct cli_def *cli, int argc, char **argv)
 
 
 }
-
-cli_register_cmd(sig_trace, upc_sig_trace_show);
-cli_register_cmd(sig_trace, cli_user_sig_trace);
-cli_register_cmd(pf_rule, cli_pf_rule);
-cli_register_cmd(show_up_features, cli_show_up_features);
-cli_register_cmd(show_node, cli_show_node);
-cli_register_cmd(delete_node,cli_delete_node);
-cli_register_cmd(asso_setup,   cli_asso_setup);
-cli_register_cmd(asso_update,  cli_asso_update);
-cli_register_cmd(status,  upc_show_packet_stats);
-cli_register_cmd(ueip, ueip_pool_show);
-cli_register_cmd(teid, upc_cmd_teid);
-cli_register_cmd(ass, upc_ha_active_standby_switch);
-cli_register_cmd(ha_status, upc_show_working_status);
-cli_register_cmd(res_status, upc_stats_resource_info);
-
 
 extern void service_channel_show(void *token);
 extern void *session_chn_token_gwu;
@@ -995,7 +939,6 @@ int cli_session_ip(struct cli_def *cli, int argc, char **argv)
 
 /* SP command */
 extern void service_channel_show(void *token);
-extern int pf_rule_table_show(int argc, char **argv);
 
 #endif
 

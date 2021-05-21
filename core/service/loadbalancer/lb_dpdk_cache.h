@@ -15,15 +15,7 @@ extern "C" {
 #define LB_PER_NEIGHBOR_CACHE_NODE_NUM          50
 
 
-#if (defined(ENABLE_DPDK_DEBUG))
-#define lb_free_pkt(buf) \
-    do { \
-        dpdk_mbuf_del_record(((struct rte_mbuf *)buf)->buf_addr, __LINE__); \
-        dpdk_free_mbuf((struct rte_mbuf *)buf); \
-    } while(0)
-#else
-#define lb_free_pkt(buf) dpdk_free_mbuf((struct rte_mbuf *)buf)
-#endif
+#define lb_free_pkt(buf)    dpdk_free_mbuf(buf)
 
 
 typedef enum tag_EN_CACHE_NODE_PROCESS_METHOD {

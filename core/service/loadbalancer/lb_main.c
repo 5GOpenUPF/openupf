@@ -13,6 +13,7 @@
 #ifdef ENABLED_HA
 #include "lb_ha_mgmt.h"
 #endif
+#include "lb_neighbor_cache.h"
 #include "lb_neighbor.h"
 #include "lb_main.h"
 
@@ -22,6 +23,7 @@ static uint64_t lb_work_flag = G_FALSE;
 
 static uint32_t lb_net_local_ip[EN_PORT_BUTT];
 static uint32_t lb_host_local_ip[EN_PORT_BUTT];
+static uint32_t lb_host_N6_prefix_ip; /* lb_host_local_ip[EN_PORT_N6] & lb_host_n6_ip_mask */
 static uint8_t lb_net_local_ipv6[EN_PORT_BUTT][IPV6_ALEN];
 static uint32_t lb_host_n6_ip_mask;
 static uint8_t lb_host_n6_ipv6_mask[IPV6_ALEN];
@@ -33,7 +35,6 @@ uint16_t lb_c_vlan_type[EN_LB_PORT_BUTT], lb_s_vlan_type[EN_LB_PORT_BUTT];
 uint8_t lb_local_port_mac[EN_LB_PORT_BUTT][ETH_ALEN];
 /* Peer port MAC address */
 uint8_t lb_peer_port_mac[EN_LB_PORT_BUTT][ETH_ALEN];
-
 
 /* Management end is working */
 static uint8_t lb_mb_is_working = FALSE;
@@ -56,6 +57,25 @@ LB_HA_INIT                      lb_hk_ha_init;
 LB_HA_DEINIT                    lb_hk_ha_deinit;
 LB_HA_ASS                       lb_hk_ha_ass;
 
+
+/* Packet statistics of LBU */
+static uint64_t lb_packet_statistics[EN_LB_PKT_STAT_BUTT][COMM_MSG_MAX_DPDK_CORE_NUM];
+
+static inline void lb_packet_stat_increase(enum EN_LBU_PKT_STAT direction)
+{
+    uint32_t core_id = rte_lcore_id();
+
+    if (unlikely(core_id == LCORE_ID_ANY)) {
+        core_id = dpdk_get_first_core_id();
+    }
+
+    ++lb_packet_statistics[direction][core_id];
+}
+
+static inline uint64_t lb_packet_stat_get(enum EN_LBU_PKT_STAT direction, uint8_t core_id)
+{
+    return lb_packet_statistics[direction][core_id];
+}
 
 static inline void lb_register_high_availability_module(LB_SYNC_BACKEND_TABLE sync_be_table,
                                            LB_UPDATE_DELAY_SYNC_HASH update_delay_sync_hash,
@@ -170,27 +190,40 @@ uint32_t lb_get_local_net_ipv4(uint8_t port)
     return lb_net_local_ip[port];
 }
 
-void lb_get_nexthop_ip(void *dst_ip, uint8_t ip_ver)
+void lb_get_nexthop_ip(void *dst_ip, void *src_ip, uint8_t ip_ver)
 {
     lb_system_config *sys_cfg = lb_get_system_config();
+    EN_PORT_TYPE port_type = EN_PORT_N3; /* Default */
 
     /* Check gateway */
     switch (ip_ver) {
         case SESSION_IP_V4:
             {
                 uint32_t dst_ipv4 = ntohl(*(uint32_t *)dst_ip);
+                uint32_t src_ipv4 = *(uint32_t *)src_ip;
                 uint8_t prefix_diff;
 
+                /* First confirm the network path */
+                if (!(src_ipv4 ^ lb_net_local_ip[EN_PORT_N3])) {
+                    port_type = EN_PORT_N3;
+                } else if ((ntohl(src_ipv4) & lb_host_n6_ip_mask) == lb_host_N6_prefix_ip) {
+                    port_type = EN_PORT_N6;
+                } else if (!(src_ipv4 ^ lb_net_local_ip[EN_PORT_N9])) {
+                    port_type = EN_PORT_N9;
+                } else if (!(src_ipv4 ^ lb_net_local_ip[EN_PORT_N4])) {
+                    port_type = EN_PORT_N4;
+                }
+
                 /* By default, it has a network port, which must be connected to the switch */
-                prefix_diff = 32 - sys_cfg->upf_ip[EN_PORT_N3].ipv4_prefix;
+                prefix_diff = 32 - sys_cfg->upf_ip[port_type].ipv4_prefix;
 
                 if (((uint64_t)dst_ipv4 >> prefix_diff) !=
-                    ((uint64_t)sys_cfg->upf_ip[EN_PORT_N3].ipv4 >> prefix_diff)) {
+                    ((uint64_t)sys_cfg->upf_ip[port_type].ipv4 >> prefix_diff)) {
                     LOG(LB, RUNNING, "N3 ip: 0x%08x, dest ip: 0x%08x, prefix: %d.",
-                        sys_cfg->upf_ip[EN_PORT_N3].ipv4,
-                        dst_ipv4, sys_cfg->upf_ip[EN_PORT_N3].ipv4_prefix);
+                        sys_cfg->upf_ip[port_type].ipv4,
+                        dst_ipv4, sys_cfg->upf_ip[port_type].ipv4_prefix);
 
-                    *(uint32_t *)dst_ip = sys_cfg->nexthop_net_ip[EN_PORT_N3];
+                    *(uint32_t *)dst_ip = sys_cfg->nexthop_net_ip[port_type];
                 }
 
             }
@@ -275,6 +308,7 @@ static inline void lb_fwd_to_external_network(void *m)
     lb_outer_add_vlan(m, EN_LB_PORT_EXT);
 
     dpdk_send_packet(m, lb_port_to_index(EN_LB_PORT_EXT), __FUNCTION__, __LINE__);
+    lb_packet_stat_increase(EN_LB_SENT_EXT_STAT);
 }
 
 void lb_fwd_to_external_network_public(void *m)
@@ -298,8 +332,9 @@ static inline void lb_fwd_to_smu(struct rte_mbuf *mbuf)
 {
     LOG(LB, PERIOD, "Packet forward to smu, mac: %02x:%02x:%02x:%02x:%02x:%02x", lb_smu_port_mac[0],
         lb_smu_port_mac[1], lb_smu_port_mac[2], lb_smu_port_mac[3], lb_smu_port_mac[4], lb_smu_port_mac[5]);
-    /* PFCP和GTP echo|EndMarker|ErrorIndication forward to smu */
+    /* PFCP|GTP echo|EndMarker|ErrorIndication forward to smu */
     if (likely(lb_mb_is_working)) {
+        lb_packet_stat_increase(EN_LB_SENT_SMU_STAT);
         lb_mac_updating(mbuf, (struct rte_ether_addr *)lb_local_port_mac[EN_LB_PORT_INT],
             (struct rte_ether_addr *)lb_smu_port_mac);
         lb_fwd_to_internal_network(mbuf);
@@ -316,13 +351,14 @@ static inline void lb_fwd_to_smu(struct rte_mbuf *mbuf)
  * @return
  *  Hash key
  */
-static inline uint32_t lb_clac_hash(void *key, uint8_t br_mode)
+static inline uint32_t lb_clac_hash(void *key, uint32_t teid, uint8_t br_mode)
 {
     uint32_t hash;
 
     switch (br_mode) {
         case COMM_MSG_FAST_IPV4:
             hash = *(uint32_t *)key;
+            hash ^= teid;
             break;
 
         case COMM_MSG_FAST_IPV6:
@@ -330,6 +366,7 @@ static inline uint32_t lb_clac_hash(void *key, uint8_t br_mode)
                 uint32_t *key_u32 = (uint32_t *)key;
 
                 hash = key_u32[0] ^ key_u32[1] ^ key_u32[2] ^ key_u32[3];
+                hash ^= teid;
             }
             break;
 
@@ -389,9 +426,6 @@ static inline int lb_arp_pkt_proc(struct filter_key *match_key, struct rte_mbuf 
             return -1;
         }
 
-        /* 本地建立/更新 arp cache表 */
-        lb_neighbor_recv_arp(*(uint32_t *)arp_hdr->ar_sip, arp_hdr->ar_sha, EN_LB_PORT_EXT);
-
         if (ntohs(arp_hdr->ar_op) == 1) {
             /* Reply ARP */
             memcpy(arp_hdr->ar_tha, arp_hdr->ar_sha, ETH_ALEN);
@@ -403,6 +437,9 @@ static inline int lb_arp_pkt_proc(struct filter_key *match_key, struct rte_mbuf 
             lb_mac_updating(mbuf,
                 (struct rte_ether_addr *)lb_local_port_mac[EN_LB_PORT_EXT],
                 (struct rte_ether_addr *)arp_hdr->ar_tha);
+        } else if (ntohs(arp_hdr->ar_op) == 2) {
+            /* Local establishment/update of ARP cache table */
+            lb_neighbor_recv_arp(*(uint32_t *)arp_hdr->ar_sip, arp_hdr->ar_sha, EN_LB_PORT_EXT);
         }
 
         LOG(LB, RUNNING, "Recv ARP packet, sender: 0x%08x, target: 0x%08x.\r\n",
@@ -445,12 +482,12 @@ static inline int lb_gtpu_pkt_proc(uint32_t *hash, struct filter_key *match_key)
             switch (FlowGetL2IpVersion(match_key)) {
                 case 4:
                     ipv4 = FlowGetL2Ipv4Header(match_key);
-                    *hash = lb_clac_hash(&ipv4->source, COMM_MSG_FAST_IPV4);
+                    *hash = lb_clac_hash(&ipv4->source, gtp_hdr->teid, COMM_MSG_FAST_IPV4);
                     break;
 
                 case 6:
                     ipv6 = FlowGetL2Ipv6Header(match_key);
-                    *hash = lb_clac_hash(ipv6->saddr, COMM_MSG_FAST_IPV6);
+                    *hash = lb_clac_hash(ipv6->saddr, gtp_hdr->teid, COMM_MSG_FAST_IPV6);
                     break;
 
                 default:
@@ -509,7 +546,7 @@ static void lb_internal_pkt_entry(char *buf, int len, struct rte_mbuf *mbuf)
 {
     struct packet_desc  desc = {.buf = buf, .len = len, .offset = 0};
     struct filter_key   match_key;
-    uint8_t             *dest_mac;
+    uint8_t             dest_mac[ETH_ALEN];
 
     /* Discard broadcast packets */
     if (0xFFFFFFFF == *(uint32_t *)buf) {
@@ -528,18 +565,15 @@ static void lb_internal_pkt_entry(char *buf, int len, struct rte_mbuf *mbuf)
             return;
         }
 
-        LOG(LB, RUNNING, "Recv internal packet");
-
         switch (FlowGetL1IpVersion(&match_key)) {
             case 4:
                 {
                     struct pro_ipv4_hdr *ipv4 = FlowGetL1Ipv4Header(&match_key);
-                    lb_neighbor_comp_key key = {.v4_value = ipv4->dest};
+                    lb_neighbor_key key = {.v4_value = ipv4->dest};
 
-                    lb_get_nexthop_ip(&key.v4_value, SESSION_IP_V4);
+                    lb_get_nexthop_ip(&key.v4_value, &ipv4->source, SESSION_IP_V4);
 
-                    dest_mac = lb_neighbor_cache_get_mac(&key);
-                    if (NULL == dest_mac) {
+                    if (0 > lb_neighbor_cache_get_mac(&key, dest_mac)) {
                         if (-1 == lb_neighbor_wait_reply(&key, SESSION_IP_V4, (void *)mbuf)) {
                             lb_free_pkt(mbuf);
                             LOG(LB, RUNNING, "Destination 0x%08x Host Unreachable, drop packet.",
@@ -556,13 +590,12 @@ static void lb_internal_pkt_entry(char *buf, int len, struct rte_mbuf *mbuf)
             case 6:
                 {
                     struct pro_ipv6_hdr *ipv6 = FlowGetL1Ipv6Header(&match_key);
-                    lb_neighbor_comp_key key;
+                    lb_neighbor_key key;
 
                     ros_memcpy(key.value, ipv6->daddr, IPV6_ALEN);
-                    lb_get_nexthop_ip(key.value, SESSION_IP_V6);
+                    lb_get_nexthop_ip(key.value, ipv6->saddr, SESSION_IP_V6);
 
-                    dest_mac = lb_neighbor_cache_get_mac(&key);
-                    if (NULL == dest_mac) {
+                    if (0 > lb_neighbor_cache_get_mac(&key, dest_mac)) {
                         if (-1 == lb_neighbor_wait_reply(&key, SESSION_IP_V6, (void *)mbuf)) {
                             lb_free_pkt(mbuf);
                             LOG(LB, RUNNING, "Destination %016lx %016lx Host Unreachable, drop packet.",
@@ -608,7 +641,7 @@ static inline void lb_external_pkt_entry(char *buf, int len, struct rte_mbuf *mb
     struct packet_desc  desc = {.buf = buf, .len = len, .offset = 0};
     uint32_t            hash = 0;
     struct filter_key   match_key;
-    uint8_t             *dest_mac;
+    uint8_t             dest_mac[ETH_ALEN];
 
     if (likely(LB_FORWARD_THRESHOLD < lb_get_work_status())) {
     /* Forward to internet/backend */
@@ -626,7 +659,7 @@ static inline void lb_external_pkt_entry(char *buf, int len, struct rte_mbuf *mb
 
             LOG(LB, DEBUG, "Recv Ethernet II packet");
 
-            /* 目的IP地址是UPF才去转发 */
+            /* Only when the destination IP address is UPF can it be forwarded */
             switch (FlowGetL1IpVersion(&match_key)) {
                 case 4:
                     {
@@ -651,12 +684,11 @@ static inline void lb_external_pkt_entry(char *buf, int len, struct rte_mbuf *mb
                                     lb_free_pkt(mbuf);
                                     return;
                             }
-                        } else if ((ntohl(dest_ip) & lb_host_n6_ip_mask) ==
-                            (lb_host_local_ip[EN_PORT_N6] & lb_host_n6_ip_mask)) {
+                        } else if ((ntohl(dest_ip) & lb_host_n6_ip_mask) == lb_host_N6_prefix_ip) {
                             /* N6 packets */
                             LOG(LB, DEBUG, "Packets sent to N6.");
 
-                            hash = lb_clac_hash(&dest_ip, COMM_MSG_FAST_IPV4);
+                            hash = lb_clac_hash(&dest_ip, 0, COMM_MSG_FAST_IPV4);
                         } else if (!(dest_ip ^ lb_net_local_ip[EN_PORT_N9])) {
                             /* N9 packets */
                             LOG(LB, DEBUG, "Packets sent to N9.");
@@ -739,7 +771,7 @@ static inline void lb_external_pkt_entry(char *buf, int len, struct rte_mbuf *mb
                             /* N6 packets */
                             LOG(LB, DEBUG, "Packets sent to N6.");
 
-                            hash = lb_clac_hash(dest_ipv6, COMM_MSG_FAST_IPV6);
+                            hash = lb_clac_hash(dest_ipv6, 0, COMM_MSG_FAST_IPV6);
                         } else if (0 == memcmp(dest_ipv6, lb_net_local_ipv6[EN_PORT_N9], IPV6_ALEN)) {
                             /* N9 packets */
                             LOG(LB, DEBUG, "Packets sent to N9.");
@@ -810,8 +842,7 @@ static inline void lb_external_pkt_entry(char *buf, int len, struct rte_mbuf *mb
         }
 
         /* Send from port EN_LB_PORT_INT */
-        dest_mac = lb_match_backend(hash);
-        if (unlikely(NULL == dest_mac)) {
+        if (unlikely((int)-1 == lb_match_backend(hash, dest_mac))) {
             /* No backend available */
             lb_free_pkt(mbuf);
             LOG(LB, ERR, "No ready backend found, drop packet.");
@@ -820,6 +851,7 @@ static inline void lb_external_pkt_entry(char *buf, int len, struct rte_mbuf *mb
         lb_mac_updating(mbuf, (struct rte_ether_addr *)lb_local_port_mac[EN_LB_PORT_INT],
             (struct rte_ether_addr *)dest_mac);
         lb_fwd_to_internal_network(mbuf);
+        lb_packet_stat_increase(EN_LB_SENT_FPU_STAT);
 
     } else {
     /* Forward to LB */
@@ -839,8 +871,6 @@ int lb_data_pkt_entry(char *buf, int len, uint16_t port_id, void *arg)
 {
     if (likely(lb_work_flag)) {
 #if (defined(ENABLE_DPDK_DEBUG))
-        dpdk_mbuf_record(((struct rte_mbuf *)arg)->buf_addr, __LINE__);
-
         if (unlikely(0 == len)) {
             LOG(LB, ERR, "ERROR: buf(%p), len: %d, arg(%p), core_id: %u", buf, len, arg, rte_lcore_id());
             dpdk_dump_packet(buf, 64);
@@ -852,12 +882,14 @@ int lb_data_pkt_entry(char *buf, int len, uint16_t port_id, void *arg)
         switch (port_id) {
             case EN_LB_PORT_EXT:
                 /* Send from port EN_LB_PORT_INT */
-                LOG(LB, RUNNING, "Recv external packet");
+                LOG(LB, PERIOD, "Recv external packet length %d", len);
+                lb_packet_stat_increase(EN_LB_RECV_EXT_STAT);
                 lb_external_pkt_entry(buf, len, (struct rte_mbuf *)arg);
                 break;
 
             case EN_LB_PORT_INT:
-                LOG(LB, RUNNING, "Recv internal packet");
+                LOG(LB, PERIOD, "Recv internal packet length %d", len);
+                lb_packet_stat_increase(EN_LB_RECV_INT_STAT);
                 lb_internal_pkt_entry(buf, len, (struct rte_mbuf *)arg);
                 break;
 
@@ -866,7 +898,7 @@ int lb_data_pkt_entry(char *buf, int len, uint16_t port_id, void *arg)
                 LOG(LB, ERR, "recv buf %p, len %d, But port ID is not supported!", buf, len);
                 return -1;
         }
-        LOG(LB, RUNNING, "handle packet(buf %p, len %d) finished!\r\n", buf, len);
+        LOG(LB, PERIOD, "handle packet(buf %p, len %d) finished!\r\n", buf, len);
     }
 
     return 0;
@@ -927,7 +959,7 @@ static uint32_t lb_control_msg_proc(void *token, comm_msg_ie_t *ie)
         case EN_COMM_MSG_MB_REGISTER:
             {
                 comm_msg_rules_ie_t *rule_ie = (comm_msg_rules_ie_t *)ie;
-                comm_msg_heartbeat_config *reg_cfg = (comm_msg_heartbeat_config *)ie->data;
+                comm_msg_backend_config *reg_cfg = (comm_msg_backend_config *)ie->data;
                 lb_backend_config *be_cfg;
                 uint32_t cnt;
 
@@ -937,14 +969,10 @@ static uint32_t lb_control_msg_proc(void *token, comm_msg_ie_t *ie)
                     /* Default use one port */
                     be_cfg = lb_backend_register(&reg_cfg[cnt]);
                     if (NULL == be_cfg) {
-                        LOG(LB, ERR, "Register backend failed, N3 mac: %02x:%02x:%02x:%02x:%02x:%02x.",
-                            reg_cfg->mac[EN_PORT_N3][0], reg_cfg->mac[EN_PORT_N3][1], reg_cfg->mac[EN_PORT_N3][2],
-                            reg_cfg->mac[EN_PORT_N3][3], reg_cfg->mac[EN_PORT_N3][4], reg_cfg->mac[EN_PORT_N3][5]);
+                        LOG(LB, ERR, "Register backend failed, be_key: 0x%lx", reg_cfg->key);
                     } else {
-                        LOG(LB, ERR, "Register backend success, N3 mac: %02x:%02x:%02x:%02x:%02x:%02x, index: %d.",
-                            reg_cfg->mac[EN_PORT_N3][0], reg_cfg->mac[EN_PORT_N3][1], reg_cfg->mac[EN_PORT_N3][2],
-                            reg_cfg->mac[EN_PORT_N3][3], reg_cfg->mac[EN_PORT_N3][4], reg_cfg->mac[EN_PORT_N3][5],
-                            be_cfg->index);
+                        LOG(LB, MUST, "Register backend success, be_key: 0x%lx  index: %d",
+                            reg_cfg->key, be_cfg->index);
                     }
                 }
             }
@@ -953,7 +981,7 @@ static uint32_t lb_control_msg_proc(void *token, comm_msg_ie_t *ie)
         case EN_COMM_MSG_MB_UNREGISTER:
             {
                 comm_msg_rules_ie_t *rule_ie = (comm_msg_rules_ie_t *)ie;
-                comm_msg_heartbeat_config *reg_cfg = (comm_msg_heartbeat_config *)ie->data;
+                comm_msg_backend_config *reg_cfg = (comm_msg_backend_config *)ie->data;
                 lb_backend_config *be_cfg;
                 uint32_t cnt;
 
@@ -1121,6 +1149,7 @@ static int lb_parse_cfg(struct pcf_file *conf)
     }
     lb_host_n6_ip_mask = num_to_mask(system_cfg->upf_ip[EN_PORT_N6].ipv4_prefix);
     ipv6_prefix_to_mask(lb_host_n6_ipv6_mask, system_cfg->upf_ip[EN_PORT_N6].ipv6_prefix);
+    lb_host_N6_prefix_ip = lb_host_local_ip[EN_PORT_N6] & lb_host_n6_ip_mask;
 
     LOG(LB, MUST, "H-A local port: %hu, H-A remote port: %hu, backend management port: %hu, default master: %s.",
         system_cfg->ha_local_port, system_cfg->ha_remote_port, system_cfg->be_mgmt_port,
@@ -1151,6 +1180,7 @@ int32_t lb_init_prepare(struct pcf_file *conf)
     }
 
     lb_dpdk_port_num = (uint16_t)rte_eth_dev_count_avail();
+    LOG(LB, MUST, "Number of ports used by dpdk: %u", lb_dpdk_port_num);
 
     /* Set cpus */
     system_cfg->core_num = dpdk_get_core_num();
@@ -1234,6 +1264,36 @@ int32_t lb_deinit()
     return 0;
 }
 
+/**
+ * Get qualified health threshold
+ */
+uint16_t lb_get_qualified_health_threshold(void)
+{
+    uint8_t dpdk_port_nb = dpdk_get_port_num();
+
+    return (uint16_t)(dpdk_port_nb * LB_DPDK_PER_PORT_WEIGHT);
+}
+
+/**
+ * Gets the current health value
+ */
+uint16_t lb_get_health_value(void)
+{
+    uint8_t dpdk_port_nb = dpdk_get_port_num();
+    uint8_t port_cnt;
+    uint16_t health_value = 0;
+
+    /* Check DPDK port */
+    for (port_cnt = 0; port_cnt < dpdk_port_nb; ++port_cnt) {
+        health_value += dpdk_port_linked(port_cnt) ? LB_DPDK_PER_PORT_WEIGHT : 0;
+    }
+
+    /* Check other */
+
+
+    return health_value;
+}
+
 int lb_ha_active_standby_switch(struct cli_def *cli, int argc, char **argv)
 {
     if (lb_hk_ha_ass) {
@@ -1307,6 +1367,62 @@ int lb_show_resource_stats(struct cli_def *cli, int argc, char **argv)
 
     /* MB work state */
     cli_print(cli, "MB state:       %s\n", lb_mb_work_state_get() ? "On-line" : "Off-line");
+
+    return 0;
+}
+
+int lb_show_packet_stat(struct cli_def *cli,int argc, char **argv)
+{
+    enum EN_LBU_PKT_STAT dire_cnt;
+    uint32_t core_cnt;
+    uint64_t pkt_sum = 0;
+    char str[2048];
+    char dire_name[128];
+
+    dpdk_packet_stat(str);
+    cli_print(cli, "%s\r\n", str);
+
+    for (dire_cnt = EN_LB_RECV_EXT_STAT; dire_cnt < EN_LB_PKT_STAT_BUTT; ++dire_cnt) {
+        pkt_sum = 0;
+        for (core_cnt = 0; core_cnt < COMM_MSG_MAX_DPDK_CORE_NUM; ++core_cnt) {
+            pkt_sum += lb_packet_stat_get(dire_cnt, core_cnt);
+        }
+
+        switch (dire_cnt) {
+            case EN_LB_RECV_EXT_STAT:
+                sprintf(dire_name, "Receive_external");
+                break;
+            case EN_LB_RECV_INT_STAT:
+                sprintf(dire_name, "Receive_internal");
+                break;
+            case EN_LB_SENT_EXT_STAT:
+                sprintf(dire_name, "Sent_to_external");
+                break;
+            case EN_LB_SENT_FPU_STAT:
+                sprintf(dire_name, "Sent_to_FPU");
+                break;
+            case EN_LB_SENT_SMU_STAT:
+                sprintf(dire_name, "Sent_to_SMU");
+                break;
+
+            default:
+                sprintf(dire_name, "INDEX(%u)", dire_cnt);
+                break;
+        }
+
+        cli_print(cli, "%s: %lu\r\n", dire_name, pkt_sum);
+    }
+
+    if (argc > 0 && 0 == strncmp(argv[0], "all", 3)) {
+        dpdk_show_mempool_stat(cli, 1);
+    } else {
+        dpdk_show_mempool_stat(cli, 0);
+    }
+
+    if (argc > 0 && 0 == strncmp(argv[0], "clean", strlen("clean"))) {
+        memset(lb_packet_statistics, 0, sizeof(lb_packet_statistics));
+        dpdk_clear_stat();
+    }
 
     return 0;
 }
